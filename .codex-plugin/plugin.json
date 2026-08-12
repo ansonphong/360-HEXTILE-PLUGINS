@@ -1,7 +1,7 @@
 {
   "name": "hextile-pipe",
   "version": "0.1.0",
-  "description": "360 Hextile studio matte utilities — whiten, cutout, knockout, despeckle.",
+  "description": "360 Hextile studio matte utilities — whiten, cutout, knockout, despeckle, trim.",
   "author": {
     "name": "Phong",
     "url": "https://github.com/ansonphong"

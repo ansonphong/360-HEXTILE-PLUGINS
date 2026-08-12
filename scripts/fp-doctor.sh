@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Health check for hextile-pipe plugin install.
-# Hard-fail: root, 5 matte scripts, Pillow. Soft-warn: numpy. Each --help must work.
+# Hard-fail: root, 6 matte scripts, Pillow. Soft-warn: numpy. Each --help must work.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +27,7 @@ else
   bad "plugin root layout incomplete"
 fi
 
-TOOLS=(recolor_svg recolor_png cutout knockout despeckle)
+TOOLS=(recolor_svg recolor_png cutout knockout despeckle trim)
 for t in "${TOOLS[@]}"; do
   f="$ROOT/matte/${t}.py"
   if [[ -f "$f" ]]; then

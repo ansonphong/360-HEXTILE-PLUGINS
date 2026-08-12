@@ -2,7 +2,7 @@
 
 Loose bag of **studio utility scripts** for art assets — not a product pipeline.
 
-- **Python** (`matte/`) — recolor, cutout, knockout, despeckle  
+- **Python** (`matte/`) — recolor, cutout, knockout, despeckle, trim  
 - **Illustrator** (`illustrator/`) — batch-export selected groups  
 - **Photoshop** (`photoshop/`) — design for layer export (jsx TBD)  
 
@@ -30,7 +30,8 @@ hextile-pipe/
 ## Matte (Python)
 
 Python utilities for artwork mattes: recolor silhouettes, cut black→transparent
-(glyph + fill), knock out black with a fill color, or despeckle dust.
+(glyph + fill), knock out black with a fill color, despeckle dust, or trim
+transparent margins.
 
 Requires: `pip install pillow` (numpy optional, speeds large images).
 
@@ -55,6 +56,7 @@ bash scripts/smoke-matte-flags.sh   # synthetic regression smoke
 | Glyph cutout (luma→alpha + solid fill color) | `cutout.py` |
 | Grey art on black → alpha + any fill color | `knockout.py` |
 | Remove dust / freckles (black or transparent) | `despeckle.py` |
+| Crop to transparency / add margin (px or %) | `trim.py` |
 | Shared color + levels helpers (not a CLI) | `colorutil.py` |
 
 ```bash
@@ -63,6 +65,7 @@ python3 matte/recolor_png.py sprite.png --color "#e13e13" --min-alpha 16
 python3 matte/cutout.py file.png --color "#e13e13"
 python3 matte/knockout.py file.png --cutoff 5 --color white
 python3 matte/despeckle.py file.png --min-area-rel 0.0001 --passes 2
+python3 matte/trim.py file.png --margin 5%
 python3 matte/knockout.py file.png --new          # sidecar
 ```
 
@@ -226,6 +229,39 @@ python3 matte/despeckle.py file.png --black-point 3         # 0–255 alias
 
 High-res freckles: prefer relative, or absolute 32–64+, and/or `--passes 2`.
 
+### Trim — `trim.py`
+
+Crop a transparent PNG to the content bounding box (alpha above `--threshold`),
+and/or pad a **uniform** transparent margin in pixels or percent of the larger
+content side. Preserves original RGB+alpha of content pixels.
+
+**Modes:** `crop` (default) finds content then applies margin; `pad` expands the
+full canvas by margin only (no content trim). Percent margins always measure
+**content** size (not empty border), including in `pad` mode.
+
+**Percent formula (locked):**  
+`m = int(max(content_w, content_h) * pct / 100 + 0.5)` (half-up) on all four sides.
+
+```bash
+python3 matte/trim.py file.png                     # tight crop, overwrite
+python3 matte/trim.py file.png --new               # → file.trim.png
+python3 matte/trim.py file.png --margin 10
+python3 matte/trim.py file.png --margin 5%
+python3 matte/trim.py file.png --mode pad --margin 24
+python3 matte/trim.py file.png --threshold 4 --margin 8 --new
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--new` | off | Sidecar `file.trim.png` |
+| `--recursive` | off | Recurse subfolders |
+| `--mode` | `crop` | `crop` or `pad` |
+| `--margin` | `0` | `N` / `Npx` or `N%` |
+| `--threshold` | `0` | Content if alpha > N (0–254) |
+
+Empty image under `crop` → `ERR` and non-zero exit for that file. JPEG overwrite
+refused — use `--new`. Batch preflight rejects destination collisions.
+
 ### Sidecars (`--new`)
 
 | Tool | Output name |
@@ -234,6 +270,7 @@ High-res freckles: prefer relative, or absolute 32–64+, and/or `--passes 2`.
 | cutout | `file.cutout.png` |
 | knockout | `file.ext.knockout.png` (e.g. `a.png.knockout.png`) |
 | despeckle | `file.despeckle.png` |
+| trim | `file.trim.png` |
 
 ### Naming & notes
 

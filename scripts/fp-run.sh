@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dispatch a matte CLI by short tool name from the plugin package root.
 # Usage: fp-run.sh <tool> [args…]
-# Tools: recolor_svg | recolor_png | cutout | knockout | despeckle
+# Tools: recolor_svg | recolor_png | cutout | knockout | despeckle | trim
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/lib/plugin-root.sh"
 ROOT="$(_fp_plugin_root)" || exit 1
 export HEXTILE_PIPE_PLUGIN_ROOT="$ROOT"
 
-TOOLS_HELP="recolor_svg recolor_png cutout knockout despeckle"
+TOOLS_HELP="recolor_svg recolor_png cutout knockout despeckle trim"
 
 if [[ $# -lt 1 ]]; then
   echo "usage: fp-run.sh <tool> [args…]" >&2
@@ -28,6 +28,7 @@ case "$TOOL" in
   cutout)                                         SCRIPT="cutout.py" ;;
   knockout)                                       SCRIPT="knockout.py" ;;
   despeckle)                                      SCRIPT="despeckle.py" ;;
+  trim)                                           SCRIPT="trim.py" ;;
   *)
     echo "hextile-pipe: unknown tool '$TOOL'" >&2
     echo "tools: $TOOLS_HELP" >&2
