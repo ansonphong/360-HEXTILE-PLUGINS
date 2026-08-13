@@ -25,8 +25,8 @@ Discover full set: `bash "$ROOT/scripts/fp-run.sh" knockout -h`
 |------|---------|
 | `--new` | Sidecar `file.ext.knockout.png` (required for agents) |
 | `--recursive` | Also process files in subfolders (default: this folder only) |
-| `--cutoff PCT` | Levels black point 0–100 |
-| `--white PCT` | Levels white point 0–100 |
+| `--cutoff PCT` | Levels black point 0–100 (default **3** — crush near-black / near-white after `--invert`) |
+| `--white PCT` | Levels white point 0–100 (default **97** — crush near-white / near-black after `--invert`) |
 | `--black-point` / `--white-point` | Raw luma 0–255 aliases |
 | `--gamma G` | Midtone gamma on alpha |
 | `--color COLOR` | Fill RGB: name, `#rrggbb`, or `r,g,b` |

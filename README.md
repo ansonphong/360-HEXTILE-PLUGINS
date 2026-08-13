@@ -180,8 +180,8 @@ python3 matte/knockout.py file.jpg --new
 | `--new` | off | Sidecar `stem.ext.knockout.png` |
 | `--recursive` | off | Recurse |
 | `--force` | off | Reprocess knockout products |
-| `--cutoff` | `0` | Black point **0–100** → alpha 0 |
-| `--white` | `100` | White point **0–100** → alpha 255 |
+| `--cutoff` | `3` | Black point **0–100** → alpha 0 (crushes near-black; after `--invert`, near-white) |
+| `--white` | `97` | White point **0–100** → alpha 255 (crushes near-white; after `--invert`, near-black) |
 | `--black-point` / `--white-point` | — | Raw **0–255** aliases |
 | `--gamma` | `1.0` | Midtone gamma |
 | `--color` | `white` | Solid fill |

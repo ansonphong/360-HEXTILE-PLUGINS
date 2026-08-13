@@ -10,12 +10,12 @@ Process (simple):
 On a pure black background the look matches the original greys (alpha * white).
 
 Usage:
-  python knockout.py path/to/file.png              # overwrite (default)
+  python knockout.py path/to/file.png              # overwrite; default crush 3 / 97
   python knockout.py path/to/folder/
   python knockout.py path/to/folder/ --recursive
   python knockout.py path/to/file.png --new        # → file.png.knockout.png
   python knockout.py path/to/file.jpg --new        # JPEG needs --new
-  python knockout.py path/to/file.png --cutoff 5   # crush dark greys
+  python knockout.py path/to/file.png --cutoff 0 --white 100   # no margin
   python knockout.py path/to/file.png --black-point 13 --white-point 242  # 0–255 aliases
   python knockout.py path/to/file.png --color "#e13e13"
   python knockout.py path/to/file.png --invert     # dark art on light BG
@@ -46,6 +46,10 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 META_TOOL_KEY = "hextile-pipe-tool"
 META_TOOL_VALUE = "knockout"
 SIDECAR_MARKER = ".knockout.png"
+# Few-point default crush: dirty black (~8/255) and dirty white (~247/255).
+# After --invert, this is near-white bg / near-black art. Pass 0 and 100 for none.
+DEFAULT_CUTOFF = 3.0
+DEFAULT_WHITE = 97.0
 
 
 def _validate_levels(cutoff: float, white: float, gamma: float) -> None:
@@ -97,8 +101,8 @@ def is_knockout_product(path: Path, im: Image.Image | None = None) -> bool:
 def knockout_image(
     im: Image.Image,
     *,
-    cutoff: float = 0.0,
-    white: float = 100.0,
+    cutoff: float = DEFAULT_CUTOFF,
+    white: float = DEFAULT_WHITE,
     gamma: float = 1.0,
     color: tuple[int, int, int] = (255, 255, 255),
     invert: bool = False,
@@ -186,8 +190,8 @@ def knockout_file(
     src: Path,
     dest: Path,
     *,
-    cutoff: float = 0.0,
-    white: float = 100.0,
+    cutoff: float = DEFAULT_CUTOFF,
+    white: float = DEFAULT_WHITE,
     gamma: float = 1.0,
     color: tuple[int, int, int] = (255, 255, 255),
     invert: bool = False,
@@ -305,14 +309,14 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         metavar="PCT",
-        help="Levels black point 0–100: brightness under this → alpha 0 (default 0)",
+        help="Levels black point 0–100: brightness under this → alpha 0 (default 3)",
     )
     ap.add_argument(
         "--white",
         type=float,
         default=None,
         metavar="PCT",
-        help="Levels white point 0–100: brightness at/above this → alpha 255 (default 100)",
+        help="Levels white point 0–100: brightness at/above this → alpha 255 (default 97)",
     )
     ap.add_argument(
         "--black-point",
@@ -364,8 +368,8 @@ def main(argv: list[str] | None = None) -> int:
             white=args.white,
             black_point=args.black_point,
             white_point=args.white_point,
-            default_cutoff=0.0,
-            default_white=100.0,
+            default_cutoff=DEFAULT_CUTOFF,
+            default_white=DEFAULT_WHITE,
         )
         _validate_levels(cutoff, white, args.gamma)
     except ValueError as e:
