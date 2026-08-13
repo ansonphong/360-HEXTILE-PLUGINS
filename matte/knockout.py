@@ -19,7 +19,8 @@ Usage:
   python knockout.py path/to/file.png --black-point 13 --white-point 242  # 0–255 aliases
   python knockout.py path/to/file.png --color "#e13e13"
   python knockout.py path/to/file.png --invert     # dark art on light BG
-  python knockout.py path/to/file.png --silhouette # key black; keep original greys opaque
+  python knockout.py path/to/file.png --silhouette # key black; keep greys; default blur 1 / choke 0.8
+  python knockout.py path/to/file.png --silhouette --blur 0   # hard key, no edge refine
   python knockout.py path/to/file.png --force      # reprocess hextile-pipe outputs
 """
 from __future__ import annotations
@@ -31,7 +32,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFilter
 from PIL.PngImagePlugin import PngInfo
 
 from colorutil import COLOR_HELP, RECURSIVE_HELP, collect_files, parse_color, resolve_levels_pct
@@ -51,6 +52,9 @@ SIDECAR_MARKER = ".knockout.png"
 # After --invert, this is near-white bg / near-black art. Pass 0 and 100 for none.
 DEFAULT_CUTOFF = 3.0
 DEFAULT_WHITE = 97.0
+# --silhouette edge refine (pixels). --blur 0 disables.
+DEFAULT_BLUR = 1.0
+DEFAULT_CHOKE = 0.8
 
 
 def _validate_levels(cutoff: float, white: float, gamma: float) -> None:
@@ -65,6 +69,45 @@ def _validate_levels(cutoff: float, white: float, gamma: float) -> None:
 def _validate_cutoff(cutoff: float) -> None:
     if not (math.isfinite(cutoff) and 0.0 <= cutoff <= 100.0):
         raise ValueError("cutoff must be a finite number 0–100")
+
+
+def _validate_edge(blur: float, choke: float) -> None:
+    if not (math.isfinite(blur) and blur >= 0):
+        raise ValueError("blur must be a finite number ≥ 0")
+    if not (math.isfinite(choke) and choke >= 0):
+        raise ValueError("choke must be a finite number ≥ 0")
+
+
+def _refine_silhouette_alpha(
+    alpha_img: Image.Image, blur_px: float, choke_px: float
+) -> Image.Image:
+    """Blur the hard mask, then levels to pull the edge inward.
+
+    choke=0 keeps the full gaussian falloff. choke>0 raises the black
+    point so the outer halo dies. blur=0 skips refine (hard key).
+    """
+    _validate_edge(blur_px, choke_px)
+    im = alpha_img.convert("L")
+    if blur_px <= 0:
+        return im
+    im = im.filter(ImageFilter.GaussianBlur(radius=float(blur_px)))
+    if choke_px <= 0:
+        return im
+    t = choke_px / max(blur_px, 1e-6)
+    lo = 255.0 * 0.5 * (1.0 - math.exp(-1.2 * t))
+    hi = 255.0
+    span = hi - lo
+    if span < 1e-6:
+        return im.point(lambda v: 255 if v >= hi else 0)
+
+    def _lut(v, _lo=lo, _span=span):
+        if v <= _lo:
+            return 0
+        if v >= 255.0:
+            return 255
+        return int(round((v - _lo) * 255.0 / _span))
+
+    return im.point(_lut)
 
 
 def _levels_u8(L: float, black: float, white: float, gamma: float) -> int:
@@ -113,17 +156,20 @@ def knockout_image(
     color: tuple[int, int, int] = (255, 255, 255),
     invert: bool = False,
     silhouette: bool = False,
+    blur: float = DEFAULT_BLUR,
+    choke: float = DEFAULT_CHOKE,
 ) -> Image.Image:
     """Default: greyscale→alpha after levels; RGB = solid fill.
 
-    --silhouette: key luma at/under cutoff to alpha 0; keep original RGB
-    at alpha 255. --color / --white / --gamma unused.
+    --silhouette: key luma at/under cutoff to alpha 0; keep original RGB.
+    Then blur+choke the matte (defaults 1 / 0.8). --color / --white / --gamma unused.
     """
     _validate_cutoff(cutoff)
     black_pt = cutoff / 100.0 * 255.0
     rgba = im.convert("RGBA")
 
     if silhouette:
+        _validate_edge(blur, choke)
         if HAS_NUMPY:
             arr = np.array(rgba, dtype=np.uint8)
             r = arr[:, :, 0].astype(np.float32)
@@ -133,13 +179,17 @@ def knockout_image(
             if invert:
                 L = 255.0 - L
             keep = (L > black_pt) & (arr[:, :, 3] > 0)
+            hard = np.where(keep, np.uint8(255), np.uint8(0))
+            refined = _refine_silhouette_alpha(
+                Image.fromarray(hard, mode="L"), blur, choke
+            )
             out = arr.copy()
-            out[:, :, 3] = np.where(keep, np.uint8(255), np.uint8(0))
+            out[:, :, 3] = np.array(refined, dtype=np.uint8)
             return Image.fromarray(out, mode="RGBA")
         pixels = rgba.load()
         w, h = rgba.size
-        out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        op = out.load()
+        hard_im = Image.new("L", (w, h), 0)
+        hp = hard_im.load()
         for y in range(h):
             for x in range(w):
                 r, g, b, src_a = pixels[x, y]
@@ -149,7 +199,17 @@ def knockout_image(
                 if invert:
                     L = 255.0 - L
                 if L > black_pt:
-                    op[x, y] = (r, g, b, 255)
+                    hp[x, y] = 255
+        refined = _refine_silhouette_alpha(hard_im, blur, choke)
+        out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        op = out.load()
+        rp = refined.load()
+        for y in range(h):
+            for x in range(w):
+                a = rp[x, y]
+                if a > 0:
+                    r, g, b, _ = pixels[x, y]
+                    op[x, y] = (r, g, b, a)
         return out
 
     _validate_levels(cutoff, white, gamma)
@@ -238,6 +298,8 @@ def knockout_file(
     color: tuple[int, int, int] = (255, 255, 255),
     invert: bool = False,
     silhouette: bool = False,
+    blur: float = DEFAULT_BLUR,
+    choke: float = DEFAULT_CHOKE,
 ) -> None:
     with Image.open(src) as im:
         out = knockout_image(
@@ -248,6 +310,8 @@ def knockout_file(
             color=color,
             invert=invert,
             silhouette=silhouette,
+            blur=blur,
+            choke=choke,
         )
         _atomic_save_png(out, dest)
 
@@ -330,7 +394,8 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Art-on-black → solid fill + greyscale alpha. "
             "Levels cutoff on luminance, then fill RGB. "
-            "--silhouette keys only the black and keeps original greys. "
+            "--silhouette keys only the black, keeps original greys, "
+            "then blur+choke the matte (default 1 / 0.8). "
             "Default: overwrite source PNG."
         )
     )
@@ -398,7 +463,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--silhouette",
         action="store_true",
-        help="Key only luma at/under --cutoff; keep original RGB at full opacity",
+        help="Key only luma at/under --cutoff; keep original RGB; blur+choke the edge",
+    )
+    ap.add_argument(
+        "--blur",
+        type=float,
+        default=None,
+        metavar="PX",
+        help="Silhouette only: Gaussian blur on the matte in pixels (default 1; 0 = off)",
+    )
+    ap.add_argument(
+        "--choke",
+        type=float,
+        default=None,
+        metavar="PX",
+        help="Silhouette only: how far in to pull after blur, in pixels (default 0.8)",
     )
     args = ap.parse_args(argv)
 
@@ -425,7 +504,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             _validate_cutoff(cutoff)
             white = DEFAULT_WHITE
+            blur = DEFAULT_BLUR if args.blur is None else float(args.blur)
+            choke = DEFAULT_CHOKE if args.choke is None else float(args.choke)
+            _validate_edge(blur, choke)
         else:
+            if args.blur is not None or args.choke is not None:
+                raise ValueError("--blur/--choke only apply with --silhouette")
             cutoff, white = resolve_levels_pct(
                 cutoff=args.cutoff,
                 white=args.white,
@@ -471,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
                 color=fill,
                 invert=args.invert,
                 silhouette=args.silhouette,
+                blur=blur if args.silhouette else DEFAULT_BLUR,
+                choke=choke if args.silhouette else DEFAULT_CHOKE,
             )
             print(f"OK  {src} -> {dest}")
         except Exception as e:

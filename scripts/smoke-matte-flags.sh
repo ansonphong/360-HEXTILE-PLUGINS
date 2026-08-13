@@ -34,7 +34,7 @@ for tool, flags in {
     "cutout.py": ["--color", "--cutoff", "--black-point"],
     "recolor_png.py": ["--min-alpha", "--color"],
     "despeckle.py": ["--min-area-rel", "--passes", "--black-point"],
-    "knockout.py": ["--black-point", "--cutoff", "--silhouette"],
+    "knockout.py": ["--black-point", "--cutoff", "--silhouette", "--blur", "--choke"],
 }.items():
     text = subprocess.check_output([py, str(root / "matte" / tool), "-h"], text=True)
     for f in flags:
@@ -156,10 +156,25 @@ sil = scratch / "sil_src.png"
 sil_img = Image.new("RGB", (2, 1), (0, 0, 0))
 sil_img.putpixel((1, 0), (128, 128, 128))
 sil_img.save(sil)
-run([str(root / "matte/knockout.py"), str(sil), "--silhouette", "--cutoff", "3"])
+run([
+    str(root / "matte/knockout.py"), str(sil),
+    "--silhouette", "--cutoff", "3", "--blur", "0",
+])
 sil_out = np.array(Image.open(sil).convert("RGBA"))
 assert list(sil_out[0, 0]) == [0, 0, 0, 0], sil_out[0, 0]
 assert list(sil_out[0, 1]) == [128, 128, 128, 255], sil_out[0, 1]
+
+# default blur+choke: interior of a solid block stays opaque grey
+blk = scratch / "sil_block.png"
+bimg = Image.new("RGB", (32, 32), (0, 0, 0))
+for y in range(8, 24):
+    for x in range(8, 24):
+        bimg.putpixel((x, y), (128, 128, 128))
+bimg.save(blk)
+run([str(root / "matte/knockout.py"), str(blk), "--silhouette", "--force"])
+bout = np.array(Image.open(blk).convert("RGBA"))
+assert list(bout[16, 16]) == [128, 128, 128, 255], bout[16, 16]
+assert int(bout[0, 0, 3]) == 0
 
 print("PASS smoke-matte-flags")
 PY
