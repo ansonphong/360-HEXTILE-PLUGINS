@@ -3,22 +3,21 @@
 **Status:** design locked — depth hierarchy + naming  
 **Target script:** `ExportGroupedAssets.jsx` (ExtendScript, Adobe Illustrator)  
 **Related brief:** `artboard-export-all-groups.md` (original production brief; this design **overrides** naming and clarifies selection)  
-**Version target:** 0.2.7  
-**Design revision:** 2026-08-07 — PNG **target = hard max dimension, no pixel overshoot** (never 2053 when max is 2048); root selection order; per-format top-level; depth harvest.
+**Version target:** 0.2.8  
+**Design revision:** 2026-08-13 — selected **page items** export (groups or ungrouped); mixed siblings stay in the sequence; names still prefix + depth tokens only.
 
 ---
 
 ## 1. Purpose
 
-Batch-export **selected Illustrator groups** as multi-format assets without renaming layers or modifying the source document.
+Batch-export **selected Illustrator page items** (groups or ungrouped art) as multi-format assets without renaming layers or modifying the source document.
 
 **Primary user flow**
 
-1. Manually group each asset in Illustrator.
-2. Select the groups to export (e.g. 5 beachball variants).
-3. Run the script → a dialog appears.
-4. Enter a **series prefix** once (e.g. `beachball-`), choose folder/formats/PNG options.
-5. Export produces numbered files: `beachball-01`, `beachball-02`, …
+1. Select the objects to export (grouped or not — e.g. 5 beachball variants).
+2. Run the script → a dialog appears.
+3. Enter a **series prefix** once (e.g. `beachball-`), choose folder/formats/PNG options.
+4. Export produces numbered files: `beachball-01`, `beachball-02`, …
 
 Next batch can use a different prefix (`soccerball-`) with no document renames.
 
@@ -28,7 +27,7 @@ Next batch can use a different prefix (`soccerball-`) with no document renames.
 
 ### Goals
 
-- Export **group assets** discovered from the selection at the chosen **depth** (1–3).
+- Export **selected page items** discovered from the selection at the chosen **depth** (1–3). Groups and ungrouped art both count.
 - Formats: native **AI**, **SVG**, transparent **PNG** (user can enable any non-empty subset).
 - **Prefix + hierarchical sequence** filenames defined **per export run** in the dialog (flat folder).
 - Leave the original document **unchanged** (no save, no rename, no move, no expand/outline/rasterize).
@@ -50,11 +49,11 @@ Next batch can use a different prefix (`soccerball-`) with no document renames.
 
 | Topic | Decision |
 |--------|----------|
-| What is exported | Only **currently selected** objects with `typename === "GroupItem"` |
+| What is exported | **Currently selected** drawable page items (groups **and** ungrouped art). Guides / non-art skipped. |
 | Artboard as source | **No** — artboards are only temporary export frames |
 | File naming | **Prefix + depth hierarchy tokens + zero-padded numbers** (see §6 / §6.6) |
-| Group name | **Ignored** for filenames (structure only — child GroupItems) |
-| Depth | **1–3** — how far to expand selected groups into export units |
+| Group / object name | **Ignored** for filenames (structure only — child page items) |
+| Depth | **1–3** — how far to expand selected objects into export units |
 | When naming is entered | Script launch → **ScriptUI dialog** → prefix + depth → Export |
 | Number series | Leaf sequence uses Start # + pad; intermediate numeric segments start at 1 |
 | Root order (A/B/C…) | **Selection order** after de-dupe — not re-sorted by layer stack (avoids inverted A/B/C) |
@@ -69,7 +68,7 @@ Next batch can use a different prefix (`soccerball-`) with no document renames.
 ## 4. End-to-end workflow
 
 ```
-Select groups in Illustrator
+Select objects in Illustrator
         ↓
 File > Scripts > Other Script… (or installed Scripts menu entry)
         ↓
@@ -79,7 +78,7 @@ Dialog: Export Grouped Assets
   • Formats + PNG / file options
         ↓
 [Export]  →  expand selection by depth → for each export unit:
-              temp doc → duplicate leaf group → artboard → export formats
+              temp doc → duplicate leaf item → artboard → export formats
               close temp doc (no save)
         ↓
 Summary dialog + export-report.txt
@@ -92,13 +91,13 @@ Summary dialog + export-report.txt
 
 ## 5. Selection rules
 
-1. Process only selected `GroupItem`s as **roots** (after highest-ancestor de-dupe).
-2. **Depth** expands each root into one or more **export units** (leaf groups to duplicate). Depth 1: root itself. Depth 2–3: walk child `GroupItem`s (see §6.6).
-3. If a parent group and a nested descendant are both selected as roots, process **only the highest selected ancestor** (no duplicate roots).
-4. Non-group selected objects: skip; count as skipped in the summary.
-5. Do **not** auto-process all groups in the document outside the selection+depth walk.
+1. Process selected **drawable page items** as **roots** (after highest-ancestor de-dupe). Groups and ungrouped art both qualify.
+2. **Depth** expands each root into one or more **export units** (the item duplicated and exported). Depth 1: root itself. Depth 2–3: walk child page items (see §6.6).
+3. If a parent item and a nested descendant are both selected as roots, process **only the highest selected ancestor** (no duplicate roots).
+4. Skip only non-art (guides, layers, text ranges). Count those as skipped in the summary. Do **not** skip ungrouped paths, compounds, symbols, or text frames.
+5. Do **not** auto-process all objects in the document outside the selection+depth walk.
 6. Do not rearrange, rename, resize, move, expand, outline, flatten, or delete anything in the source.
-7. Only `GroupItem` children count as hierarchy levels — paths, compounds, and text inside a group are content of that asset, not nested levels.
+7. A `GroupItem` is still a nestable vessel. Ungrouped siblings of a group are their own export units at that depth — they are not dropped. A group that contains only non-groups is still one leaf unless depth harvest splits an all-path vessel (existing MOON-A case).
 
 ### Selection API pitfalls (locked handling)
 
@@ -106,7 +105,7 @@ Summary dialog + export-report.txt
 - With a text insertion point / text-edit mode active, `doc.selection` can return a **TextRange**, not an array — check `instanceof Array` (or `typename`) before treating it as items.
 - Copy `doc.selection` into a plain array **once** at start; repeated `.selection` access is slow and can re-evaluate.
 - When a whole group is selected normally, its children do NOT appear separately in `selection`; parent+child both present happens via Layers-panel targeting or direct-select — which is why rule 3 exists.
-- **Highest-ancestor filter (locked algorithm):** for each selected `GroupItem`, walk `item.parent` upward until `typename === "Layer"` or the document; if any ancestor along the way is itself in the selected-groups set, drop the descendant. Membership test uses `===` reference equality — **VERIFY** in Illustrator that two references to the same item compare `===` true; if flaky, fall back to `PageItem.uuid` (present in recent CC — VERIFY availability).
+- **Highest-ancestor filter (locked algorithm):** for each selected page item, walk `item.parent` upward until `typename === "Layer"` or the document; if any ancestor along the way is itself in the selected-items set, drop the descendant. Membership test uses `===` reference equality — **VERIFY** in Illustrator that two references to the same item compare `===` true; if flaky, fall back to `PageItem.uuid` (present in recent CC — VERIFY availability).
 
 ### Number / series order — LOCKED algorithm
 
@@ -115,7 +114,7 @@ Summary dialog + export-report.txt
 **Use selection order**, not layer-stack re-sort.
 
 1. Copy `doc.selection` once into an array (left → right as returned).
-2. Filter to `GroupItem`s; apply highest-ancestor de-dupe **without reordering** the remaining roots.
+2. Filter to exportable page items (drop guides / non-art); apply highest-ancestor de-dupe **without reordering** the remaining roots.
 3. Root index `0` → letter `A` / first series; `1` → `B`; etc.
 
 **Why:** Sorting roots by layer stacking (top → bottom) **inverted** user-selected series (select A then B then C exported as C, B, A). Selection order matches “the order I picked them.”
@@ -146,7 +145,7 @@ Dialog note:
 | Field | Type | Default | Notes |
 |--------|------|---------|--------|
 | Prefix | text | empty | Required stem; trailing `-` optional (script normalizes) e.g. `ICOSA-SOLID` or `ICOSA-SOLID-` |
-| Depth | integer 1–3 | `1` | How deep to expand groups-within-groups (see §6.6) |
+| Depth | integer 1–3 | `1` | How deep to expand objects inside the selection (see §6.6) |
 | Start number | integer ≥ 0 | `1` | Applied to the **leaf** numeric segment only |
 | Pad digits | integer 1–6 | `2` | All numeric segments use this pad; never truncates |
 
@@ -198,17 +197,17 @@ Depth 3 example:
 
 Extensions per format: `.ai`, `.svg`, `.png`.
 
-### 6.6 Depth expand — LOCKED (groups within groups)
+### 6.6 Depth expand — LOCKED (objects inside the selection)
 
-**Depth** is not “how nested the art looks”; it is **how many GroupItem levels to walk from each selected root** to find export units (the group that is duplicated and exported).
+**Depth** is not “how nested the art looks”; it is **how many levels to walk from each selected root** to find export units (the page item that is duplicated and exported).
 
 | Depth | User selects | Export unit (duplicated) | Name shape |
 |-------|----------------|---------------------------|------------|
-| **1** | Asset groups | The selected group itself | `PREFIX-##` |
-| **2** | Outer “series” groups | Groups **inside** each root: direct children first; if none, nested leaf groups; if still none, the root itself | `PREFIX-A-##` |
-| **3** | Top “family” groups | Each **grandchild** `GroupItem` (child of child) | `PREFIX-A-##-##` |
+| **1** | Any drawable objects | Each selected item itself | `PREFIX-##` |
+| **2** | Outer “series” vessels | **All siblings** inside each root (groups **and** ungrouped art); unwrap a single wrapper group; if none, nested leaf groups; if still none, split all-path contents or export the root | `PREFIX-A-##` |
+| **3** | Top “family” vessels | Each grandchild page item (child of child). An ungrouped mid is one leaf (`A-##-01`) | `PREFIX-A-##-##` |
 
-**Child discovery:** only items with `typename === "GroupItem"` inside the parent’s `pageItems` (or group children enumeration). Non-group page items are artwork belonging to that group, not extra levels.
+**Child discovery:** all exportable `pageItems` of the parent (groups via the dual `groupItems`/`pageItems` walk, plus ungrouped siblings). Mixed children stay in one sequence — do **not** drop loose paths because a sibling group exists.
 
 **Empty / shallow trees:**
 
@@ -467,14 +466,14 @@ openFolder=false
 
 **Before the dialog even opens (fail fast, alert + exit):**
 - No document open (`app.documents.length === 0`) → alert "Open a document first."
-- Selection empty/null, not an item array, or contains zero `GroupItem`s after the highest-ancestor filter → alert "Select at least one group to export."
+- Selection empty/null, not an item array, or contains zero exportable page items after the highest-ancestor filter → alert "Select at least one object to export."
 
 **On Export click (alert + stay in dialog, fix and retry):**
 - Prefix empty after trim → "Prefix is required."
 - Depth not in 1–3 → "Depth must be 1, 2, or 3."
 - Start number not an integer ≥ 0, or pad digits not 1–6 → name the field and range.
 - No format checked → "Enable at least one format."
-- After expand, zero export units → "No groups to export at this depth." (alert; stay or exit cleanly)
+- After expand, zero export units → "No objects to export at this depth." (alert; stay or exit cleanly)
 - Output folder path missing on disk (stale/typed) → attempt `new Folder(path).create()`; if creation fails → "Can't create output folder."
 - Writability probe: create the report file (or subfolders) before the first asset; failure → alert + stay in dialog. Never discover an unwritable folder on asset 1 of 40.
 
@@ -631,10 +630,10 @@ After each milestone: re-read JSX for modern JS leaks, verify API names, re-chec
 
 ## 15. Acceptance criteria (v0.2)
 
-- [ ] Depth 1: N selected groups + prefix `ICOSA-SOLID` → `ICOSA-SOLID-01` … `ICOSA-SOLID-N`
-- [ ] Depth 2: selected outer groups export **child** groups as `ICOSA-SOLID-A-01`, `ICOSA-SOLID-B-01`, …
+- [ ] Depth 1: N selected objects (groups **or** ungrouped) + prefix `ICOSA-SOLID` → `ICOSA-SOLID-01` … `ICOSA-SOLID-N`
+- [ ] Depth 2: selected outer vessels export **child** objects (groups and loose siblings) as `ICOSA-SOLID-A-01`, `ICOSA-SOLID-B-01`, …
 - [ ] Depth 3: exports grandchildren as `ICOSA-SOLID-A-01-01`, …
-- [ ] Group **names** do not appear in filenames; structure + prefix only
+- [ ] Object / group **names** do not appear in filenames; structure + prefix only
 - [ ] Default output is a **flat** folder (format subfolders off by default)
 - [ ] Source document is unmodified after a full or partial run
 - [ ] Nested parent+child both selected as roots → highest ancestor only
@@ -696,7 +695,7 @@ After each milestone: re-read JSX for modern JS leaks, verify API names, re-chec
 
 **What:** One ExtendScript tool, selection-driven multi-format export with depth 1–3.  
 **How you name files:** `PREFIX-##` / `PREFIX-A-##` / `PREFIX-A-##-##` in one flat folder.  
-**How you run it:** Select groups → depth → dialog → Export.  
+**How you run it:** Select objects → depth → dialog → Export.  
 **What stays sacred:** Original Illustrator document untouched.
 
 ---

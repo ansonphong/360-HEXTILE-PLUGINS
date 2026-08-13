@@ -287,7 +287,7 @@ refused — use `--new`. Batch preflight rejects destination collisions.
 
 ## Illustrator
 
-`illustrator/export-grouped-assets.jsx` — select groups → dialog → export AI / SVG / PNG.
+`illustrator/export-grouped-assets.jsx` — select objects (grouped or not) → dialog → export AI / SVG / PNG.
 
 | File | Role |
 |------|------|

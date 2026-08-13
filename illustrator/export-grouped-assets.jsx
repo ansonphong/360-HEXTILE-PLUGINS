@@ -1,10 +1,11 @@
 #target illustrator
 
 /**
- * Export Grouped Assets v0.2.7
+ * Export Grouped Assets v0.2.8
  * Design: export-grouped-assets-design.md
  *
- * Select GroupItems → dialog (prefix + depth 1–3 + sequence) → export AI / SVG / PNG
+ * Select page items (groups or ungrouped) → dialog (prefix + depth 1–3 + sequence)
+ * → export AI / SVG / PNG. Naming ignores object names (prefix + sequence only).
  * PNG target = hard max pixels (no overshoot); root selection order; per-format layout.
  * Source document is never saved, closed, or mutated.
  *
@@ -16,7 +17,7 @@
 // DOM-free pure functions. ExtendScript-safe: var, function, no let/const/arrows/templates.
 
 var SCRIPT_NAME = "Export Grouped Assets";
-var SCRIPT_VERSION = "0.2.7";
+var SCRIPT_VERSION = "0.2.8";
 var PREFS_DIR_NAME = "ExportGroupedAssets";
 var PREFS_FILE_NAME = "prefs.txt";
 
@@ -882,8 +883,8 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         depthRow.orientation = "row";
         depthRow.add("statictext", undefined, "Depth");
         var depthList = depthRow.add("dropdownlist", undefined, [
-            "1 — selected groups (PREFIX-##)",
-            "2 — child groups (PREFIX-A-##)",
+            "1 — selected objects (PREFIX-##)",
+            "2 — child objects (PREFIX-A-##)",
             "3 — grandchildren (PREFIX-A-##-##)"
         ]);
         var defDepth = defaults.depth != null ? Math.floor(Number(defaults.depth)) : 1;
@@ -926,7 +927,7 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
                 pd = 2;
             }
             var names = previewDepthNames(p, dep, st, pd, 3);
-            previewText.text = "Preview: " + names.join(", ") + "\nRoot A,B,C… = selection order · group names ignored";
+            previewText.text = "Preview: " + names.join(", ") + "\nRoot A,B,C… = selection order · object names ignored";
         }
         prefixEdit.onChanging = updatePreview;
         startEdit.onChanging = updatePreview;
@@ -1022,7 +1023,7 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         var openFolderCheck = filePanel.add("checkbox", undefined, "Open folder when finished");
         openFolderCheck.value = !!defaults.openFolder;
 
-        dlg.add("statictext", undefined, "Depth expands groups-within-groups. Hierarchy is in the filename.", { multiline: true });
+        dlg.add("statictext", undefined, "Depth expands objects inside the selection. Hierarchy is in the filename.", { multiline: true });
 
         var btnRow = dlg.add("group");
         btnRow.alignment = "right";
@@ -1185,21 +1186,56 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         return out;
     }
 
-    function collectSelectedGroups(doc) {
+    function isGroupItem(it) {
+        try {
+            return !!(it && it.typename === "GroupItem");
+        } catch (eG) {
+            return false;
+        }
+    }
+
+    /**
+     * Drawable page item we can duplicate + export.
+     * Drops guides, layers, documents, and text-edit ranges — not ungrouped art.
+     */
+    function isExportablePageItem(it) {
+        if (!it) {
+            return false;
+        }
+        try {
+            if (it.guides) {
+                return false;
+            }
+        } catch (eGuides) {
+            // PathItem.guides missing → treat as art
+        }
+        var t;
+        try {
+            t = it.typename;
+        } catch (eType) {
+            return false;
+        }
+        if (!t || t === "Layer" || t === "Document" || t === "TextRange") {
+            return false;
+        }
+        return true;
+    }
+
+    function collectSelectedItems(doc) {
         var items = selectionToArray(doc);
-        var groups = [];
+        var kept = [];
         var skipped = 0;
         var i;
         var it;
         for (i = 0; i < items.length; i++) {
             it = items[i];
-            if (it && it.typename === "GroupItem") {
-                groups.push(it);
+            if (isExportablePageItem(it)) {
+                kept.push(it);
             } else {
                 skipped++;
             }
         }
-        return { groups: groups, skippedNonGroup: skipped, selectedCount: items.length };
+        return { items: kept, skippedNonGroup: skipped, selectedCount: items.length };
     }
 
     function isInSet(item, setArr) {
@@ -1244,7 +1280,7 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
                 } catch (eType) {
                     break;
                 }
-                if (p.typename === "GroupItem" && isInSet(p, groups)) {
+                if (isExportablePageItem(p) && isInSet(p, groups)) {
                     drop = true;
                     break;
                 }
@@ -1419,6 +1455,35 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
             // ignore
         }
         return sortGroupsByStacking(kids, doc);
+    }
+
+    /**
+     * Immediate children to export as siblings: groups AND ungrouped art.
+     * Groups still come from the dual groupItems/pageItems walk (Illustrator
+     * sometimes hides nested groups on one collection). Loose paths/compounds/
+     * symbols/text are appended from pageItems. Guides stay out.
+     */
+    function getDirectChildItems(parentItem, doc) {
+        var kids = [];
+        var i;
+        var it;
+        var groups = getDirectChildGroups(parentItem, doc);
+        for (i = 0; i < groups.length; i++) {
+            kids.push(groups[i]);
+        }
+        try {
+            if (parentItem.pageItems && parentItem.pageItems.length) {
+                for (i = 0; i < parentItem.pageItems.length; i++) {
+                    it = parentItem.pageItems[i];
+                    if (isExportablePageItem(it) && !isGroupItem(it) && !isInSet(it, kids)) {
+                        kids.push(it);
+                    }
+                }
+            }
+        } catch (eItems) {
+            // ignore
+        }
+        return sortPageItemsByStacking(kids, doc);
     }
 
     /**
@@ -1600,41 +1665,44 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
 
     /**
      * Page items to export from inside one depth-2 root (vessel):
-     * 1) direct child groups (unwrap single multi-group wrapper)
-     * 2) nested leaf groups anywhere under root
-     * 3) else every page item inside (paths, compounds, …) — NOT groups-only
-     * 4) else empty (caller may export root)
+     * 1) all direct siblings (groups AND ungrouped art)
+     * 2) unwrap a single wrapper group (same as before)
+     * 3) nested leaf groups anywhere under root
+     * 4) else every page item inside (paths, compounds, …)
+     * 5) else empty (caller may export root)
      */
     function getExportChildrenDepth2(root, doc) {
-        var direct = getDirectChildGroups(root, doc);
-        if (direct.length > 0) {
-            // Single wrapper that holds multiple groups → export those groups
-            if (direct.length === 1) {
-                var inner = getDirectChildGroups(direct[0], doc);
+        var siblings = getDirectChildItems(root, doc);
+        var groups = [];
+        var i;
+        for (i = 0; i < siblings.length; i++) {
+            if (isGroupItem(siblings[i])) {
+                groups.push(siblings[i]);
+            }
+        }
+        if (groups.length > 0) {
+            // Only unwrap when the sole child is a wrapper group (no loose siblings)
+            if (groups.length === 1 && siblings.length === 1) {
+                var inner = getDirectChildGroups(groups[0], doc);
                 if (inner.length > 1) {
                     return sortGroupsByStacking(inner, doc);
                 }
-                // Single wrapper with no group kids: harvest page items inside it
                 if (inner.length === 0) {
-                    var wrapped = harvestNonGroupContents(direct[0], doc);
-                    if (wrapped.length > 1) {
+                    var wrapped = harvestNonGroupContents(groups[0], doc);
+                    if (wrapped.length >= 1) {
                         return wrapped;
                     }
-                    if (wrapped.length === 1) {
-                        return wrapped;
-                    }
-                    // Wrapper is the asset
-                    return direct;
+                    return groups;
                 }
             }
-            return direct;
+            // Mixed or multiple children: keep ungrouped siblings in the sequence
+            return siblings;
         }
         // No direct group children — harvest nested leaf groups anywhere under root
         var all = [];
         collectAllDescendantGroups(root, doc, all, 12);
         if (all.length > 0) {
             var leaves = [];
-            var i;
             for (i = 0; i < all.length; i++) {
                 if (isLeafGroup(all[i])) {
                     leaves.push(all[i]);
@@ -1705,7 +1773,7 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
                 if (getDirectChildGroups(root, doc).length === 0) {
                     skippedBranches.push({
                         rootIndex: ri,
-                        reason: "root " + letter + ": no GroupItems — split into " + children.length + " page item(s) [" + describeVesselContents(root) + "]"
+                        reason: "root " + letter + ": no child groups — split into " + children.length + " page item(s) [" + describeVesselContents(root) + "]"
                     });
                 }
                 for (ci = 0; ci < children.length; ci++) {
@@ -1722,7 +1790,7 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         for (ri = 0; ri < roots.length; ri++) {
             root = roots[ri];
             letter = letterFromIndex(ri, 2);
-            mids = getDirectChildGroups(root, doc);
+            mids = getDirectChildItems(root, doc);
             if (mids.length === 0) {
                 // Fall back: treat like depth 2 harvest under root, mid fixed 0
                 children = getExportChildrenDepth2(root, doc);
@@ -1733,7 +1801,7 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
                     });
                     skippedBranches.push({
                         rootIndex: ri,
-                        reason: "root " + letter + ": no mid groups at depth 3 — exported outer as single asset"
+                        reason: "root " + letter + ": no mid objects at depth 3 — exported outer as single asset"
                     });
                     continue;
                 }
@@ -1746,7 +1814,14 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
                 continue;
             }
             for (mi = 0; mi < mids.length; mi++) {
-                leaves = getDirectChildGroups(mids[mi], doc);
+                if (!isGroupItem(mids[mi])) {
+                    units.push({
+                        group: mids[mi],
+                        pathIndices: [ri, mi, 0]
+                    });
+                    continue;
+                }
+                leaves = getDirectChildItems(mids[mi], doc);
                 if (leaves.length === 0) {
                     // mid has no children — export mid itself; or nested harvest
                     children = getExportChildrenDepth2(mids[mi], doc);
@@ -2092,10 +2167,10 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         }
         lines.push("");
         lines.push("Totals: selected=" + meta.selectedCount +
-            " groups=" + meta.groupCount +
+            " units=" + meta.groupCount +
             " success=" + meta.successCount +
             " failed=" + meta.failedCount +
-            " skippedNonGroup=" + meta.skippedNonGroup);
+            " skippedNotExportable=" + meta.skippedNonGroup);
 
         var file = new File(reportPathFor(settings));
         file.encoding = "UTF-8";
@@ -2109,10 +2184,10 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         var msg =
             SCRIPT_NAME + " complete.\n\n" +
             "Selected objects: " + meta.selectedCount + "\n" +
-            "Valid groups: " + meta.groupCount + "\n" +
+            "Export units: " + meta.groupCount + "\n" +
             "Exported OK: " + meta.successCount + "\n" +
             "Failed: " + meta.failedCount + "\n" +
-            "Skipped (non-group): " + meta.skippedNonGroup + "\n\n" +
+            "Skipped (not exportable): " + meta.skippedNonGroup + "\n\n" +
             "Output: " + folderPath + "\n" +
             "Report: " + reportPath;
         alert(msg);
@@ -2129,11 +2204,11 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         }
 
         var sourceDoc = app.activeDocument;
-        var collected = collectSelectedGroups(sourceDoc);
-        var groups = removeNestedDuplicates(collected.groups);
+        var collected = collectSelectedItems(sourceDoc);
+        var groups = removeNestedDuplicates(collected.items);
 
         if (groups.length === 0) {
-            alert("Select at least one group to export.");
+            alert("Select at least one object to export.");
             return;
         }
 
@@ -2154,7 +2229,7 @@ function previewDepthNames(prefix, depth, startNumber, padDigits, count) {
         var expanded = expandExportUnits(groups, settings.depth, sourceDoc);
         var units = expanded.units;
         if (units.length === 0) {
-            alert("No groups to export at this depth.");
+            alert("No objects to export at this depth.");
             return;
         }
 

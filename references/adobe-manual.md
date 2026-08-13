@@ -6,7 +6,7 @@ Illustrator and Photoshop scripts in this package are **reference / manual-run o
 
 | File | Role |
 |------|------|
-| `illustrator/export-grouped-assets.jsx` | Select groups → dialog → export AI / SVG / PNG |
+| `illustrator/export-grouped-assets.jsx` | Select objects (grouped or not) → dialog → export AI / SVG / PNG |
 | `illustrator/export-grouped-assets-design.md` | Design notes |
 | `illustrator/artboard-export-all-groups.md` | Earlier brief |
 | `illustrator/test-pure-helpers.js` | Pure-helper unit tests (no Illustrator) |
