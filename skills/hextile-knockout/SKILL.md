@@ -29,8 +29,9 @@ Discover full set: `bash "$ROOT/scripts/fp-run.sh" knockout -h`
 | `--white PCT` | Levels white point 0–100 (default **97** — crush near-white / near-black after `--invert`) |
 | `--black-point` / `--white-point` | Raw luma 0–255 aliases |
 | `--gamma G` | Midtone gamma on alpha |
-| `--color COLOR` | Fill RGB: name, `#rrggbb`, or `r,g,b` |
+| `--color COLOR` | Fill RGB: name, `#rrggbb`, or `r,g,b` (unused with `--silhouette`) |
 | `--invert` | Dark art on light background |
+| `--silhouette` | Key only `--cutoff`; keep original greys at full opacity |
 | `--force` | Allow reprocessing tagged outputs |
 
 ## Path rules

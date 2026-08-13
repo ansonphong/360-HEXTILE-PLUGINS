@@ -19,6 +19,7 @@ Usage:
   python knockout.py path/to/file.png --black-point 13 --white-point 242  # 0–255 aliases
   python knockout.py path/to/file.png --color "#e13e13"
   python knockout.py path/to/file.png --invert     # dark art on light BG
+  python knockout.py path/to/file.png --silhouette # key black; keep original greys opaque
   python knockout.py path/to/file.png --force      # reprocess hextile-pipe outputs
 """
 from __future__ import annotations
@@ -59,6 +60,11 @@ def _validate_levels(cutoff: float, white: float, gamma: float) -> None:
         raise ValueError("need 0 <= cutoff < white <= 100")
     if not (math.isfinite(gamma) and gamma > 0):
         raise ValueError("gamma must be a finite number > 0")
+
+
+def _validate_cutoff(cutoff: float) -> None:
+    if not (math.isfinite(cutoff) and 0.0 <= cutoff <= 100.0):
+        raise ValueError("cutoff must be a finite number 0–100")
 
 
 def _levels_u8(L: float, black: float, white: float, gamma: float) -> int:
@@ -106,17 +112,53 @@ def knockout_image(
     gamma: float = 1.0,
     color: tuple[int, int, int] = (255, 255, 255),
     invert: bool = False,
+    silhouette: bool = False,
 ) -> Image.Image:
-    """Greyscale→alpha after levels; RGB = solid fill color."""
+    """Default: greyscale→alpha after levels; RGB = solid fill.
+
+    --silhouette: key luma at/under cutoff to alpha 0; keep original RGB
+    at alpha 255. --color / --white / --gamma unused.
+    """
+    _validate_cutoff(cutoff)
+    black_pt = cutoff / 100.0 * 255.0
+    rgba = im.convert("RGBA")
+
+    if silhouette:
+        if HAS_NUMPY:
+            arr = np.array(rgba, dtype=np.uint8)
+            r = arr[:, :, 0].astype(np.float32)
+            g = arr[:, :, 1].astype(np.float32)
+            b = arr[:, :, 2].astype(np.float32)
+            L = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            if invert:
+                L = 255.0 - L
+            keep = (L > black_pt) & (arr[:, :, 3] > 0)
+            out = arr.copy()
+            out[:, :, 3] = np.where(keep, np.uint8(255), np.uint8(0))
+            return Image.fromarray(out, mode="RGBA")
+        pixels = rgba.load()
+        w, h = rgba.size
+        out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        op = out.load()
+        for y in range(h):
+            for x in range(w):
+                r, g, b, src_a = pixels[x, y]
+                if src_a <= 0:
+                    continue
+                L = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                if invert:
+                    L = 255.0 - L
+                if L > black_pt:
+                    op[x, y] = (r, g, b, 255)
+        return out
+
     _validate_levels(cutoff, white, gamma)
     fr, fg, fb = color
     if not all(0 <= c <= 255 for c in (fr, fg, fb)):
         raise ValueError("fill color components must be 0–255")
 
-    black_pt = cutoff / 100.0 * 255.0
     white_pt = white / 100.0 * 255.0
 
-    rgba = im.convert("RGBA")
     if HAS_NUMPY:
         arr = np.array(rgba, dtype=np.uint8)
         r = arr[:, :, 0].astype(np.float32)
@@ -195,6 +237,7 @@ def knockout_file(
     gamma: float = 1.0,
     color: tuple[int, int, int] = (255, 255, 255),
     invert: bool = False,
+    silhouette: bool = False,
 ) -> None:
     with Image.open(src) as im:
         out = knockout_image(
@@ -204,6 +247,7 @@ def knockout_file(
             gamma=gamma,
             color=color,
             invert=invert,
+            silhouette=silhouette,
         )
         _atomic_save_png(out, dest)
 
@@ -285,7 +329,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=(
             "Art-on-black → solid fill + greyscale alpha. "
-            "Levels cutoff on luminance, then fill RGB. Default: overwrite source PNG."
+            "Levels cutoff on luminance, then fill RGB. "
+            "--silhouette keys only the black and keeps original greys. "
+            "Default: overwrite source PNG."
         )
     )
     ap.add_argument(
@@ -316,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         metavar="PCT",
-        help="Levels white point 0–100: brightness at/above this → alpha 255 (default 97)",
+        help="Levels white point 0–100: brightness at/above this → alpha 255 (default 97; unused with --silhouette)",
     )
     ap.add_argument(
         "--black-point",
@@ -349,6 +395,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Dark art on light background (invert greyscale before levels)",
     )
+    ap.add_argument(
+        "--silhouette",
+        action="store_true",
+        help="Key only luma at/under --cutoff; keep original RGB at full opacity",
+    )
     args = ap.parse_args(argv)
 
     path = args.path.expanduser().resolve()
@@ -363,15 +414,27 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        cutoff, white = resolve_levels_pct(
-            cutoff=args.cutoff,
-            white=args.white,
-            black_point=args.black_point,
-            white_point=args.white_point,
-            default_cutoff=DEFAULT_CUTOFF,
-            default_white=DEFAULT_WHITE,
-        )
-        _validate_levels(cutoff, white, args.gamma)
+        if args.silhouette:
+            cutoff, _ignored_white = resolve_levels_pct(
+                cutoff=args.cutoff,
+                white=None,
+                black_point=args.black_point,
+                white_point=None,
+                default_cutoff=DEFAULT_CUTOFF,
+                default_white=DEFAULT_WHITE,
+            )
+            _validate_cutoff(cutoff)
+            white = DEFAULT_WHITE
+        else:
+            cutoff, white = resolve_levels_pct(
+                cutoff=args.cutoff,
+                white=args.white,
+                black_point=args.black_point,
+                white_point=args.white_point,
+                default_cutoff=DEFAULT_CUTOFF,
+                default_white=DEFAULT_WHITE,
+            )
+            _validate_levels(cutoff, white, args.gamma)
     except ValueError as e:
         print(f"ERR {e}", file=sys.stderr)
         return 1
@@ -407,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
                 gamma=args.gamma,
                 color=fill,
                 invert=args.invert,
+                silhouette=args.silhouette,
             )
             print(f"OK  {src} -> {dest}")
         except Exception as e:

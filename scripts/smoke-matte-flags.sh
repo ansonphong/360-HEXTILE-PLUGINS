@@ -34,7 +34,7 @@ for tool, flags in {
     "cutout.py": ["--color", "--cutoff", "--black-point"],
     "recolor_png.py": ["--min-alpha", "--color"],
     "despeckle.py": ["--min-area-rel", "--passes", "--black-point"],
-    "knockout.py": ["--black-point", "--cutoff"],
+    "knockout.py": ["--black-point", "--cutoff", "--silhouette"],
 }.items():
     text = subprocess.check_output([py, str(root / "matte" / tool), "-h"], text=True)
     for f in flags:
@@ -150,6 +150,16 @@ r = subprocess.run(
     capture_output=True, text=True,
 )
 assert r.returncode != 0
+
+# --- knockout --silhouette keeps grey RGB, keys only black ---
+sil = scratch / "sil_src.png"
+sil_img = Image.new("RGB", (2, 1), (0, 0, 0))
+sil_img.putpixel((1, 0), (128, 128, 128))
+sil_img.save(sil)
+run([str(root / "matte/knockout.py"), str(sil), "--silhouette", "--cutoff", "3"])
+sil_out = np.array(Image.open(sil).convert("RGBA"))
+assert list(sil_out[0, 0]) == [0, 0, 0, 0], sil_out[0, 0]
+assert list(sil_out[0, 1]) == [128, 128, 128, 255], sil_out[0, 1]
 
 print("PASS smoke-matte-flags")
 PY

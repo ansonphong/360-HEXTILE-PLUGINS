@@ -171,6 +171,7 @@ python3 matte/knockout.py file.png --new          # → file.png.knockout.png
 python3 matte/knockout.py file.png --cutoff 5 --white 95
 python3 matte/knockout.py file.png --black-point 13 --white-point 242
 python3 matte/knockout.py file.png --color "#e13e13"
+python3 matte/knockout.py file.png --silhouette   # key black; keep original greys
 python3 matte/knockout.py file.png --force
 python3 matte/knockout.py file.jpg --new
 ```
@@ -184,8 +185,9 @@ python3 matte/knockout.py file.jpg --new
 | `--white` | `97` | White point **0–100** → alpha 255 (crushes near-white; after `--invert`, near-black) |
 | `--black-point` / `--white-point` | — | Raw **0–255** aliases |
 | `--gamma` | `1.0` | Midtone gamma |
-| `--color` | `white` | Solid fill |
+| `--color` | `white` | Solid fill (unused with `--silhouette`) |
 | `--invert` | off | Invert greyscale first |
+| `--silhouette` | off | Key only `--cutoff`; keep original RGB at alpha 255 |
 
 PNG metadata `hextile-pipe-tool=knockout`; refuse reprocess unless `--force`.
 Batch safety: preflight destinations; unique sidecars per source extension.
