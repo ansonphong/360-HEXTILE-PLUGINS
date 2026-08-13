@@ -189,7 +189,7 @@ python3 matte/knockout.py file.jpg --new
 | `--invert` | off | Invert greyscale first |
 | `--silhouette` | off | Key only `--cutoff`; keep original RGB; then blur+choke the matte |
 | `--blur` | `1` | Silhouette: Gaussian on the matte, pixels (`0` = off) |
-| `--choke` | `0.8` | Silhouette: how far in to pull after blur, pixels |
+| `--choke` | `1.2` | Silhouette: how far in to pull after blur, pixels |
 
 PNG metadata `hextile-pipe-tool=knockout`; refuse reprocess unless `--force`.
 Batch safety: preflight destinations; unique sidecars per source extension.

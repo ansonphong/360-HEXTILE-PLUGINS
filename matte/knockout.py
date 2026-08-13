@@ -19,7 +19,7 @@ Usage:
   python knockout.py path/to/file.png --black-point 13 --white-point 242  # 0–255 aliases
   python knockout.py path/to/file.png --color "#e13e13"
   python knockout.py path/to/file.png --invert     # dark art on light BG
-  python knockout.py path/to/file.png --silhouette # key black; keep greys; default blur 1 / choke 0.8
+  python knockout.py path/to/file.png --silhouette # key black; keep greys; default blur 1 / choke 1.2
   python knockout.py path/to/file.png --silhouette --blur 0   # hard key, no edge refine
   python knockout.py path/to/file.png --force      # reprocess hextile-pipe outputs
 """
@@ -54,7 +54,7 @@ DEFAULT_CUTOFF = 3.0
 DEFAULT_WHITE = 97.0
 # --silhouette edge refine (pixels). --blur 0 disables.
 DEFAULT_BLUR = 1.0
-DEFAULT_CHOKE = 0.8
+DEFAULT_CHOKE = 1.2
 
 
 def _validate_levels(cutoff: float, white: float, gamma: float) -> None:
@@ -162,7 +162,7 @@ def knockout_image(
     """Default: greyscale→alpha after levels; RGB = solid fill.
 
     --silhouette: key luma at/under cutoff to alpha 0; keep original RGB.
-    Then blur+choke the matte (defaults 1 / 0.8). --color / --white / --gamma unused.
+    Then blur+choke the matte (defaults 1 / 1.2). --color / --white / --gamma unused.
     """
     _validate_cutoff(cutoff)
     black_pt = cutoff / 100.0 * 255.0
@@ -395,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
             "Art-on-black → solid fill + greyscale alpha. "
             "Levels cutoff on luminance, then fill RGB. "
             "--silhouette keys only the black, keeps original greys, "
-            "then blur+choke the matte (default 1 / 0.8). "
+            "then blur+choke the matte (default 1 / 1.2). "
             "Default: overwrite source PNG."
         )
     )
@@ -477,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         metavar="PX",
-        help="Silhouette only: how far in to pull after blur, in pixels (default 0.8)",
+        help="Silhouette only: how far in to pull after blur, in pixels (default 1.2)",
     )
     args = ap.parse_args(argv)
 
