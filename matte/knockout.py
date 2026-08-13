@@ -19,7 +19,7 @@ Usage:
   python knockout.py path/to/file.png --black-point 13 --white-point 242  # 0–255 aliases
   python knockout.py path/to/file.png --color "#e13e13"
   python knockout.py path/to/file.png --invert     # dark art on light BG
-  python knockout.py path/to/file.png --silhouette # key black; keep greys; blur 1 then levels 118–138
+  python knockout.py path/to/file.png --silhouette # key black; keep greys; blur 8 then levels 118–138
   python knockout.py path/to/file.png --silhouette --blur 0   # hard key, no edge refine
   python knockout.py path/to/file.png --force      # reprocess hextile-pipe outputs
 """
@@ -54,7 +54,9 @@ DEFAULT_CUTOFF = 3.0
 DEFAULT_WHITE = 97.0
 # --silhouette: blur the hard mask, then Photoshop-style input levels.
 # 128 is the blurred-edge mid; default window is ±10 (118–138).
-DEFAULT_BLUR = 1.0
+# 1px blur leaves almost no values in 118–138, so levels snap to 0/255
+# (looks fully aliased). A wider blur gives the window a real grey ramp.
+DEFAULT_BLUR = 8.0
 DEFAULT_LO = 118.0
 DEFAULT_HI = 138.0
 
@@ -96,15 +98,15 @@ def _refine_silhouette_alpha(
         return im
     im = im.filter(ImageFilter.GaussianBlur(radius=float(blur_px)))
     span = hi - lo
-
-    def _lut(v, _lo=lo, _hi=hi, _span=span):
-        if v <= _lo:
-            return 0
-        if v >= _hi:
-            return 255
-        return int(round((v - _lo) * 255.0 / _span))
-
-    return im.point(_lut)
+    table = []
+    for i in range(256):
+        if i <= lo:
+            table.append(0)
+        elif i >= hi:
+            table.append(255)
+        else:
+            table.append(int(round((i - lo) * 255.0 / span)))
+    return im.point(table)
 
 
 def _levels_u8(L: float, black: float, white: float, gamma: float) -> int:
@@ -160,7 +162,7 @@ def knockout_image(
     """Default: greyscale→alpha after levels; RGB = solid fill.
 
     --silhouette: key luma at/under cutoff to alpha 0; keep original RGB.
-    Then blur the matte and input-levels it (default blur 1, lo 118, hi 138).
+    Then blur the matte and input-levels it (default blur 8, lo 118, hi 138).
     --color unused.
     """
     _validate_cutoff(cutoff)
@@ -396,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
             "Art-on-black → solid fill + greyscale alpha. "
             "Levels cutoff on luminance, then fill RGB. "
             "--silhouette keys only the black, keeps original greys, "
-            "then blur the matte and levels it (default blur 1, 118–138). "
+            "then blur the matte and levels it (default blur 8, 118–138). "
             "Default: overwrite source PNG."
         )
     )
@@ -471,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         metavar="PX",
-        help="Silhouette only: Gaussian blur on the matte in pixels (default 1; 0 = off)",
+        help="Silhouette only: Gaussian blur on the matte in pixels (default 8; 0 = off)",
     )
     ap.add_argument(
         "--lo",

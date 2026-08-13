@@ -164,17 +164,18 @@ sil_out = np.array(Image.open(sil).convert("RGBA"))
 assert list(sil_out[0, 0]) == [0, 0, 0, 0], sil_out[0, 0]
 assert list(sil_out[0, 1]) == [128, 128, 128, 255], sil_out[0, 1]
 
-# default blur+levels: interior of a solid block stays opaque grey
+# default blur+levels: interior of a large block stays opaque grey
 blk = scratch / "sil_block.png"
-bimg = Image.new("RGB", (32, 32), (0, 0, 0))
-for y in range(8, 24):
-    for x in range(8, 24):
+bimg = Image.new("RGB", (96, 96), (0, 0, 0))
+for y in range(16, 80):
+    for x in range(16, 80):
         bimg.putpixel((x, y), (128, 128, 128))
 bimg.save(blk)
 run([str(root / "matte/knockout.py"), str(blk), "--silhouette", "--force"])
 bout = np.array(Image.open(blk).convert("RGBA"))
-assert list(bout[16, 16]) == [128, 128, 128, 255], bout[16, 16]
+assert list(bout[48, 48]) == [128, 128, 128, 255], bout[48, 48]
 assert int(bout[0, 0, 3]) == 0
+assert int(((bout[:, :, 3] > 8) & (bout[:, :, 3] < 247)).sum()) > 50
 
 print("PASS smoke-matte-flags")
 PY

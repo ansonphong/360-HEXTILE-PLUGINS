@@ -188,7 +188,7 @@ python3 matte/knockout.py file.jpg --new
 | `--color` | `white` | Solid fill (unused with `--silhouette`) |
 | `--invert` | off | Invert greyscale first |
 | `--silhouette` | off | Key only `--cutoff`; keep original RGB; blur then levels the matte |
-| `--blur` | `1` | Silhouette: Gaussian on the matte, pixels (`0` = off) |
+| `--blur` | `8` | Silhouette: Gaussian on the matte, pixels (`0` = off) |
 | `--lo` / `--hi` | `118` / `138` | Silhouette: input levels on the blurred matte (0–255). Raise both to choke; lower both to expand. |
 
 PNG metadata `hextile-pipe-tool=knockout`; refuse reprocess unless `--force`.
