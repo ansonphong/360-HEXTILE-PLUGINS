@@ -218,7 +218,7 @@ python3 matte/despeckle.py file.png --black-point 3         # 0–255 alias
 | `--new` | off | Sidecar `file.despeckle.png` |
 | `--recursive` | off | Recurse |
 | `--mode` | `auto` | `auto` \| `alpha` \| `black` |
-| `--min-area` | `4` | Absolute pixel threshold (`0` = off) |
+| `--min-area` | `2` | Absolute pixel threshold (`0` = off) |
 | `--min-area-rel` | — | Fraction of long_edge² (exclusive with `--min-area`) |
 | `--passes` | `1` | Repeat cleanup P times |
 | `--cutoff` | `1` | Levels black **0–100** |
