@@ -24,7 +24,7 @@ Discover full set: `bash "$ROOT/scripts/fp-run.sh" trim -h`
 | Flag | Meaning |
 |------|---------|
 | `--new` | Sidecar `file.trim.png` (required for agents) |
-| `--recursive` | Directory tree |
+| `--recursive` | Also process files in subfolders (default: this folder only) |
 | `--mode crop\|pad` | `crop` (default): trim to content then margin; `pad`: expand canvas only |
 | `--margin SPEC` | `10` / `10px` or `5%` (half-up % of max content side, all four sides) |
 | `--threshold N` | Content if alpha > N (0–254; default 0) |

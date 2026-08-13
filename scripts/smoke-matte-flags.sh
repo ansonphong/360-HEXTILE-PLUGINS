@@ -40,6 +40,35 @@ for tool, flags in {
     for f in flags:
         assert f in text, f"missing {f} in {tool} -h"
 
+# --- folder mode is this folder only unless --recursive ---
+from colorutil import collect_files
+nest = scratch / "nest"
+(nest / "sub").mkdir(parents=True)
+Image.new("RGBA", (4, 4), (10, 20, 30, 255)).save(nest / "top.png")
+Image.new("RGBA", (4, 4), (40, 50, 60, 255)).save(nest / "sub" / "deep.png")
+shallow = collect_files(
+    nest, recursive=False, suffixes={".png"}, warn_skipped=False
+)
+deep = collect_files(
+    nest, recursive=True, suffixes={".png"}, warn_skipped=False
+)
+assert [p.name for p in shallow] == ["top.png"], shallow
+assert [p.name for p in deep] == ["deep.png", "top.png"], deep
+run([str(root / "matte/recolor_png.py"), str(nest), "--color", "white"])
+assert list(np.array(Image.open(nest / "top.png").convert("RGBA"))[0, 0, :3]) == [
+    255, 255, 255,
+]
+assert list(np.array(Image.open(nest / "sub" / "deep.png").convert("RGBA"))[0, 0, :3]) == [
+    40, 50, 60,
+]
+run([
+    str(root / "matte/recolor_png.py"), str(nest),
+    "--recursive", "--color", "red",
+])
+assert list(np.array(Image.open(nest / "sub" / "deep.png").convert("RGBA"))[0, 0, :3]) == [
+    255, 0, 0,
+]
+
 # --- cutout --color ---
 src = scratch / "cutout_src.png"
 img = Image.new("RGB", (64, 64), (0, 0, 0))

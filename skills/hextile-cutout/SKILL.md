@@ -24,7 +24,7 @@ bash "$ROOT/scripts/fp-run.sh" cutout <path> --new [flags…]
 | Flag | Meaning |
 |------|---------|
 | `--new` | Sidecar `file.cutout.png` |
-| `--recursive` | Directory tree |
+| `--recursive` | Also process files in subfolders (default: this folder only) |
 | `--black-point N` | L ≤ N → alpha 0 (0–255; default 8) |
 | `--white-point N` | L ≥ N → alpha 255 (0–255; default 247) |
 | `--cutoff` / `--white` | Percent 0–100 aliases for black/white point |

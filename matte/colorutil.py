@@ -6,6 +6,13 @@ Levels dual units: percent 0–100 ↔ raw luma 0–255.
 from __future__ import annotations
 
 import re
+import sys
+from pathlib import Path
+
+RECURSIVE_HELP = (
+    "Also process files in subfolders "
+    "(default: only files directly in the given folder)"
+)
 
 NAMED = {
     "white": (255, 255, 255),
@@ -169,3 +176,57 @@ def effective_min_area(
             raise ValueError("--min-area must be >= 0")
         return int(min_area)
     return int(default_min_area)
+
+
+def collect_files(
+    path: Path,
+    *,
+    recursive: bool = False,
+    suffixes: set[str] | frozenset[str] | tuple[str, ...],
+    skip_endings: tuple[str, ...] = (),
+    file_kind: str | None = None,
+    warn_skipped: bool = True,
+) -> list[Path]:
+    """List matching files. A folder means that folder only unless recursive.
+
+    Uses iterdir / rglob, not Path.glob('*.ext'). On Windows/WSL mounts,
+    '*' can match across subdirectories and a folder run then goes too deep.
+    An explicit file is always returned (skip_endings apply to folder scans).
+    """
+    suf = {
+        s.lower() if s.startswith(".") else f".{s.lower()}" for s in suffixes
+    }
+    skip = tuple(e.lower() for e in skip_endings)
+
+    if path.is_file():
+        if path.suffix.lower() not in suf:
+            kind = file_kind or "/".join(
+                sorted(s.lstrip(".").upper() for s in suf)
+            )
+            raise SystemExit(f"ERR not a {kind} file: {path}")
+        return [path]
+    if not path.is_dir():
+        raise SystemExit(f"ERR path not found: {path}")
+
+    def wanted(p: Path) -> bool:
+        if not p.is_file():
+            return False
+        if p.suffix.lower() not in suf:
+            return False
+        if skip and any(p.name.lower().endswith(e) for e in skip):
+            return False
+        return True
+
+    if recursive:
+        return sorted(p for p in path.rglob("*") if wanted(p))
+
+    files = sorted(p for p in path.iterdir() if wanted(p))
+    if warn_skipped:
+        deeper = [p for p in path.rglob("*") if wanted(p) and p.parent != path]
+        if deeper:
+            print(
+                f"note: skipped {len(deeper)} file(s) in subfolders "
+                f"(pass --recursive)",
+                file=sys.stderr,
+            )
+    return files

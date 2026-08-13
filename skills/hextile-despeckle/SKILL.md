@@ -24,7 +24,7 @@ bash "$ROOT/scripts/fp-run.sh" despeckle <path> --new [flags…]
 | Flag | Meaning |
 |------|---------|
 | `--new` | Sidecar `file.despeckle.png` |
-| `--recursive` | Directory tree |
+| `--recursive` | Also process files in subfolders (default: this folder only) |
 | `--mode auto\|alpha\|black` | Coverage source |
 | `--min-area N` | Drop components under N pixels (default 4) |
 | `--min-area-rel F` | Scale-aware: max(1, round(F × long_edge²)); exclusive with `--min-area` |

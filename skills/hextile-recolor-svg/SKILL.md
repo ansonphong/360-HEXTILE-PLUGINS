@@ -24,7 +24,7 @@ bash "$ROOT/scripts/fp-run.sh" recolor_svg <path> --new [flags…]
 | Flag | Meaning |
 |------|---------|
 | `--new` | Sidecar `file.recolor.svg` |
-| `--recursive` | Directory tree |
+| `--recursive` | Also process files in subfolders (default: this folder only) |
 | `--color` | Fill RGB: name, `#rrggbb`, or `r,g,b` (default white) |
 
 ## Path rules

@@ -24,7 +24,7 @@ Discover full set: `bash "$ROOT/scripts/fp-run.sh" knockout -h`
 | Flag | Meaning |
 |------|---------|
 | `--new` | Sidecar `file.ext.knockout.png` (required for agents) |
-| `--recursive` | Directory tree |
+| `--recursive` | Also process files in subfolders (default: this folder only) |
 | `--cutoff PCT` | Levels black point 0–100 |
 | `--white PCT` | Levels white point 0–100 |
 | `--black-point` / `--white-point` | Raw luma 0–255 aliases |

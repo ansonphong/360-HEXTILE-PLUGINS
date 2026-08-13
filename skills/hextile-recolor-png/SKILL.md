@@ -25,7 +25,7 @@ bash "$ROOT/scripts/fp-run.sh" recolor_png <path> --new [flags…]
 | Flag | Meaning |
 |------|---------|
 | `--new` | Sidecar `file.recolor.png` |
-| `--recursive` | Directory tree |
+| `--recursive` | Also process files in subfolders (default: this folder only) |
 | `--color` | Fill RGB: name, `#rrggbb`, or `r,g,b` (default white) |
 | `--min-alpha N` | Only recolor when alpha ≥ N (default 1; try 8–16 for fringe) |
 

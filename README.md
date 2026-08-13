@@ -86,7 +86,7 @@ Conversion: `u8 = pct/100*255`, `pct = u8/255*100` (rounded when going to intege
 |------|---------|
 | `path` | File or directory |
 | `--new` | Write sidecar instead of overwrite |
-| `--recursive` | Recurse into subfolders |
+| `--recursive` | Also process files in subfolders (default: only files in the given folder) |
 | `--color COLOR` | Fill RGB (default **white**) — *recolor, cutout, knockout, despeckle* |
 | `--invert` | Flip coverage / greyscale (dark art on light) — *cutout, knockout, despeckle* |
 | `--gamma G` | Midtone gamma; `>1` = crisper (default `1.0`) — *cutout, knockout, despeckle* |

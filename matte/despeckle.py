@@ -33,7 +33,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from colorutil import effective_min_area, parse_color, resolve_levels_pct
+from colorutil import (
+    RECURSIVE_HELP,
+    collect_files,
+    effective_min_area,
+    parse_color,
+    resolve_levels_pct,
+)
 
 try:
     import numpy as np
@@ -371,22 +377,13 @@ def despeckle_file(
 
 
 def collect_images(path: Path, recursive: bool) -> list[Path]:
-    if path.is_file():
-        if path.suffix.lower() not in IMAGE_EXTS:
-            raise SystemExit(f"ERR not a PNG/JPG file: {path}")
-        return [path]
-    if not path.is_dir():
-        raise SystemExit(f"ERR path not found: {path}")
-    files: list[Path] = []
-    patterns = ("*.png", "*.PNG", "*.jpg", "*.JPG", "*.jpeg", "*.JPEG")
-    if recursive:
-        for pat in patterns:
-            files.extend(path.glob(f"**/{pat}"))
-    else:
-        for pat in patterns:
-            files.extend(path.glob(pat))
-    files = sorted({p for p in files if p.is_file()})
-    return [p for p in files if not p.name.lower().endswith(".despeckle.png")]
+    return collect_files(
+        path,
+        recursive=recursive,
+        suffixes=IMAGE_EXTS,
+        skip_endings=(".despeckle.png",),
+        file_kind="PNG/JPG",
+    )
 
 
 def dest_for(src: Path, new: bool, emit_alpha: bool) -> Path:
@@ -409,13 +406,17 @@ def main(argv: list[str] | None = None) -> int:
             "Default: overwrite source."
         )
     )
-    ap.add_argument("path", type=Path, help="PNG/JPG file or directory")
+    ap.add_argument(
+        "path",
+        type=Path,
+        help="PNG/JPG file, or folder (files in that folder only)",
+    )
     ap.add_argument(
         "--new",
         action="store_true",
         help="Write sidecar file.despeckle.png instead of overwriting",
     )
-    ap.add_argument("--recursive", action="store_true", help="Recurse into subfolders")
+    ap.add_argument("--recursive", action="store_true", help=RECURSIVE_HELP)
     ap.add_argument(
         "--mode",
         choices=MODE_CHOICES,

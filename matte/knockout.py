@@ -33,7 +33,7 @@ from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
-from colorutil import COLOR_HELP, parse_color, resolve_levels_pct
+from colorutil import COLOR_HELP, RECURSIVE_HELP, collect_files, parse_color, resolve_levels_pct
 
 try:
     import numpy as np
@@ -205,34 +205,16 @@ def knockout_file(
 
 
 def collect_images(path: Path, recursive: bool, *, force: bool) -> list[Path]:
-    if path.is_file():
-        if path.suffix.lower() not in IMAGE_EXTS:
-            raise SystemExit(f"ERR not a PNG/JPG file: {path}")
-        files = [path]
-    elif path.is_dir():
-        if recursive:
-            candidates = path.rglob("*")
-        else:
-            candidates = path.iterdir()
-        files = sorted(
-            {
-                p
-                for p in candidates
-                if p.is_file() and p.suffix.lower() in IMAGE_EXTS
-            }
-        )
-    else:
-        raise SystemExit(f"ERR path not found: {path}")
-
-    out: list[Path] = []
-    for p in files:
-        # Always skip knockout sidecars unless --force (and even then only if explicit file?)
-        if p.name.lower().endswith(SIDECAR_MARKER) and not force:
-            continue
-        if not force and is_knockout_product(p):
-            continue
-        out.append(p)
-    return out
+    files = collect_files(
+        path,
+        recursive=recursive,
+        suffixes=IMAGE_EXTS,
+        skip_endings=() if force else (SIDECAR_MARKER,),
+        file_kind="PNG/JPG",
+    )
+    if force:
+        return files
+    return [p for p in files if not is_knockout_product(p)]
 
 
 def dest_for(src: Path, new: bool) -> Path:
@@ -302,13 +284,17 @@ def main(argv: list[str] | None = None) -> int:
             "Levels cutoff on luminance, then fill RGB. Default: overwrite source PNG."
         )
     )
-    ap.add_argument("path", type=Path, help="PNG/JPG file or directory")
+    ap.add_argument(
+        "path",
+        type=Path,
+        help="PNG/JPG file, or folder (files in that folder only)",
+    )
     ap.add_argument(
         "--new",
         action="store_true",
         help="Write sidecar stem.ext.knockout.png instead of overwriting",
     )
-    ap.add_argument("--recursive", action="store_true", help="Recurse into subfolders")
+    ap.add_argument("--recursive", action="store_true", help=RECURSIVE_HELP)
     ap.add_argument(
         "--force",
         action="store_true",

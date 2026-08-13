@@ -21,7 +21,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from colorutil import COLOR_HELP, parse_color
+from colorutil import COLOR_HELP, RECURSIVE_HELP, collect_files, parse_color
 
 try:
     import numpy as np
@@ -79,19 +79,13 @@ def recolor_png_file(
 
 
 def collect_pngs(path: Path, recursive: bool) -> list[Path]:
-    if path.is_file():
-        if path.suffix.lower() != ".png":
-            raise SystemExit(f"ERR not a .png file: {path}")
-        return [path]
-    if not path.is_dir():
-        raise SystemExit(f"ERR path not found: {path}")
-    if recursive:
-        files = list(path.glob("**/*.png")) + list(path.glob("**/*.PNG"))
-    else:
-        files = list(path.glob("*.png")) + list(path.glob("*.PNG"))
-    files = sorted({p for p in files if p.is_file()})
-    skip = (SIDECAR_MARKER, _LEGACY_SIDECAR)
-    return [p for p in files if not any(p.name.lower().endswith(s) for s in skip)]
+    return collect_files(
+        path,
+        recursive=recursive,
+        suffixes={".png"},
+        skip_endings=(SIDECAR_MARKER, _LEGACY_SIDECAR),
+        file_kind=".png",
+    )
 
 
 def dest_for(src: Path, new: bool) -> Path:
@@ -107,13 +101,17 @@ def main(argv: list[str] | None = None) -> int:
             "preserve alpha. Default: overwrite source."
         )
     )
-    ap.add_argument("path", type=Path, help="PNG file or directory")
+    ap.add_argument(
+        "path",
+        type=Path,
+        help="PNG file, or folder (files in that folder only)",
+    )
     ap.add_argument(
         "--new",
         action="store_true",
         help="Write sidecar file.recolor.png instead of overwriting",
     )
-    ap.add_argument("--recursive", action="store_true", help="Recurse into subfolders")
+    ap.add_argument("--recursive", action="store_true", help=RECURSIVE_HELP)
     ap.add_argument(
         "--color",
         type=str,

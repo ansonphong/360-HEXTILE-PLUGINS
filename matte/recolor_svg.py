@@ -19,7 +19,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from colorutil import COLOR_HELP, parse_color, rgb_to_hex
+from colorutil import COLOR_HELP, RECURSIVE_HELP, collect_files, parse_color, rgb_to_hex
 
 SHAPE_TAGS = {
     "path",
@@ -99,19 +99,13 @@ def recolor_svg_file(
 
 
 def collect_svgs(path: Path, recursive: bool) -> list[Path]:
-    if path.is_file():
-        if path.suffix.lower() != ".svg":
-            raise SystemExit(f"ERR not an .svg file: {path}")
-        return [path]
-    if not path.is_dir():
-        raise SystemExit(f"ERR path not found: {path}")
-    if recursive:
-        files = list(path.glob("**/*.svg")) + list(path.glob("**/*.SVG"))
-    else:
-        files = list(path.glob("*.svg")) + list(path.glob("*.SVG"))
-    files = sorted({p for p in files if p.is_file()})
-    skip = (SIDECAR_MARKER, _LEGACY_SIDECAR)
-    return [p for p in files if not any(p.name.lower().endswith(s) for s in skip)]
+    return collect_files(
+        path,
+        recursive=recursive,
+        suffixes={".svg"},
+        skip_endings=(SIDECAR_MARKER, _LEGACY_SIDECAR),
+        file_kind=".svg",
+    )
 
 
 def dest_for(src: Path, new: bool) -> Path:
@@ -127,13 +121,17 @@ def main(argv: list[str] | None = None) -> int:
             "Default: overwrite source."
         )
     )
-    ap.add_argument("path", type=Path, help="SVG file or directory")
+    ap.add_argument(
+        "path",
+        type=Path,
+        help="SVG file, or folder (files in that folder only)",
+    )
     ap.add_argument(
         "--new",
         action="store_true",
         help="Write sidecar file.recolor.svg instead of overwriting",
     )
-    ap.add_argument("--recursive", action="store_true", help="Recurse into subfolders")
+    ap.add_argument("--recursive", action="store_true", help=RECURSIVE_HELP)
     ap.add_argument(
         "--color",
         type=str,
