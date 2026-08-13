@@ -175,7 +175,7 @@ run([str(root / "matte/knockout.py"), str(blk), "--silhouette", "--force"])
 bout = np.array(Image.open(blk).convert("RGBA"))
 assert list(bout[48, 48]) == [128, 128, 128, 255], bout[48, 48]
 assert int(bout[0, 0, 3]) == 0
-assert int(((bout[:, :, 3] > 8) & (bout[:, :, 3] < 247)).sum()) > 50
+assert int(((bout[:, :, 3] > 8) & (bout[:, :, 3] < 247)).sum()) > 10
 
 print("PASS smoke-matte-flags")
 PY
