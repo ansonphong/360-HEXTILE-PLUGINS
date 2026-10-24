@@ -208,7 +208,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
         "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
                   "capability", "working_digest", "owner_generation", "title", "tags",
                   "document_schema", "draft_state", "writable", "save_state", "reasons",
-                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant", "human_only"},
+                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant", "resource_grant", "human_only"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor"},
@@ -249,7 +249,14 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                                       or type(data["bundle_grant"]["sha256"]) is not str
                                       or _WORKSPACE_DIGEST.fullmatch(data["bundle_grant"]["sha256"]) is None
                                       or type(data["bundle_grant"]["size"]) is not int
-                                      or not 0 < data["bundle_grant"]["size"] <= 2 * 1024**3)))) or
+                                      or not 0 < data["bundle_grant"]["size"] <= 2 * 1024**3))
+                                  or ("resource_grant" in data and (type(data["resource_grant"]) is not dict
+                                      or set(data["resource_grant"]) != {"grant_id", "frame_count", "expires_in"}
+                                      or type(data["resource_grant"]["grant_id"]) is not str
+                                      or re.fullmatch(r"srg_[A-Za-z0-9_-]{32}", data["resource_grant"]["grant_id"]) is None
+                                      or type(data["resource_grant"]["frame_count"]) is not int
+                                      or not 1 <= data["resource_grant"]["frame_count"] <= 1024
+                                      or type(data["resource_grant"]["expires_in"]) is not int)))) or
             (entries is not None and (type(data.get("entries")) is not list or
                                       len(data["entries"]) > entries or
                                       any(type(row) is not dict or set(row) - entry_allowed
@@ -2044,6 +2051,123 @@ class Client:
         _native_read_args(args, {"project_context_witness"})
         return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/project-conventions",
                                                      params=dict(args)), kind="conventions")
+
+    def stage_shader_resource(self, args: Mapping[str, Any]) -> dict:
+        required = {"shader", "project_context_witness", "base", "expected_working_digest", "source"}
+        optional = {"resolution", "reduced_copy", "projection", "filter", "edge_u", "edge_v"}
+        _native_read_args(args, required, optional)
+        source = args["source"]
+        fields = {"render_node": {"render_id", "node_id", "artifact_witness"},
+                  "sequence_range": {"sequence_id", "start_index", "end_index", "fps_num", "fps_den"},
+                  "selected_grant": {"grant_id"}}
+        if (not isinstance(source, Mapping) or source.get("kind") not in fields
+                or fields[source["kind"]] - source.keys()
+                or set(source) - fields[source["kind"]] - {"kind"}
+                - ({"fps_num", "fps_den"} if source["kind"] == "selected_grant" else set())):
+            raise HextileClientError("Invalid closed Shader resource source", status_code=422, kind="other")
+        if (source["kind"] == "selected_grant" and
+                (type(source["grant_id"]) is not str or re.fullmatch(r"srg_[A-Za-z0-9_-]{32}", source["grant_id"]) is None)):
+            raise HextileClientError("Selected input grant required", status_code=422, kind="other")
+        if (source["kind"] == "sequence_range" and
+                (type(source["start_index"]) is not int or type(source["end_index"]) is not int
+                 or source["end_index"] < source["start_index"])):
+            raise HextileClientError("Invalid complete sequence range", status_code=422, kind="other")
+        if args.get("resolution", "full") not in {"full", "4k", "8k", "12k", "16k"} or type(args.get("reduced_copy", False)) is not bool:
+            raise HextileClientError("Invalid resource resolution", status_code=422, kind="other")
+        result = self.request_json("POST", "/api/shaders/agent-operations/resources/stage", dict(args))
+        if (type(result) is not dict or result.get("schema") != 1
+                or type(result.get("frames")) is not list or not 1 <= len(result["frames"]) <= 1024
+                or result.get("frame_count") != len(result["frames"])
+                or any(type(row) is not dict or set(row) != {"index", "sha256", "width", "height"}
+                       or type(row["index"]) is not int or type(row["sha256"]) is not str
+                       or _WORKSPACE_DIGEST.fullmatch(row["sha256"]) is None for row in result["frames"])
+                or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 262144):
+            raise HextileClientError("Shader resource stage acknowledgement is invalid", kind="other")
+        return result
+
+    def _shader_scoped_write(self, args: Mapping[str, Any], operation: str, path: str,
+                             required: set[str], optional: set[str] = frozenset()) -> dict:
+        if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
+            raise HextileClientError("Invalid closed Shader operation", status_code=422, kind="other")
+        try:
+            valid = type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"] and uuid.UUID(args["request_id"]).version == 4
+        except (ValueError, TypeError, KeyError):
+            valid = False
+        if not valid:
+            raise HextileClientError("Invalid Shader request ID", status_code=422, kind="other")
+        _native_read_args({key: args[key] for key in ("shader", "project_context_witness")}
+                          if "shader" in required else {"project_context_witness": args["project_context_witness"]},
+                          {"shader", "project_context_witness"} if "shader" in required else {"project_context_witness"})
+        try:
+            receipt = self.request_json("POST", path, dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader operation outcome unknown; retry only the original request ID.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
+            raise
+        if (type(receipt) is not dict or receipt.get("schema") != 1
+                or receipt.get("request_id") != args["request_id"] or receipt.get("operation") != operation
+                or receipt.get("state") not in {"pending", "applied", "saved", "refused", "failed", "unknown", "expired"}
+                or len(json.dumps(receipt, ensure_ascii=False).encode("utf-8")) > 65536):
+            raise HextileClientError("Shader operation acknowledgement unknown; use original request ID.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]})
+        return receipt
+
+    def set_shader_resource(self, args: Mapping[str, Any]) -> dict:
+        required = {"shader", "project_context_witness", "request_id", "base", "expected_working_digest", "action", "slot_id"}
+        optional = {"staged_token", "filter", "edge_u", "edge_v", "time_mode", "end_mode", "hold_index",
+                    "library_intent", "confirmation_scope", "studio_surface_id", "lease_id", "expected_edit_sequence"}
+        if args.get("action") not in {"attach", "replace", "locate", "remove", "settings"}:
+            raise HextileClientError("Unknown resource action", status_code=422, kind="other")
+        if (args["action"] in {"attach", "replace", "locate"}) != ("staged_token" in args):
+            raise HextileClientError("Resource stage token mismatch", status_code=422, kind="other")
+        return self._shader_scoped_write(args, "shader_set_resource", "/api/shaders/agent-operations/resources/set",
+                                         required, optional)
+
+    def get_shader_library_organization(self, args: Mapping[str, Any]) -> dict:
+        required, optional = {"project_context_witness", "origin"}, {"cursor", "limit", "revision", "folder_id"}
+        _native_read_args(args, required, optional)
+        if args["origin"] not in {"project", "user"} or ("folder_id" in args and "revision" not in args):
+            raise HextileClientError("Invalid organization scope", status_code=422, kind="other")
+        result = self.request_json("GET", "/api/shaders/agent-operations/library/organization", params=dict(args))
+        if (type(result) is not dict or set(result) != {"schema", "project_context_witness", "origin", "status",
+                "revision", "folders", "assigned_shader_ids", "next_cursor"}
+                or result["schema"] != 1 or result["origin"] != args["origin"]
+                or result["project_context_witness"] != args["project_context_witness"]
+                or result["status"] not in {"ready", "unavailable"}
+                or type(result["folders"]) is not list or len(result["folders"]) > 50
+                or type(result["assigned_shader_ids"]) is not list or len(result["assigned_shader_ids"]) > 50
+                or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 65536):
+            raise HextileClientError("Invalid bounded organization read", kind="other")
+        return result
+
+    def organize_shader_library(self, args: Mapping[str, Any]) -> dict:
+        required = {"request_id", "project_context_witness", "origin", "library_session_id", "expected_revision", "command"}
+        if args.get("origin") not in {"project", "user"} or not isinstance(args.get("command"), Mapping):
+            raise HextileClientError("Invalid organization action", status_code=422, kind="other")
+        if args["command"].get("kind") not in {"createFolder", "renameFolder", "removeFolder", "moveShader", "moveShaders", "undo"}:
+            raise HextileClientError("Unknown organization action", status_code=422, kind="other")
+        return self._shader_scoped_write(args, "shader_organize_library", "/api/shaders/agent-operations/library/organize",
+                                         required)
+
+    def set_shader_tags(self, args: Mapping[str, Any]) -> dict:
+        required = {"request_id", "project_context_witness", "command"}
+        command = args.get("command")
+        if (not isinstance(command, Mapping) or set(command) != {"kind", "shader", "tagId", "assigned"}
+                or command.get("kind") != "setShaderTag" or type(command.get("assigned")) is not bool):
+            raise HextileClientError("Invalid Shader tag assignment", status_code=422, kind="other")
+        _native_shader_args("state", {"shader": command["shader"], "project_context_witness": args["project_context_witness"]})
+        return self._shader_scoped_write(args, "shader_set_tags", "/api/shaders/agent-operations/library/tags", required)
+
+    def set_shader_project_conventions(self, args: Mapping[str, Any]) -> dict:
+        required = {"request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"}
+        if (type(args.get("profiles")) is not list or len(args["profiles"]) > 8
+                or any(type(row) is not dict for row in args["profiles"])
+                or (args.get("expected_digest") is not None and
+                    (type(args["expected_digest"]) is not str or re.fullmatch(r"[0-9a-f]{64}", args["expected_digest"]) is None))):
+            raise HextileClientError("Invalid Project convention CAS", status_code=422, kind="other")
+        return self._shader_scoped_write(args, "shader_set_project_conventions",
+            "/api/shaders/agent-operations/project-conventions", required)
 
     def rename_shader_asset(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("rename", args)

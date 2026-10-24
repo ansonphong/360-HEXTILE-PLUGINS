@@ -32,6 +32,89 @@ def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
 
 
+def test_resource_and_library_extensions_have_closed_explicit_transport(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    names = {item["name"] for item in SHADER_EXTENSION_TOOLS}
+    assert {"shader_stage_resource", "shader_set_resource", "shader_get_library_organization",
+            "shader_organize_library", "shader_set_tags", "shader_set_project_conventions"} <= names
+    descriptor = lambda name: next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == name)
+    ref = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "a" * 64
+    base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
+    target = {"shader": ref, "project_context_witness": "w", "base": base, "expected_working_digest": digest}
+    source = {"kind": "selected_grant", "grant_id": "srg_" + "a" * 32, "fps_num": 24, "fps_den": 1}
+    stage = {**target, "source": source}
+    jsonschema.validate(stage, descriptor("shader_stage_resource")["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**stage, "path": "C:/private.png"}, descriptor("shader_stage_resource")["inputSchema"])
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if path.endswith("/resources/stage"):
+            return {"schema": 1, "shader": ref, "project_context_witness": "w", "staged_token": "stage",
+                    "frames": [{"index": 0, "sha256": digest, "width": 2, "height": 2},
+                               {"index": 1, "sha256": digest, "width": 2, "height": 2}],
+                    "frame_count": 2, "canonical_hash": None, "estimated_bytes": 100, "expires_in": 300}
+        if method == "GET":
+            return {"schema": 1, "project_context_witness": "w", "origin": "user", "status": "ready",
+                    "revision": "b" * 64, "folders": [], "assigned_shader_ids": [], "next_cursor": None}
+        return {"schema": 1, "request_id": body["request_id"], "operation":
+                "shader_set_resource" if path.endswith("/resources/set") else "shader_organize_library",
+                "state": "saved", "project_context_witness": "w"}
+    monkeypatch.setattr(client, "request_json", reply)
+    assert len(client.stage_shader_resource(stage)["frames"]) == 2
+    assert calls[-1][1].endswith("/resources/stage")
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    mutation = {**target, "request_id": request_id, "action": "attach", "slot_id": "input1",
+                "staged_token": "stage", "library_intent": "saved",
+                "confirmation_scope": {"operation": "shader_set_resource", "shader": ref}}
+    jsonschema.validate(mutation, descriptor("shader_set_resource")["inputSchema"])
+    assert client.set_shader_resource(mutation)["state"] == "saved"
+    assert calls[-1][1].endswith("/resources/set")
+    assert client.get_shader_library_organization({"project_context_witness": "w", "origin": "user"})["revision"] == "b" * 64
+    assert calls[-1][1].endswith("/library/organization")
+    with pytest.raises(HextileClientError):
+        client.set_shader_resource({**mutation, "path": "C:/private.png"})
+
+
+def test_organization_tags_and_conventions_forward_only_native_closed_actions(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    descriptor = lambda name: next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == name)
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    session_id = "c63dffab-15b2-4752-9f54-729cf3922b09"
+    revision = "a" * 64
+    org = {"request_id": request_id, "project_context_witness": "w", "origin": "user",
+           "library_session_id": session_id, "expected_revision": revision,
+           "command": {"kind": "moveShaders", "shaderIds": ["aurora", "borealis"], "folderId": None}}
+    jsonschema.validate(org, descriptor("shader_organize_library")["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**org, "command": {**org["command"], "shaderIds": ["aurora", "aurora"]}},
+                            descriptor("shader_organize_library")["inputSchema"])
+    tags = {"request_id": request_id, "project_context_witness": "w", "command": {
+        "kind": "setShaderTag", "shader": {"origin": "user", "shaderId": "aurora"},
+        "tagId": "favorite", "assigned": True}}
+    conventions = {"request_id": request_id, "project_context_witness": "w",
+                   "expected_digest": revision, "profiles": [], "default_profile_id": None}
+    jsonschema.validate(tags, descriptor("shader_set_tags")["inputSchema"])
+    jsonschema.validate(conventions, descriptor("shader_set_project_conventions")["inputSchema"])
+    calls = []
+    client = Client("http://127.0.0.1:9")
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body))
+        operation = {"organize": "shader_organize_library", "tags": "shader_set_tags",
+                     "project-conventions": "shader_set_project_conventions"}[path.rsplit("/", 1)[-1]]
+        return {"schema": 1, "request_id": body["request_id"], "operation": operation, "state": "saved"}
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.organize_shader_library(org)["state"] == "saved"
+    assert client.set_shader_tags(tags)["state"] == "saved"
+    assert client.set_shader_project_conventions(conventions)["state"] == "saved"
+    assert [path for _, path, _ in calls] == ["/api/shaders/agent-operations/library/organize",
+        "/api/shaders/agent-operations/library/tags", "/api/shaders/agent-operations/project-conventions"]
+    with pytest.raises(HextileClientError):
+        client.organize_shader_library({**org, "path": "/private"})
+
+
 def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}

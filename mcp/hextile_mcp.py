@@ -383,9 +383,11 @@ _GUIDE_ROOT = Path(__file__).resolve().parent.parent / "skills" / "360-hextile" 
 def _annotations(name: str) -> dict[str, bool]:
     if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation",
                                      "shader_get_credits", "shader_research_sources",
-                                     "shader_get_proposal", "shader_get_workspace"}:
+                                     "shader_get_proposal", "shader_get_workspace",
+                                     "shader_get_library_organization"}:
         return {"readOnlyHint": True, "destructiveHint": False}
-    if name in _DESTRUCTIVE:
+    if name in _DESTRUCTIVE or name in {"shader_set_resource", "shader_organize_library",
+                                       "shader_set_project_conventions"}:
         return {"readOnlyHint": False, "destructiveHint": True}
     return {"readOnlyHint": False, "destructiveHint": False}
 
@@ -2627,6 +2629,64 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness", "base", "expected_working_digest", "action", "mode"]),
     _tool_def("shader_get_project_conventions", "Read bounded Project Shader convention profiles and digest.",
               {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),
+    _tool_def("shader_stage_resource", "Stage an exact Render node, complete Sequence range, or Workshop-selected file/folder grant. Physical paths and device limits are never model inputs. All ordered frames are retained or the stage fails.",
+              {**_NATIVE_SHADER_TARGET, "base": _NATIVE_SHADER_BASE,
+               "expected_working_digest": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]},
+               "source": {"oneOf": [
+                   _shader_closed({"kind": {"const": "render_node"}, "render_id": _NATIVE_HISTORY_CHECKPOINT,
+                       "node_id": _NATIVE_HISTORY_CHECKPOINT, "artifact_witness": _SHADER_DIGEST}),
+                   _shader_closed({"kind": {"const": "sequence_range"}, "sequence_id": _NATIVE_HISTORY_CHECKPOINT,
+                       "start_index": {"type": "integer", "minimum": 0}, "end_index": {"type": "integer", "minimum": 0},
+                       "fps_num": {"type": "integer", "minimum": 1}, "fps_den": {"type": "integer", "minimum": 1}}),
+                   _shader_closed({"kind": {"const": "selected_grant"}, "grant_id": {"type": "string", "pattern": "^srg_[A-Za-z0-9_-]{32}$"},
+                       "fps_num": {"type": "integer", "minimum": 1}, "fps_den": {"type": "integer", "minimum": 1}}, ("fps_num", "fps_den"))]},
+               "resolution": {"enum": ["full", "4k", "8k", "12k", "16k"]}, "reduced_copy": {"type": "boolean"},
+               "projection": {"enum": ["equirectangular", "flat"]}, "filter": {"enum": ["linear", "nearest", "mipmap"]},
+               "edge_u": {"enum": ["clamp", "repeat"]}, "edge_v": {"enum": ["clamp", "repeat"]}},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "source"]),
+    _tool_def("shader_set_resource", "Attach, replace, locate, remove, or change typed settings of one exact Shader input through the native CAS writer. Stage tokens are required for attach/replace/locate; an uncertain write must be recovered by its original request ID.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "action": {"enum": ["attach", "replace", "locate", "remove", "settings"]},
+               "slot_id": {"type": "string", "pattern": "^input[1-9][0-9]*$"},
+               "staged_token": {"type": "string", "minLength": 1, "maxLength": 128},
+               "filter": {"enum": ["linear", "nearest", "mipmap"]}, "edge_u": {"enum": ["clamp", "repeat"]},
+               "edge_v": {"enum": ["clamp", "repeat"]}, "time_mode": {"enum": ["hold", "follow"]},
+               "end_mode": {"enum": ["hold", "loop"]}, "hold_index": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id", "action", "slot_id"]),
+    _tool_def("shader_get_library_organization", "Read the active Project or My Library folder revision and bounded folder membership for exact moves and remove confirmation.",
+              {"project_context_witness": _SHADER_TEXT, "origin": {"enum": ["project", "user"]},
+               "cursor": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+               "revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+               "folder_id": _NATIVE_SHADER_REQUEST_ID},
+              ["project_context_witness", "origin"]),
+    _tool_def("shader_organize_library", "Create, rename, remove or move Shader folders/items, including one atomic move-many and native Undo. Supply exact organization revision and a stable caller session UUID; never replay an uncertain result with a new request ID.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
+               "origin": {"enum": ["project", "user"]}, "library_session_id": _NATIVE_SHADER_REQUEST_ID,
+               "expected_revision": {"oneOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
+               "command": {"oneOf": [
+                   _shader_closed({"kind": {"const": "createFolder"}, "name": {"type": "string", "minLength": 1, "maxLength": 256}}),
+                   _shader_closed({"kind": {"const": "renameFolder"}, "id": _NATIVE_SHADER_REQUEST_ID, "name": {"type": "string", "minLength": 1, "maxLength": 256}}),
+                   _shader_closed({"kind": {"const": "removeFolder"}, "id": _NATIVE_SHADER_REQUEST_ID,
+                       "confirmed_revision": {"oneOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
+                       "confirmed_shader_ids": {"type": "array", "maxItems": 1000, "items": _NATIVE_HISTORY_CHECKPOINT}}),
+                   _shader_closed({"kind": {"const": "moveShader"}, "shaderId": _NATIVE_HISTORY_CHECKPOINT,
+                       "folderId": {"oneOf": [_NATIVE_SHADER_REQUEST_ID, {"type": "null"}]}}),
+                   _shader_closed({"kind": {"const": "moveShaders"}, "shaderIds": {"type": "array", "minItems": 1,
+                       "maxItems": 1000, "uniqueItems": True, "items": _NATIVE_HISTORY_CHECKPOINT},
+                       "folderId": {"oneOf": [_NATIVE_SHADER_REQUEST_ID, {"type": "null"}]}}),
+                   _shader_closed({"kind": {"const": "undo"}, "token": {"type": "string", "minLength": 1, "maxLength": 128}})]}},
+              ["request_id", "project_context_witness", "origin", "library_session_id", "expected_revision", "command"]),
+    _tool_def("shader_set_tags", "Assign or remove one existing personal Tag for one exact Shader through the native tag registry.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
+               "command": _shader_closed({"kind": {"const": "setShaderTag"}, "shader": _NATIVE_SHADER_REF,
+                   "tagId": {"type": "string", "minLength": 1, "maxLength": 256}, "assigned": {"type": "boolean"}})},
+              ["request_id", "project_context_witness", "command"]),
+    _tool_def("shader_set_project_conventions", "Replace Project convention profiles through the fixed native document writer with exact expected digest and Project witness. A stale digest refuses without changing stored bytes.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
+               "expected_digest": {"oneOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
+               "profiles": {"type": "array", "maxItems": 8, "items": {"type": "object"}},
+               "default_profile_id": {"oneOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]}},
+              ["request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"]),
     _tool_def("shader_get_proposal", "Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. This is source free.",
               {"ticket_id": {"type": "string", "pattern": "^spt_[0-9a-f]{32}$"},
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
@@ -3065,6 +3125,12 @@ class HextileMcpServer:
             "shader_copy_revision": self._shader_copy_revision,
             "shader_history_retention": self._shader_history_retention,
             "shader_get_project_conventions": self._shader_get_project_conventions,
+            "shader_stage_resource": self._shader_stage_resource,
+            "shader_set_resource": self._shader_set_resource,
+            "shader_get_library_organization": self._shader_get_library_organization,
+            "shader_organize_library": self._shader_organize_library,
+            "shader_set_tags": self._shader_set_tags,
+            "shader_set_project_conventions": self._shader_set_project_conventions,
             "shader_get_proposal": self._shader_get_proposal,
             "shader_get_workspace": self._shader_get_workspace,
             "shader_recheck_update": self._shader_recheck_update,
@@ -3881,6 +3947,24 @@ class HextileMcpServer:
 
     def _shader_get_project_conventions(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_project_conventions(args)
+
+    def _shader_stage_resource(self, args: dict[str, Any]) -> Any:
+        return self.client.stage_shader_resource(args)
+
+    def _shader_set_resource(self, args: dict[str, Any]) -> Any:
+        return self.client.set_shader_resource(args)
+
+    def _shader_get_library_organization(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_library_organization(args)
+
+    def _shader_organize_library(self, args: dict[str, Any]) -> Any:
+        return self.client.organize_shader_library(args)
+
+    def _shader_set_tags(self, args: dict[str, Any]) -> Any:
+        return self.client.set_shader_tags(args)
+
+    def _shader_set_project_conventions(self, args: dict[str, Any]) -> Any:
+        return self.client.set_shader_project_conventions(args)
 
     def _shader_get_proposal(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_proposal_status(args)
