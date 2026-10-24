@@ -446,7 +446,11 @@ def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) 
     grant = {"grant_id": "sbg_" + "a" * 32, "sha256": "sha256:" + "b" * 64, "size": 1024}
     state = {"schema": 1, "shader": ref, "project_context_witness": "wit", "status": "saved",
              "provenance": "mounted", "base": {}, "capability": {}, "writable": True,
-             "save_state": "clean", "bundle_grant": grant}
+             "save_state": "clean", "bundle_grant": grant,
+             "bundle_state": {"expected_looks": [{"id": "look-one", "revision": 1,
+                "envelope_hash": "sha256:" + "c" * 64}],
+                "expected_provenance_hash": "sha256:" + "d" * 64},
+             "output_grant": {"grant_id": "sof_" + "e" * 32, "purpose": "bundle"}}
     calls = []
     def reply(method, path, body=None, **kwargs):
         calls.append((method, path, body, kwargs))
@@ -455,6 +459,7 @@ def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) 
                 "receipt": {"bundle_sha256": grant["sha256"], "shader": {"origin": "user", "shaderId": "imported"}}}
     monkeypatch.setattr(client, "request_json", reply)
     assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})["bundle_grant"] == grant
+    assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})["output_grant"]["purpose"] == "bundle"
     args = {"request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea", "shader": ref,
             "project_context_witness": "wit", "grant_id": grant["grant_id"],
             "bundle_sha256": grant["sha256"], "collision_intent": "fork"}

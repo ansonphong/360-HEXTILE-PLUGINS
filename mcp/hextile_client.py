@@ -276,7 +276,8 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
         "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
                   "capability", "working_digest", "owner_generation", "title", "tags",
                   "document_schema", "draft_state", "writable", "save_state", "reasons",
-                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant", "resource_grant", "human_only"},
+                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant", "resource_grant",
+                  "bundle_state", "output_grant", "human_only"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor"},
@@ -324,7 +325,25 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                                       or re.fullmatch(r"srg_[A-Za-z0-9_-]{32}", data["resource_grant"]["grant_id"]) is None
                                       or type(data["resource_grant"]["frame_count"]) is not int
                                       or not 1 <= data["resource_grant"]["frame_count"] <= 1024
-                                      or type(data["resource_grant"]["expires_in"]) is not int)))) or
+                                          or type(data["resource_grant"]["expires_in"]) is not int))
+                                      or ("output_grant" in data and (type(data["output_grant"]) is not dict
+                                          or set(data["output_grant"]) != {"grant_id", "purpose"}
+                                          or type(data["output_grant"]["grant_id"]) is not str
+                                          or re.fullmatch(r"sof_[0-9a-f]{32}", data["output_grant"]["grant_id"]) is None
+                                          or data["output_grant"]["purpose"] not in {"png", "exr", "dome", "bundle", "project"}))
+                                      or ("bundle_state" in data and (type(data["bundle_state"]) is not dict
+                                          or set(data["bundle_state"]) != {"expected_looks", "expected_provenance_hash"}
+                                          or type(data["bundle_state"]["expected_looks"]) is not list
+                                          or len(data["bundle_state"]["expected_looks"]) > 32
+                                          or any(type(row) is not dict or set(row) != {"id", "revision", "envelope_hash"}
+                                                 or type(row["id"]) is not str or not 1 <= len(row["id"]) <= 128
+                                                 or type(row["revision"]) is not int or row["revision"] < 1
+                                                 or type(row["envelope_hash"]) is not str
+                                                 or _WORKSPACE_DIGEST.fullmatch(row["envelope_hash"]) is None
+                                                 for row in data["bundle_state"]["expected_looks"])
+                                          or data["bundle_state"]["expected_provenance_hash"] is not None
+                                          and (type(data["bundle_state"]["expected_provenance_hash"]) is not str
+                                               or _WORKSPACE_DIGEST.fullmatch(data["bundle_state"]["expected_provenance_hash"]) is None))))) or
             (entries is not None and (type(data.get("entries")) is not list or
                                       len(data["entries"]) > entries or
                                       any(type(row) is not dict or set(row) - entry_allowed
