@@ -2636,6 +2636,8 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_open_asset", "Open one saved Shader only while the current mounted draft is clean and settled. No implicit Save or Discard. Recover uncertainty by the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"]},
               _MOUNTED_SHADER_REQUIRED + ["target"]),
+    _tool_def("shader_save_asset", "Save the exact dirty MCP-held RAM draft through the native Prepare and writer ticket. No human autosave. Recover uncertainty by the original request ID.",
+              _MOUNTED_SHADER_FIELDS, _MOUNTED_SHADER_REQUIRED),
     _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. Capture and Apply consent are required. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
@@ -2984,6 +2986,7 @@ class HextileMcpServer:
             "shader_rename_asset": self._shader_rename_asset,
             "shader_delete_asset": self._shader_delete_asset,
             "shader_open_asset": self._shader_open_asset,
+            "shader_save_asset": self._shader_save_asset,
             "shader_get_operation": self._shader_get_operation,
             "shader_get_credits": self._shader_get_credits,
             "shader_propose_credits": self._shader_propose_credits,
@@ -3785,6 +3788,9 @@ class HextileMcpServer:
 
     def _shader_open_asset(self, args: dict[str, Any]) -> Any:
         return self.client.open_shader_asset(args)
+
+    def _shader_save_asset(self, args: dict[str, Any]) -> Any:
+        return self.client.save_shader_asset(args)
 
     def _shader_get_operation(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_operation(args)

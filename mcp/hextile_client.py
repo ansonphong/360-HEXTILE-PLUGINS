@@ -1924,6 +1924,7 @@ class Client:
         extras = ({"action", "seed", "capture_defaults"} if operation == "shader_set_capture" else
                   {"action", "bpm", "speed"} if operation == "shader_control_clock" else
                   {"target"} if operation == "shader_open_asset" else
+                  set() if operation == "shader_save_asset" else
                   {"direction", "owner"})
         if not isinstance(args, Mapping) or not common <= set(args) or set(args) - common - extras:
             raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
@@ -1966,6 +1967,8 @@ class Client:
                      and type(target["shaderId"]) is str
                      and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", target["shaderId"]) is not None
                      and target != ref)
+        elif operation == "shader_save_asset":
+            valid = set(args) == common and ref["origin"] in {"user", "project"}
         else:
             owner = args.get("owner")
             valid = (set(args) == common | {"direction", "owner"} and type(args["direction"]) is int
@@ -2006,6 +2009,9 @@ class Client:
 
     def open_shader_asset(self, args: Mapping[str, Any]) -> dict:
         return self._mounted_shader_action(args, "shader_open_asset", "/api/shaders/agent-operations/open")
+
+    def save_shader_asset(self, args: Mapping[str, Any]) -> dict:
+        return self._mounted_shader_action(args, "shader_save_asset", "/api/shaders/agent-operations/save")
 
     def get_shader_operation(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("status", args)
