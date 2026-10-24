@@ -91,6 +91,34 @@ def test_credits_metadata_and_research_transport_are_closed(monkeypatch) -> None
         client.propose_shader_credits({**proposal, "changes": {"distribution": {}}})
 
 
+def test_credits_text_chunk_transport_is_closed_and_forwards_utf8_offset(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    descriptor = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_get_credits")
+    ref = {"origin": "user", "shaderId": "aurora"}
+    text_ref = "ct1:sha256:" + "a" * 64 + ":notices:0:license_text"
+    args = {"shader": ref, "project_context_witness": "witness", "lease_id": "lease",
+            "section": "text", "text_ref": text_ref, "offset_utf8": 4096}
+    jsonschema.validate(args, descriptor["inputSchema"])
+    client = Client("http://127.0.0.1:9")
+    seen = {}
+    def reply(method, path, body=None, **kwargs):
+        seen.update(method=method, path=path, params=kwargs["params"])
+        return {"schema": 1, "target": ref, "provenance_hash": "sha256:" + "a" * 64,
+                "section": "text", "text_ref": text_ref, "offset_utf8": 4096,
+                "text": "é", "total_bytes": 4098, "next_offset_utf8": None,
+                "base": {"kind": "saved", "working_revision": 1,
+                         "document_hash": "sha256:" + "b" * 64, "source_hash": "sha256:" + "c" * 64},
+                "working_digest": "sha256:" + "d" * 64}
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.get_shader_credits(args)["text"] == "é"
+    assert seen["params"]["text_ref"] == text_ref and seen["params"]["offset_utf8"] == 4096
+    with pytest.raises(HextileClientError):
+        client.get_shader_credits({**args, "path": "/tmp/private"})
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: {**reply("GET", "", params={}), "raw_provenance": {}})
+    with pytest.raises(HextileClientError):
+        client.get_shader_credits(args)
+
+
 def test_register_forwards_typed_source_proposal_without_changing_digest(monkeypatch) -> None:
     args = _workspace_register()
     source_proposal = {"schema": 1, "expected_provenance_hash": None, "sources": [{"kind": "append",

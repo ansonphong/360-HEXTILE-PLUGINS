@@ -1984,30 +1984,41 @@ class Client:
 
     def get_shader_credits(self, args: Mapping[str, Any]) -> dict:
         if not isinstance(args, Mapping) or set(args) - {
-                "shader", "project_context_witness", "lease_id", "section", "cursor", "limit"}:
+                "shader", "project_context_witness", "lease_id", "section", "cursor", "limit",
+                "text_ref", "offset_utf8"}:
             raise HextileClientError("Expected closed Shader credits page", status_code=422, kind="other")
         _native_read_args({key: args[key] for key in ("shader", "project_context_witness", "lease_id") if key in args},
                           {"shader", "project_context_witness", "lease_id"})
         if (type(args["lease_id"]) is not str or not 1 <= len(args["lease_id"]) <= 128
                 or args.get("section", "sources") not in {"sources", "contributors", "current_roles", "history",
-                                                          "retained_credits", "notices"}
+                                                          "retained_credits", "notices", "text"}
+                or ("text_ref" in args and (args.get("section") != "text" or type(args["text_ref"]) is not str
+                     or re.fullmatch(r"ct1:sha256:[0-9a-f]{64}:(top|notices|retained_credits):[0-9]+:[a-z_]+", args["text_ref"]) is None))
+                or (args.get("section") == "text" and "text_ref" not in args)
+                or ("offset_utf8" in args and ("text_ref" not in args or type(args["offset_utf8"]) is not int
+                     or args["offset_utf8"] < 0))
                 or ("cursor" in args and (type(args["cursor"]) is not int or args["cursor"] < 0))
                 or ("limit" in args and (type(args["limit"]) is not int or not 1 <= args["limit"] <= 32))):
             raise HextileClientError("Invalid Shader credits page", status_code=422, kind="other")
         params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
                   "project_context_witness": args["project_context_witness"], "lease_id": args["lease_id"]}
-        params.update({key: args[key] for key in ("section", "cursor", "limit") if key in args})
+        params.update({key: args[key] for key in ("section", "cursor", "limit", "text_ref", "offset_utf8") if key in args})
         result = self.request_json("GET", "/api/shaders/agent-operations/credits", params=params)
         allowed = {"schema", "target", "provenance_hash", "author", "attribution", "license",
                    "automatic_credit", "section", "cursor", "total", "next_cursor",
                    "protected_distribution_present", "has_opaque_fields", "truncated_fields",
                    "oversized_row", "sources", "contributors", "current_roles", "history",
-                   "retained_credits", "notices", "base", "working_digest"}
+                   "retained_credits", "notices", "base", "working_digest", "text_fields",
+                   "text_ref", "offset_utf8", "text", "total_bytes", "next_offset_utf8"}
         if (type(result) is not dict or set(result) - allowed or result.get("schema") != 1
                 or result.get("target") != args["shader"]
                 or result.get("section") != args.get("section", "sources")
-                or type(result.get(result["section"])) is not list
-                or len(result[result["section"]]) > 32
+                or (result["section"] == "text" and (result.get("text_ref") != args.get("text_ref")
+                    or result.get("offset_utf8") != args.get("offset_utf8", 0)
+                    or type(result.get("text")) is not str or type(result.get("total_bytes")) is not int
+                    or (result.get("next_offset_utf8") is not None and type(result.get("next_offset_utf8")) is not int)))
+                or (result["section"] != "text" and (type(result.get(result["section"])) is not list
+                    or len(result[result["section"]]) > 32))
                 or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 60 * 1024
                 or "source" in result or "mutation" in result or "ticket_id" in result):
             raise HextileClientError("Malformed Shader credits result", kind="other")
