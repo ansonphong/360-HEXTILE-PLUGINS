@@ -2638,6 +2638,9 @@ SHADER_EXTENSION_TOOLS = [
               _MOUNTED_SHADER_REQUIRED + ["target"]),
     _tool_def("shader_save_asset", "Save the exact dirty MCP-held RAM draft through the native Prepare and writer ticket. No human autosave. Recover uncertainty by the original request ID.",
               _MOUNTED_SHADER_FIELDS, _MOUNTED_SHADER_REQUIRED),
+    _tool_def("shader_save_as", "Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. A dirty draft must be MCP-held. The new asset is selected only after its original-ticket transition acknowledgement.",
+              {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
+              _MOUNTED_SHADER_REQUIRED),
     _tool_def("shader_create_asset", "Create a saved Shader from hx_starter under effective Trusted Local Full Access. It is not selected until Open. Recover uncertainty by request ID and builtin hx_starter source.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID,
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
@@ -2998,6 +3001,7 @@ class HextileMcpServer:
             "shader_delete_asset": self._shader_delete_asset,
             "shader_open_asset": self._shader_open_asset,
             "shader_save_asset": self._shader_save_asset,
+            "shader_save_as": self._shader_save_as,
             "shader_create_asset": self._shader_create_asset,
             "shader_fork_asset": self._shader_fork_asset,
             "shader_get_operation": self._shader_get_operation,
@@ -3804,6 +3808,9 @@ class HextileMcpServer:
 
     def _shader_save_asset(self, args: dict[str, Any]) -> Any:
         return self.client.save_shader_asset(args)
+
+    def _shader_save_as(self, args: dict[str, Any]) -> Any:
+        return self.client.save_shader_as(args)
 
     def _shader_create_asset(self, args: dict[str, Any]) -> Any:
         return self.client.create_shader_asset(args)

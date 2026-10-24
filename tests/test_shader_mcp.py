@@ -149,7 +149,7 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
             "shader_stop_workspace"} <= names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset",
             "shader_open_asset", "shader_save_asset", "shader_create_asset", "shader_fork_asset",
-            "shader_get_operation"} <= names
+            "shader_save_as", "shader_get_operation"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
     listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
@@ -172,7 +172,8 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     sent = []
     monkeypatch.setattr(client, "request_json", lambda method, path, payload:
                         sent.append((method, path, payload)) or {"request_id": request_id,
-                            "operation": "shader_save_asset" if path.endswith("/save") else "shader_open_asset",
+                            "operation": "shader_save_asset" if path.endswith("/save") else
+                                         "shader_save_as" if path.endswith("/save-as") else "shader_open_asset",
                             "state": "applied"})
     assert client.delete_shader_asset(body)["state"] == "applied"
     assert sent == [("POST", "/api/shaders/agent-operations/delete", body)]
@@ -190,6 +191,11 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/save", save)
     with pytest.raises(HextileClientError):
         client.save_shader_asset({**save, "shader": {"origin": "builtin", "shaderId": "hx_starter"}})
+    as_copy = {**save, "title": "A copy"}
+    assert client.save_shader_as(as_copy)["state"] == "applied"
+    assert sent[-1] == ("POST", "/api/shaders/agent-operations/save-as", as_copy)
+    with pytest.raises(HextileClientError):
+        client.save_shader_as({**as_copy, "title": ""})
 
 
 def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:

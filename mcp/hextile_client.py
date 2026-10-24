@@ -1925,6 +1925,7 @@ class Client:
                   {"action", "bpm", "speed"} if operation == "shader_control_clock" else
                   {"target"} if operation == "shader_open_asset" else
                   set() if operation == "shader_save_asset" else
+                  {"title"} if operation == "shader_save_as" else
                   {"direction", "owner"})
         if not isinstance(args, Mapping) or not common <= set(args) or set(args) - common - extras:
             raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
@@ -1969,6 +1970,10 @@ class Client:
                      and target != ref)
         elif operation == "shader_save_asset":
             valid = set(args) == common and ref["origin"] in {"user", "project"}
+        elif operation == "shader_save_as":
+            valid = (set(args) in (common, common | {"title"})
+                     and ("title" not in args or type(args["title"]) is str
+                          and 1 <= len(args["title"]) <= 256))
         else:
             owner = args.get("owner")
             valid = (set(args) == common | {"direction", "owner"} and type(args["direction"]) is int
@@ -2012,6 +2017,9 @@ class Client:
 
     def save_shader_asset(self, args: Mapping[str, Any]) -> dict:
         return self._mounted_shader_action(args, "shader_save_asset", "/api/shaders/agent-operations/save")
+
+    def save_shader_as(self, args: Mapping[str, Any]) -> dict:
+        return self._mounted_shader_action(args, "shader_save_as", "/api/shaders/agent-operations/save-as")
 
     def _create_shader_asset(self, args: Mapping[str, Any], action: str) -> dict:
         if not isinstance(args, Mapping):
