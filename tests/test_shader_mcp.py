@@ -70,6 +70,9 @@ def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> N
     with pytest.raises(HextileClientError) as error:
         client.rename_shader_asset({**body, "actor": "human"})
     assert error.value.status_code == 422
+    with pytest.raises(HextileClientError) as wrong_version:
+        client.rename_shader_asset({**body, "request_id": "00000000-0000-1000-8000-000000000000"})
+    assert wrong_version.value.status_code == 422
     monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: (_ for _ in ()).throw(
         HextileClientError("connection lost", kind="app_down")))
     with pytest.raises(HextileClientError) as unknown:

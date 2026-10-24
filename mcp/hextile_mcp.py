@@ -2467,18 +2467,20 @@ _NATIVE_SHADER_BASE = _shader_closed({
     "document_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "source_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
 })
+_NATIVE_SHADER_REQUEST_ID = {"type": "string", "format": "uuid",
+                             "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
     _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. An uncertain write must be checked by shader_get_operation.",
-              {**_NATIVE_SHADER_TARGET, "request_id": {"type": "string", "format": "uuid"},
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "expected_owner_generation": {"type": "string", "minLength": 1},
                "library_intent": {"const": "saved"}},
               ["request_id", "shader", "project_context_witness", "base", "expected_working_digest", "title"]),
     _tool_def("shader_get_operation", "Read one route-owned native Shader operation outcome by exact request ID and target.",
-              {**_NATIVE_SHADER_TARGET, "request_id": {"type": "string", "format": "uuid"}},
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["request_id", "shader", "project_context_witness"]),
 ]
 

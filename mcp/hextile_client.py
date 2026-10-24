@@ -72,7 +72,8 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
         raise HextileClientError("Invalid native Shader target", status_code=422, kind="other")
     if operation in {"status", "rename"}:
         try:
-            valid = type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"]
+            valid = (type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"]
+                     and uuid.UUID(args["request_id"]).version == 4)
         except (ValueError, AttributeError):
             valid = False
         if not valid:
