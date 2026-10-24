@@ -1,6 +1,6 @@
 # 360-hextile-agent
 
-**v0.5.3**
+**v0.5.4**
 
 Claude Code plugin + Codex twin that drive **360 Hextile** over localhost HTTP.
 
@@ -46,6 +46,8 @@ Local checkout of this tree still works: add the directory as a marketplace root
 ```
 
 On Windows, change Claude `.mcp.json` `command` to `python` or `py -3` (not `python3`). Do not rewrite the committed POSIX `.mcp.json`. Codex installer already writes `sys.executable`.
+
+Update the canonical package in each host and start a new host session to load revised skills and MCP descriptors. Check the installed package revision and live `tools/list` separately from the source checkout; a repository version bump does not upgrade an installed cache. The running APP also reports its own live Shader contract revision and effective policy.
 
 Confirm tools appear (`list_workflows`, `get_guide`, `get_local_access_status`, …). With the app down, tools return a clean error — the MCP process stays up.
 
@@ -179,7 +181,7 @@ A temporary installer destination does not prove an installed host.
 
 ### Shader authoring in your coding host
 
-The `shader` skill edits the open Project Shader through the acknowledged `source.glsl` / `authoring.json` pair, registers a raw-byte framed digest and polls real APP Prepare/compiler receipts, with at most three repairs. Workshop Apply stays human. Installed MCP connectivity and native access to the same physical Project/worktree files are both required; a remote connector alone is insufficient. APP grants control disclosure/ingestion/Apply, not the host's filesystem permissions. Reasoning belongs to your host account/provider and may incur charges or quota limits.
+The `shader` skill edits the open Project Shader through the acknowledged `source.glsl` / `authoring.json` pair, registers a raw-byte framed digest and polls real APP Prepare/compiler receipts, with at most three repairs. Ordinary mode uses human Apply; effective Trusted Local Full Access may auto-Apply and persist a singular ready `spt_` / `cpr_` candidate. Registration alone does not prove Save; inspect the exact saved receipt, and keep unknown Save unknown. Installed MCP connectivity and native access to the same physical Project/worktree files are both required; a remote connector alone is insufficient. APP grants control disclosure/ingestion/Apply, not the host's filesystem permissions. Reasoning belongs to your host account/provider and may incur charges or quota limits.
 
 Claude prefixes plugin skills with the plugin name: `/360-hextile:360-hextile` (hub), `/360-hextile:shader`, `/360-hextile:fractal`, `/360-hextile:upres`. Codex uses separately installed sibling skill directories (`360-hextile`, `shader`, `fractal`, `upres`): confirm them in the installed picker. Check actual Codex/Grok invocation syntax on the installed client; source layout does not prove an installed host.
 
