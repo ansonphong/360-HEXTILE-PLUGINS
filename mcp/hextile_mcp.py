@@ -381,7 +381,8 @@ _GUIDE_ROOT = Path(__file__).resolve().parent.parent / "skills" / "360-hextile" 
 
 
 def _annotations(name: str) -> dict[str, bool]:
-    if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation"}:
+    if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation",
+                                     "shader_get_proposal", "shader_get_workspace"}:
         return {"readOnlyHint": True, "destructiveHint": False}
     if name in _DESTRUCTIVE:
         return {"readOnlyHint": False, "destructiveHint": True}
@@ -2469,6 +2470,9 @@ _NATIVE_SHADER_BASE = _shader_closed({
 })
 _NATIVE_SHADER_REQUEST_ID = {"type": "string", "format": "uuid",
                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+_NATIVE_WORKSPACE_HANDLE = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}
+_NATIVE_WORKSPACE_CHANGE = {"type": "string", "minLength": 3, "maxLength": 81}
+_NATIVE_WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
               {"project_context_witness": _SHADER_TEXT,
@@ -2488,6 +2492,28 @@ SHADER_EXTENSION_TOOLS = [
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
     _tool_def("shader_get_project_conventions", "Read bounded Project Shader convention profiles and digest.",
               {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),
+    _tool_def("shader_get_proposal", "Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. This is source free.",
+              {"ticket_id": {"type": "string", "pattern": "^spt_[0-9a-f]{32}$"},
+               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
+              ["ticket_id", "project_context_witness"]),
+    _tool_def("shader_get_workspace", "Recover an existing workspace attachment and current source-free candidate receipt, including before first registration.",
+              {"handle": _NATIVE_WORKSPACE_HANDLE,
+               "change_id": _NATIVE_WORKSPACE_CHANGE,
+               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
+              ["handle", "project_context_witness"]),
+    _tool_def("shader_recheck_update", "Start a new check attempt for the same current candidate after a failed or unavailable check. No registration or Save occurs.",
+              {"handle": _NATIVE_WORKSPACE_HANDLE, "change_id": _NATIVE_WORKSPACE_CHANGE,
+               "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+               "content_digest": _SHADER_DIGEST, "studio_surface_id": _NATIVE_WORKSPACE_WITNESS,
+               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
+              ["handle", "change_id", "generation", "content_digest", "studio_surface_id",
+               "project_context_witness"]),
+    _tool_def("shader_stop_workspace", "Stop only this current workspace attachment and preserve files. This does not transfer human ownership or stop reasoning.",
+              {"handle": _NATIVE_WORKSPACE_HANDLE,
+               "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+               "studio_surface_id": _NATIVE_WORKSPACE_WITNESS,
+               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
+              ["handle", "generation", "studio_surface_id", "project_context_witness"]),
     _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. An uncertain write must be checked by shader_get_operation.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
@@ -2810,6 +2836,10 @@ class HextileMcpServer:
             "shader_get_history": self._shader_get_history,
             "shader_get_looks": self._shader_get_looks,
             "shader_get_project_conventions": self._shader_get_project_conventions,
+            "shader_get_proposal": self._shader_get_proposal,
+            "shader_get_workspace": self._shader_get_workspace,
+            "shader_recheck_update": self._shader_recheck_update,
+            "shader_stop_workspace": self._shader_stop_workspace,
             "shader_rename_asset": self._shader_rename_asset,
             "shader_get_operation": self._shader_get_operation,
             "get_shader_parameters": self._get_shader_parameters,
@@ -2938,7 +2968,8 @@ class HextileMcpServer:
             not self.internal_mode
             and getattr(self.client, "_opener", None) is None
             and name not in _LOCAL_FILE_DIAGNOSTICS
-            and name != "shader_get_operation"
+            and name not in {"shader_get_operation", "shader_get_proposal", "shader_get_workspace",
+                             "shader_stop_workspace"}
         ):
             probe = getattr(self.client, "request_json", None)
             if callable(probe):
@@ -3584,6 +3615,18 @@ class HextileMcpServer:
 
     def _shader_get_project_conventions(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_project_conventions(args)
+
+    def _shader_get_proposal(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_proposal_status(args)
+
+    def _shader_get_workspace(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_workspace_status(args)
+
+    def _shader_recheck_update(self, args: dict[str, Any]) -> Any:
+        return self.client.recheck_shader_update(args)
+
+    def _shader_stop_workspace(self, args: dict[str, Any]) -> Any:
+        return self.client.stop_shader_workspace(args)
 
     def _shader_rename_asset(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_asset(args)

@@ -1834,6 +1834,151 @@ class Client:
                                      kind="upgrade")
         return result
 
+    @staticmethod
+    def _recovery_result(data: Any, allowed: set[str], required: set[str]) -> dict:
+        try:
+            size = len(json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise HextileClientError("Malformed Shader recovery receipt", kind="other") from exc
+        if type(data) is not dict or size > 32768 or required - set(data) or set(data) - allowed:
+            raise HextileClientError("Malformed or unbounded Shader recovery receipt", kind="other")
+        return data
+
+    @staticmethod
+    def _workspace_recovery_args(args: Mapping[str, Any], operation: str) -> None:
+        base = {"handle", "project_context_witness"}
+        required = (base if operation == "get" else
+                    base | {"change_id", "generation", "content_digest", "studio_surface_id"}
+                    if operation == "recheck" else base | {"generation", "studio_surface_id"})
+        optional = {"change_id"} if operation == "get" else set()
+        if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
+            raise HextileClientError("Expected closed Shader recovery arguments", kind="other", status_code=422)
+        handle = args["handle"]
+        if (type(handle) is not str or _WORKSPACE_HANDLE.fullmatch(handle) is None or
+                type(args["project_context_witness"]) is not str or
+                not 1 <= len(args["project_context_witness"]) <= 256):
+            raise HextileClientError("Invalid Shader recovery identity", kind="other", status_code=422)
+        if "change_id" in args:
+            change_id = args["change_id"]
+            suffix = change_id[len(handle) + 1:] if type(change_id) is str and change_id.startswith(handle + ":") else ""
+            if (type(change_id) is not str or len(change_id) > 81 or
+                    _WORKSPACE_SUFFIX.fullmatch(suffix) is None or int(suffix) > MAX_WORKSPACE_GENERATION):
+                raise HextileClientError("Invalid Shader change identity", kind="other", status_code=422)
+        if operation in {"recheck", "stop"}:
+            if (type(args["generation"]) is not int or not 0 <= args["generation"] <= MAX_WORKSPACE_GENERATION or
+                    type(args["studio_surface_id"]) is not str or not 1 <= len(args["studio_surface_id"]) <= 256):
+                raise HextileClientError("Invalid Shader recovery generation", kind="other", status_code=422)
+        if operation == "recheck" and (type(args["content_digest"]) is not str or
+                                       _WORKSPACE_DIGEST.fullmatch(args["content_digest"]) is None):
+            raise HextileClientError("Invalid Shader recovery digest", kind="other", status_code=422)
+
+    def get_shader_proposal_status(self, args: Mapping[str, Any]) -> dict:
+        if (not isinstance(args, Mapping) or set(args) != {"ticket_id", "project_context_witness"} or
+                type(args["ticket_id"]) is not str or not re.fullmatch(r"spt_[0-9a-f]{32}", args["ticket_id"]) or
+                type(args["project_context_witness"]) is not str or not 1 <= len(args["project_context_witness"]) <= 256):
+            raise HextileClientError("Expected closed Shader proposal identity", kind="other", status_code=422)
+        ticket = self.request_json("GET", f"/api/agent/shader-proposals/{args['ticket_id']}",
+                                   headers={"X-Hextile-Agent": "mcp",
+                                            "X-Hextile-Project-Witness": args["project_context_witness"]})
+        if type(ticket) is not dict or ticket.get("ticket_id") != args["ticket_id"]:
+            raise HextileClientError("Malformed Shader proposal status", kind="other")
+        visible = {"ticket_id", "kind", "shader", "project_context_witness", "base", "identity",
+                   "ready", "cancelled", "result", "board_id", "candidates"}
+        if type(ticket.get("ready")) is not bool or ticket.get("project_context_witness") != args["project_context_witness"]:
+            raise HextileClientError("Malformed Shader proposal status", kind="other")
+        return self._recovery_result({key: ticket[key] for key in visible if key in ticket},
+                                     visible, {"ticket_id", "ready", "project_context_witness"})
+
+    def get_shader_workspace_status(self, args: Mapping[str, Any]) -> dict:
+        self._workspace_recovery_args(args, "get")
+        handle = args["handle"]
+        witness = args["project_context_witness"]
+        attachment = self._shader_workspace_request("GET", f"/api/agent/shader-workspaces/{handle}/attachment",
+                                                    params={"project_context_witness": witness})
+        attachment = self._recovery_result(attachment,
+            {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
+             "project_context_witness", "base", "candidate_id", "change_id", "activity"},
+            {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
+        if attachment["handle"] != handle or attachment["project_context_witness"] != witness:
+            raise HextileClientError("Shader attachment identity changed", kind="workspace_outcome_unknown")
+        change_id = args.get("change_id") or attachment.get("change_id")
+        receipt = None
+        if change_id is not None:
+            raw = self.get_shader_update({"handle": handle, "change_id": change_id,
+                                          "project_context_witness": witness})
+            allowed = {"handle", "change_id", "candidate_id", "generation", "content_digest", "shader",
+                       "base", "project_context_witness", "studio_surface_id", "check_attempt",
+                       "attachment_state", "prepare", "compile", "preview", "presentation", "save",
+                       "check_deadline_at", "next_poll_ms", "reason", "saved", "diagnostics",
+                       "attribution_outcome"}
+            raw = self._recovery_result(raw, allowed | {"raw_log"},
+                                        {"handle", "change_id", "candidate_id", "generation",
+                                         "content_digest", "check_attempt", "save"})
+            if (raw["handle"] != handle or raw["change_id"] != change_id or
+                    raw.get("project_context_witness") != witness or
+                    raw.get("studio_surface_id") != attachment["studio_surface_id"] or
+                    type(raw["generation"]) is not int or raw["generation"] > attachment["generation"] or
+                    (attachment.get("change_id") == change_id and
+                     attachment.get("candidate_id") != raw["candidate_id"])):
+                raise HextileClientError("Shader workspace changed during recovery; read again",
+                                         kind="workspace_outcome_unknown")
+            receipt = {key: raw[key] for key in allowed if key in raw and key != "diagnostics"}
+        return self._recovery_result({"schema": 1, "attachment": {key: attachment[key] for key in attachment
+            if key != "activity"}, "receipt": receipt}, {"schema", "attachment", "receipt"},
+            {"schema", "attachment", "receipt"})
+
+    def recheck_shader_update(self, args: Mapping[str, Any]) -> dict:
+        self._workspace_recovery_args(args, "recheck")
+        handle, change_id = args["handle"], args["change_id"]
+        body = {key: args[key] for key in ("generation", "content_digest", "studio_surface_id",
+                                           "project_context_witness")}
+        try:
+            result = self._shader_workspace_request("POST",
+                f"/api/agent/shader-workspaces/{handle}/updates/{urllib.parse.quote(change_id, safe='')}/recheck", body)
+        except HextileClientError as exc:
+            if exc.kind in {"app_down", "workspace_outcome_unknown"} or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader recheck outcome unknown; read the same workspace and change before any retry.",
+                                         kind="workspace_outcome_unknown",
+                                         receipt={"handle": handle, "change_id": change_id}) from exc
+            raise
+        result = self._recovery_result(result,
+            {"handle", "change_id", "candidate_id", "generation", "content_digest", "shader", "base",
+             "project_context_witness", "studio_surface_id", "check_attempt", "attachment_state", "prepare",
+             "compile", "preview", "presentation", "save", "diagnostics", "reason", "saved",
+             "check_deadline_at", "next_poll_ms", "attribution_outcome"},
+            {"handle", "change_id", "candidate_id", "generation", "content_digest", "check_attempt"})
+        if (result["handle"] != handle or result["change_id"] != change_id or
+                result["generation"] != args["generation"] or result["content_digest"] != args["content_digest"] or
+                result.get("studio_surface_id") != args["studio_surface_id"] or
+                result.get("project_context_witness") != args["project_context_witness"]):
+            raise HextileClientError("Shader recheck acknowledgement unknown; read the original change",
+                                     kind="workspace_outcome_unknown",
+                                     receipt={"handle": handle, "change_id": change_id})
+        return {key: value for key, value in result.items() if key != "diagnostics"}
+
+    def stop_shader_workspace(self, args: Mapping[str, Any]) -> dict:
+        self._workspace_recovery_args(args, "stop")
+        handle = args["handle"]
+        body = {key: args[key] for key in ("generation", "studio_surface_id", "project_context_witness")}
+        try:
+            result = self._shader_workspace_request("DELETE", f"/api/agent/shader-workspaces/{handle}", body)
+        except HextileClientError as exc:
+            if exc.kind in {"app_down", "workspace_outcome_unknown"} or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader stop outcome unknown; read the same workspace before any retry.",
+                                         kind="workspace_outcome_unknown", receipt={"handle": handle}) from exc
+            raise
+        result = self._recovery_result(result,
+            {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
+             "project_context_witness", "base"},
+            {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
+        if (result["handle"] != handle or result["generation"] != args["generation"] or
+                result["project_context_witness"] != args["project_context_witness"] or
+                result["studio_surface_id"] != args["studio_surface_id"] or
+                result["attachment_state"] != "stopped"):
+            raise HextileClientError("Shader stop acknowledgement unknown; read workspace status",
+                                     kind="workspace_outcome_unknown")
+        return result
+
     def get_live_context(
         self,
         *,

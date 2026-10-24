@@ -38,6 +38,8 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
     assert {"shader_list_assets", "shader_get_history", "shader_get_looks",
             "shader_get_project_conventions"} <= names
+    assert {"shader_get_proposal", "shader_get_workspace", "shader_recheck_update",
+            "shader_stop_workspace"} <= names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_get_operation"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
@@ -120,6 +122,138 @@ def test_native_shader_discovery_transport_rejects_unbounded_results(monkeypatch
                         {"schema": 1, "entries": [{}] * 51})
     with pytest.raises(HextileClientError):
         client.list_shader_assets({"project_context_witness": "wit"})
+
+
+def test_native_shader_recovery_transport_before_registration_and_closed_stop(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    handle = "workspace_1"
+    witness = "wit"
+    attachment = {"handle": handle, "generation": 0, "attachment_state": "attached",
+                  "studio_surface_id": "surface", "mount_generation": "mount", "project_context_witness": witness,
+                  "base": {}}
+
+    def request_json(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if path.endswith("/attachment"):
+            return attachment
+        if path.endswith("/shader-proposals/spt_" + "a" * 32):
+            return {"ticket_id": "spt_" + "a" * 32, "ready": False,
+                    "project_context_witness": witness, "lease_id": "private"}
+        if method == "DELETE":
+            return {**attachment, "attachment_state": "stopped"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    status = client.get_shader_workspace_status({"handle": handle, "project_context_witness": witness})
+    assert status["receipt"] is None and status["attachment"]["generation"] == 0
+    assert [call[1] for call in calls] == [f"/api/agent/shader-workspaces/{handle}/attachment"]
+    proposal = client.get_shader_proposal_status({"ticket_id": "spt_" + "a" * 32,
+                                                   "project_context_witness": witness})
+    assert proposal["ready"] is False
+    assert "lease_id" not in proposal
+    assert calls[-1][3]["headers"]["X-Hextile-Project-Witness"] == witness
+    stopped = client.stop_shader_workspace({"handle": handle, "generation": 0,
+        "studio_surface_id": "surface", "project_context_witness": witness})
+    assert stopped["attachment_state"] == "stopped"
+    assert calls[-1][2] == {"generation": 0, "studio_surface_id": "surface",
+                            "project_context_witness": witness}
+    with pytest.raises(HextileClientError):
+        client.stop_shader_workspace({"handle": handle, "generation": 0,
+            "studio_surface_id": "surface", "project_context_witness": witness,
+            "action": "take_control"})
+    with pytest.raises(HextileClientError):
+        client.get_shader_proposal_status({"ticket_id": "cpr_" + "a" * 32,
+                                           "project_context_witness": witness})
+    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs:
+                        (_ for _ in ()).throw(HextileClientError("lost reply", kind="app_down")))
+    with pytest.raises(HextileClientError) as unknown:
+        client.stop_shader_workspace({"handle": handle, "generation": 0,
+            "studio_surface_id": "surface", "project_context_witness": witness})
+    assert unknown.value.kind == "workspace_outcome_unknown"
+    assert unknown.value.receipt == {"handle": handle}
+
+
+def test_native_shader_recheck_uses_same_candidate_and_source_free_status(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    handle = "workspace_1"
+    change_id = handle + ":1"
+    digest = "sha256:" + "a" * 64
+    calls = []
+    attachment = {"handle": handle, "generation": 1, "attachment_state": "attached",
+                  "studio_surface_id": "surface", "project_context_witness": "wit",
+                  "candidate_id": "candidate", "change_id": change_id}
+    receipt = {"handle": handle, "change_id": change_id, "candidate_id": "candidate",
+               "generation": 1, "content_digest": digest, "check_attempt": 0,
+               "studio_surface_id": "surface", "project_context_witness": "wit",
+               "save": "not_saved", "prepare": "passed", "raw_log": "private"}
+
+    def request_json(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if path.endswith("/attachment"):
+            return attachment
+        if method == "GET" and path.endswith("/updates/" + handle + "%3A1"):
+            return receipt
+        if method == "POST" and path.endswith("/recheck"):
+            return {key: value for key, value in {**receipt, "check_attempt": 1,
+                                                  "diagnostics": [{"message": "private"}]}.items()
+                    if key != "raw_log"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    status = client.get_shader_workspace_status({"handle": handle, "project_context_witness": "wit"})
+    assert status["receipt"]["candidate_id"] == "candidate"
+    assert "raw_log" not in status["receipt"] and "source_diagnostics" not in status["receipt"]
+    assert calls[1][3]["params"] == {"project_context_witness": "wit"}
+    rechecked = client.recheck_shader_update({"handle": handle, "change_id": change_id,
+        "generation": 1, "content_digest": digest, "studio_surface_id": "surface",
+        "project_context_witness": "wit"})
+    assert rechecked["candidate_id"] == "candidate" and rechecked["check_attempt"] == 1
+    assert "diagnostics" not in rechecked
+    assert calls[-1][2] == {"generation": 1, "content_digest": digest,
+                            "studio_surface_id": "surface", "project_context_witness": "wit"}
+    with pytest.raises(HextileClientError):
+        client.recheck_shader_update({"handle": handle, "change_id": change_id,
+            "generation": True, "content_digest": digest, "studio_surface_id": "surface",
+            "project_context_witness": "wit"})
+
+
+def test_native_shader_recovery_status_and_stop_bypass_only_disabled_preflight(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    handle = "workspace_1"
+    witness = "wit"
+    attachment = {"handle": handle, "generation": 0, "attachment_state": "attached",
+                  "studio_surface_id": "surface", "project_context_witness": witness}
+
+    def request_json(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if path == "/api/agent/mcp-status":
+            return {"enabled": False}
+        if path.endswith("/attachment"):
+            return attachment
+        if path.endswith("/shader-proposals/spt_" + "a" * 32):
+            return {"ticket_id": "spt_" + "a" * 32, "ready": False,
+                    "project_context_witness": witness}
+        if method == "DELETE":
+            return {**attachment, "attachment_state": "stopped"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    server = HextileMcpServer(client=client)
+    proposal_args = {"ticket_id": "spt_" + "a" * 32, "project_context_witness": witness}
+    assert server.call_tool("shader_get_proposal", proposal_args).get("isError") is not True
+    assert server.call_tool("shader_get_workspace", {"handle": handle,
+        "project_context_witness": witness}).get("isError") is not True
+    assert server.call_tool("shader_stop_workspace", {"handle": handle, "generation": 0,
+        "studio_surface_id": "surface", "project_context_witness": witness}).get("isError") is not True
+    assert all(call[1] != "/api/agent/mcp-status" for call in calls)
+    calls.clear()
+    assert server.call_tool("shader_recheck_update", {}).get("isError") is True
+    assert [call[1] for call in calls] == ["/api/agent/mcp-status"]
+    calls.clear()
+    assert server.call_tool("shader_get_workspace_unknown", {}).get("isError") is True
+    assert [call[1] for call in calls] == ["/api/agent/mcp-status"]
     monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs:
                         {"schema": 1, "entries": [], "source": "private"})
     with pytest.raises(HextileClientError):
