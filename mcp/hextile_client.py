@@ -2096,7 +2096,30 @@ class Client:
                    "protected_distribution_present", "has_opaque_fields", "truncated_fields",
                    "oversized_row", "sources", "contributors", "current_roles", "history",
                    "retained_credits", "notices", "base", "working_digest", "text_fields",
-                   "text_ref", "offset_utf8", "text", "total_bytes", "next_offset_utf8"}
+                   "text_ref", "offset_utf8", "text", "total_bytes", "next_offset_utf8",
+                   "original_source_hash", "distribution"}
+        distribution = result.get("distribution") if type(result) is dict else None
+        valid_distribution = True
+        if distribution is not None:
+            valid_distribution = type(distribution) is dict
+            if valid_distribution and set(distribution) >= {"schema", "rights", "source_hash",
+                    "original_sha256", "licenses_total"}:
+                valid_distribution = (set(distribution) <= {"schema", "rights", "source_hash",
+                    "original_sha256", "licenses_total", "has_opaque_fields"}
+                    and distribution["schema"] == 1
+                    and distribution["rights"] in {"declared", "unresolved"}
+                    and type(distribution["source_hash"]) is str
+                    and _WORKSPACE_DIGEST.fullmatch(distribution["source_hash"]) is not None
+                    and (distribution["original_sha256"] is None or
+                         type(distribution["original_sha256"]) is str and
+                         _WORKSPACE_DIGEST.fullmatch(distribution["original_sha256"]) is not None)
+                    and type(distribution["licenses_total"]) is int and 0 <= distribution["licenses_total"] <= 100000
+                    and ("has_opaque_fields" not in distribution or distribution["has_opaque_fields"] is True))
+            elif valid_distribution:
+                valid_distribution = (distribution == {"has_opaque_fields": True}
+                    or set(distribution) == {"schema", "has_opaque_fields"}
+                    and type(distribution["schema"]) is int and distribution["schema"] > 0
+                    and distribution["has_opaque_fields"] is True)
         if (type(result) is not dict or set(result) - allowed or result.get("schema") != 1
                 or result.get("target") != args["shader"]
                 or result.get("section") != args.get("section", "sources")
@@ -2106,6 +2129,10 @@ class Client:
                     or (result.get("next_offset_utf8") is not None and type(result.get("next_offset_utf8")) is not int)))
                 or (result["section"] != "text" and (type(result.get(result["section"])) is not list
                     or len(result[result["section"]]) > 32))
+                or not valid_distribution
+                or ("original_source_hash" in result and (type(result["original_source_hash"]) is not str
+                    or _WORKSPACE_DIGEST.fullmatch(result["original_source_hash"]) is None))
+                or (result.get("section") == "text" and ("distribution" in result or "original_source_hash" in result))
                 or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 60 * 1024
                 or "source" in result or "mutation" in result or "ticket_id" in result):
             raise HextileClientError("Malformed Shader credits result", kind="other")

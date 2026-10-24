@@ -119,6 +119,23 @@ def test_credits_text_chunk_transport_is_closed_and_forwards_utf8_offset(monkeyp
         client.get_shader_credits(args)
 
 
+def test_credits_distribution_summary_is_closed_without_raw_rights(monkeypatch) -> None:
+    ref = {"origin": "builtin", "shaderId": "hx_starter"}
+    args = {"shader": ref, "project_context_witness": "wit", "lease_id": "lease"}
+    page = {"schema": 1, "target": ref, "section": "sources", "sources": [],
+            "provenance_hash": "sha256:" + "a" * 64,
+            "original_source_hash": "sha256:" + "b" * 64,
+            "distribution": {"schema": 1, "rights": "declared", "source_hash": "sha256:" + "c" * 64,
+                             "original_sha256": None, "licenses_total": 2, "has_opaque_fields": True}}
+    client = Client("http://127.0.0.1:9")
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: page)
+    assert client.get_shader_credits(args)["distribution"]["licenses_total"] == 2
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: {**page,
+        "distribution": {**page["distribution"], "raw_licenses": ["private"]}})
+    with pytest.raises(HextileClientError):
+        client.get_shader_credits(args)
+
+
 def test_register_forwards_typed_source_proposal_without_changing_digest(monkeypatch) -> None:
     args = _workspace_register()
     source_proposal = {"schema": 1, "expected_provenance_hash": None, "sources": [{"kind": "append",
