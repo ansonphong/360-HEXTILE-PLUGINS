@@ -122,7 +122,8 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
     allowed = {
         "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
                   "capability", "working_digest", "owner_generation", "title", "tags",
-                  "document_schema", "draft_state", "writable", "save_state", "reasons"},
+                  "document_schema", "draft_state", "writable", "save_state", "reasons",
+                  "saved_values", "unaccepted_values", "mounted_values"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor"},
