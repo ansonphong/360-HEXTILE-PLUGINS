@@ -127,7 +127,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
         "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
                   "capability", "working_digest", "owner_generation", "title", "tags",
                   "document_schema", "draft_state", "writable", "save_state", "reasons",
-                  "saved_values", "unaccepted_values", "mounted_values"},
+                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor"},
@@ -155,7 +155,15 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
             set(data) - allowed or required - set(data) or
             (kind == "state" and (data.get("status") not in {"saved", "unaccepted", "incomplete"}
                                   or data.get("provenance") not in {"saved", "mounted", "unaccepted", "incomplete"}
-                                  or type(data.get("writable")) is not bool)) or
+                                  or type(data.get("writable")) is not bool
+                                  or ("bundle_grant" in data and (type(data["bundle_grant"]) is not dict
+                                      or set(data["bundle_grant"]) != {"grant_id", "sha256", "size"}
+                                      or type(data["bundle_grant"]["grant_id"]) is not str
+                                      or re.fullmatch(r"sbg_[0-9a-f]{32}", data["bundle_grant"]["grant_id"]) is None
+                                      or type(data["bundle_grant"]["sha256"]) is not str
+                                      or _WORKSPACE_DIGEST.fullmatch(data["bundle_grant"]["sha256"]) is None
+                                      or type(data["bundle_grant"]["size"]) is not int
+                                      or not 0 < data["bundle_grant"]["size"] <= 2 * 1024**3)))) or
             (entries is not None and (type(data.get("entries")) is not list or
                                       len(data["entries"]) > entries or
                                       any(type(row) is not dict or set(row) - entry_allowed
@@ -2062,6 +2070,35 @@ class Client:
 
     def fork_shader_asset(self, args: Mapping[str, Any]) -> dict:
         return self._create_shader_asset(args, "fork")
+
+    def import_shader_bundle(self, args: Mapping[str, Any]) -> dict:
+        if not isinstance(args, Mapping) or set(args) != {"request_id", "shader", "project_context_witness",
+                                                        "grant_id", "bundle_sha256", "collision_intent"}:
+            raise HextileClientError("Expected closed Shader Bundle grant", kind="other", status_code=422)
+        _native_shader_args("status", {key: args[key] for key in
+            ("shader", "project_context_witness", "request_id")})
+        if (type(args["grant_id"]) is not str or re.fullmatch(r"sbg_[0-9a-f]{32}", args["grant_id"]) is None
+                or type(args["bundle_sha256"]) is not str
+                or _WORKSPACE_DIGEST.fullmatch(args["bundle_sha256"]) is None
+                or args["collision_intent"] != "fork"):
+            raise HextileClientError("Invalid Shader Bundle grant", kind="other", status_code=422)
+        try:
+            result = self.request_json("POST", "/api/shaders/agent-operations/import-bundle", dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader Bundle import outcome unknown; read shader_get_operation by original request ID.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
+            raise
+        if type(result) is not dict or result.get("request_id") != args["request_id"] or result.get(
+                "operation") != "shader_import_bundle" or result.get("state") not in {
+                    "saved", "pending", "unknown", "refused", "expired"}:
+            raise HextileClientError("Shader Bundle import acknowledgement unknown; read shader_get_operation.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]})
+        if result["state"] == "saved" and (type(result.get("receipt")) is not dict
+                or result["receipt"].get("bundle_sha256") != args["bundle_sha256"]):
+            raise HextileClientError("Shader Bundle import receipt changed; read shader_get_operation.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]})
+        return result
 
     def get_shader_operation(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("status", args)

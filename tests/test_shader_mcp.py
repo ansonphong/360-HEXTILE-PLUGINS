@@ -166,7 +166,7 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
             "shader_stop_workspace"} <= names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset",
             "shader_open_asset", "shader_save_asset", "shader_create_asset", "shader_fork_asset",
-            "shader_save_as", "shader_get_operation"} <= names
+            "shader_save_as", "shader_import_bundle", "shader_get_operation"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
     listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
@@ -235,6 +235,36 @@ def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/create", fork)
     with pytest.raises(HextileClientError):
         client.fork_shader_asset({**fork, "actor": "human"})
+
+
+def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    ref = {"origin": "user", "shaderId": "mounted"}
+    grant = {"grant_id": "sbg_" + "a" * 32, "sha256": "sha256:" + "b" * 64, "size": 1024}
+    state = {"schema": 1, "shader": ref, "project_context_witness": "wit", "status": "saved",
+             "provenance": "mounted", "base": {}, "capability": {}, "writable": True,
+             "save_state": "clean", "bundle_grant": grant}
+    calls = []
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if method == "GET": return state
+        return {"request_id": body["request_id"], "operation": "shader_import_bundle", "state": "saved",
+                "receipt": {"bundle_sha256": grant["sha256"], "shader": {"origin": "user", "shaderId": "imported"}}}
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})["bundle_grant"] == grant
+    args = {"request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea", "shader": ref,
+            "project_context_witness": "wit", "grant_id": grant["grant_id"],
+            "bundle_sha256": grant["sha256"], "collision_intent": "fork"}
+    assert client.import_shader_bundle(args)["receipt"]["bundle_sha256"] == grant["sha256"]
+    assert calls[-1][:3] == ("POST", "/api/shaders/agent-operations/import-bundle", args)
+    with pytest.raises(HextileClientError):
+        client.import_shader_bundle({**args, "path": "C:/private.hexshader"})
+    with pytest.raises(HextileClientError):
+        client.import_shader_bundle({**args, "collision_intent": "replace"})
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: {**state,
+        "bundle_grant": {**grant, "path": "private"}})
+    with pytest.raises(HextileClientError):
+        client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})
 
 
 def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:

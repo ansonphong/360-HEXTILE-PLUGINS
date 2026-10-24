@@ -2652,6 +2652,11 @@ SHADER_EXTENSION_TOOLS = [
                "action": {"const": "fork"}, "expected_document_hash": _SHADER_DIGEST,
                "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 128}},
               ["request_id", "project_context_witness", "action", "shader", "expected_document_hash"]),
+    _tool_def("shader_import_bundle", "Import only the user-selected Shader Bundle grant visible in shader_get_asset_state. Explicit fork intent creates a new asset; no path or file bytes are accepted. Recover an uncertain outcome by original request ID.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "grant_id": {"type": "string", "pattern": "^sbg_[0-9a-f]{32}$"},
+               "bundle_sha256": _SHADER_DIGEST, "collision_intent": {"const": "fork"}},
+              ["request_id", "shader", "project_context_witness", "grant_id", "bundle_sha256", "collision_intent"]),
     _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. Capture and Apply consent are required. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
@@ -3004,6 +3009,7 @@ class HextileMcpServer:
             "shader_save_as": self._shader_save_as,
             "shader_create_asset": self._shader_create_asset,
             "shader_fork_asset": self._shader_fork_asset,
+            "shader_import_bundle": self._shader_import_bundle,
             "shader_get_operation": self._shader_get_operation,
             "shader_get_credits": self._shader_get_credits,
             "shader_propose_credits": self._shader_propose_credits,
@@ -3817,6 +3823,9 @@ class HextileMcpServer:
 
     def _shader_fork_asset(self, args: dict[str, Any]) -> Any:
         return self.client.fork_shader_asset(args)
+
+    def _shader_import_bundle(self, args: dict[str, Any]) -> Any:
+        return self.client.import_shader_bundle(args)
 
     def _shader_get_operation(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_operation(args)
