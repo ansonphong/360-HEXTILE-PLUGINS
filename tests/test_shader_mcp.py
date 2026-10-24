@@ -55,6 +55,13 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
     still = {**owner, "profile": "shader-linear-rgba-exr/1",
              "output": {"width": 2048, "height": 1024, "grant_id": "sof_" + "a" * 32, "name": "test"}}
     jsonschema.validate(still, descriptor("shader_preflight_still_export")["inputSchema"])
+    jsonschema.validate({key: value for key, value in still.items() if key != "output"} |
+                        {"preflight_request_id": request_id},
+                        descriptor("shader_export_still")["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({key: value for key, value in still.items() if key not in {"output", "profile"}} |
+                            {"preflight_request_id": request_id},
+                            descriptor("shader_export_still")["inputSchema"])
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**still, "destination": "C:/pixels.exr"},
                             descriptor("shader_preflight_still_export")["inputSchema"])
@@ -68,6 +75,18 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
     assert calls[-1][1].endswith("/output/preview")
     assert client.preflight_shader_still(still)["state"] == "pending"
     assert calls[-1][1].endswith("/output/still/preflight")
+    applied = {"schema": 1, "request_id": request_id, "operation": "shader_capture_output",
+               "state": "applied", "shader": shader, "project_context_witness": "w",
+               "transition": {"from_edit_sequence": 1, "to_edit_sequence": 1,
+                              "from_base": {**{key: preview["base"][key] for key in
+                                               ("working_revision", "document_hash", "source_hash")},
+                                            "manifest_hash": digest},
+                              "to_base": {**{key: preview["base"][key] for key in
+                                             ("working_revision", "document_hash", "source_hash")},
+                                          "manifest_hash": digest}}}
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: applied)
+    assert client.request_shader_preview(preview)["state"] == "applied"
+    monkeypatch.setattr(client, "request_json", reply)
     with pytest.raises(HextileClientError):
         client.preflight_shader_still({**still, "output": {**still["output"], "path": "C:/pixels.exr"}})
     with pytest.raises(HextileClientError):
@@ -141,22 +160,30 @@ def test_shader_output_receipts_refuse_wrong_identity_and_private_fields(monkeyp
     preview = {**owner, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
     replies = [{"request_id": "wrong-id", "state": "pending"},
                {"request_id": request_id, "state": "pending", "private_path": "D:/secret"},
-               {"request_id": request_id, "state": "saved"}]
+               {"request_id": request_id, "state": "saved"},
+               {"request_id": request_id, "state": "pending", "padding": "x" * 32768}]
     calls = []
     def reply(method, path, body=None, **kwargs):
         calls.append((method, path))
         return replies.pop(0)
     monkeypatch.setattr(client, "request_json", reply)
-    for _ in range(3):
+    for _ in range(4):
         with pytest.raises(HextileClientError) as error:
             client.request_shader_preview(preview)
         assert error.value.kind == "shader_output_outcome_unknown"
-    assert len(calls) == 3
-    replies[:] = [{"request_id": request_id, "profile": "png-master/1",
-                   "job": {"state": "completed", "private_path": "D:/secret"}}]
-    with pytest.raises(HextileClientError):
-        client.get_shader_output_job({"request_id": request_id, "shader": shader,
-                                      "project_context_witness": "w", "profile": "png-master/1"})
+    assert len(calls) == 4
+    job = {"id": "a" * 32, "shader_ref": shader, "state": "completed",
+           "progress": 1.0, "output_identity": None}
+    replies[:] = [{"request_id": request_id, "profile": "dome-png/1", "job": job},
+                 {"request_id": request_id, "profile": "png-master/1",
+                  "job": {**job, "private_path": "D:/secret"}},
+                 {"request_id": request_id, "profile": "png-master/1",
+                  "job": {**job, "progress": "done"}}]
+    for _ in range(3):
+        with pytest.raises(HextileClientError):
+            client.get_shader_output_job({"request_id": request_id, "shader": shader,
+                                          "project_context_witness": "w", "profile": "png-master/1"})
+    assert len(calls) == 7
 
 
 def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> None:

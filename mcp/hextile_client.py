@@ -76,9 +76,10 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
             raise invalid()
         keys = set(result)
         if operation in {"preview", "preflight"}:
-            if (keys not in ({"request_id", "state"},
-                             {"schema", "request_id", "operation", "state", "shader",
-                              "project_context_witness"})
+            full = {"schema", "request_id", "operation", "state", "shader",
+                    "project_context_witness"}
+            if ((keys != {"request_id", "state"} and
+                 (not full <= keys or keys - full - {"transition", "reason"}))
                     or result["state"] not in {"pending", "applied", "refused", "unknown", "expired"}):
                 raise invalid()
             if "schema" in result and (result["schema"] != 1
@@ -86,6 +87,26 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     or result["shader"] != args["shader"]
                     or result["project_context_witness"] != args["project_context_witness"]):
                 raise invalid()
+            if "reason" in result and (type(result["reason"]) is not str
+                    or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result["reason"]) is None):
+                raise invalid()
+            if "transition" in result:
+                transition = result["transition"]
+                base = {key: args["base"][key] for key in
+                        ("working_revision", "document_hash", "source_hash")}
+                if (type(transition) is not dict or not {"from_edit_sequence", "to_edit_sequence",
+                        "from_base", "to_base"} <= set(transition)
+                        or set(transition) - {"from_edit_sequence", "to_edit_sequence", "from_base",
+                            "to_base", "from_doc_generation", "to_doc_generation"}
+                        or any(type(transition[key]) is not int or transition[key] != args["expected_edit_sequence"]
+                               for key in ("from_edit_sequence", "to_edit_sequence"))
+                        or any(type(transition[key]) is not dict
+                               or any(transition[key].get(field) != value for field, value in base.items())
+                               or set(transition[key]) - set(base) - {"manifest_hash"}
+                               for key in ("from_base", "to_base"))
+                        or any(type(transition[key]) is not str or len(transition[key]) > 128
+                               for key in ("from_doc_generation", "to_doc_generation") if key in transition)):
+                    raise invalid()
         elif operation == "get_preview":
             if result.get("state") in {"pending", "unavailable"}:
                 if keys != {"request_id", "state"}:
@@ -1053,8 +1074,14 @@ class Client:
                         raise HextileClientError("Invalid Shader image bytes", status_code=502, kind="other")
                     return data
                 if content_type == "application/json":
-                    result = json.loads(data.decode("utf-8"))
-                    return _shader_output_receipt("get_preview", {"request_id": request_id}, result)
+                    try:
+                        result = json.loads(data.decode("utf-8"))
+                    except (UnicodeError, ValueError) as exc:
+                        raise HextileClientError("Invalid Shader image response", status_code=502,
+                                                 kind="other") from exc
+                    result = _shader_output_receipt("get_preview", {"request_id": request_id}, result)
+                    if result["state"] in {"pending", "unavailable"}:
+                        return result
                 raise HextileClientError("Invalid Shader image response", status_code=502, kind="other")
         except HextileClientError:
             raise
