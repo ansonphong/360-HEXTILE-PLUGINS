@@ -167,6 +167,9 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset",
             "shader_open_asset", "shader_save_asset", "shader_create_asset", "shader_fork_asset",
             "shader_save_as", "shader_import_bundle", "shader_get_operation"} <= names
+    assert {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look",
+            "shader_checkpoint", "shader_restore_revision", "shader_copy_revision",
+            "shader_history_retention"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
     listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
@@ -175,6 +178,30 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     for tool in SHADER_EXTENSION_TOOLS:
         assert tool["inputSchema"]["additionalProperties"] is False
         assert not {"actor", "mutation", "authority_ticket", "path"} & set(tool["inputSchema"]["properties"])
+
+
+def test_named_history_client_forwards_closed_intent_and_keeps_unknown_request(monkeypatch):
+    from hextile_client import Client, HextileClientError
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    shader = {"origin": "user", "shaderId": "aurora"}
+    base = {"kind": "saved", "working_revision": 2,
+            "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64}
+    args = {"request_id": request_id, "shader": shader, "project_context_witness": "wit",
+            "base": base, "expected_working_digest": "sha256:" + "c" * 64,
+            "library_intent": "saved",
+            "confirmation_scope": {"operation": "shader_checkpoint_save", "shader": shader},
+            "action": "save", "title": "Before"}
+    sent = []
+    monkeypatch.setattr(client, "request_json", lambda method, path, body:
+                        sent.append((method, path, body)) or {"request_id": request_id,
+                            "operation": "shader_checkpoint_save", "state": "saved"})
+    assert client.shader_checkpoint(args)["state"] == "saved"
+    assert sent == [("POST", "/api/shaders/agent-operations/checkpoint", args)]
+    with pytest.raises(HextileClientError):
+        client.shader_checkpoint({**args, "confirmation_scope": {"operation": "shader_checkpoint_remove", "shader": shader}})
+    with pytest.raises(HextileClientError):
+        client.shader_checkpoint({**args, "mutation": {"kind": "checkpoint_save"}})
 
 
 def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypatch) -> None:

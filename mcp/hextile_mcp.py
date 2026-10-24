@@ -2531,6 +2531,18 @@ _NATIVE_SHADER_BASE = _shader_closed({
 })
 _NATIVE_SHADER_REQUEST_ID = {"type": "string", "format": "uuid",
                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+_NATIVE_HISTORY_OWNER = {
+    "base": _NATIVE_SHADER_BASE, "expected_working_digest": _SHADER_DIGEST,
+    "library_intent": {"const": "saved"},
+    "confirmation_scope": _shader_closed({"operation": {"type": "string", "maxLength": 64},
+        "shader": _NATIVE_SHADER_REF}),
+    "studio_surface_id": _WORKSPACE_ID,
+    "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "expected_edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+}
+_NATIVE_HISTORY_TARGET = _shader_closed({"document_ref": {"type": "string", "maxLength": 256},
+                                         "document_hash": _SHADER_DIGEST})
+_NATIVE_HISTORY_CHECKPOINT = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}
 _NATIVE_WORKSPACE_HANDLE = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}
 _NATIVE_WORKSPACE_CHANGE = {"type": "string", "minLength": 3, "maxLength": 81}
 _NATIVE_WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
@@ -2566,6 +2578,53 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness"]),
     _tool_def("shader_get_looks", "Read bounded saved Look identities without source or pixel data.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
+    _tool_def("shader_save_look", "Save the exact durable Shader values and authored state as a named Look; optional replacement binds the old Look envelope.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "title": {"type": "string", "minLength": 1, "maxLength": 256},
+               "include_overrides": {"type": "boolean"}, "look_id": _NATIVE_HISTORY_CHECKPOINT,
+               "expected_look_envelope_hash": _SHADER_DIGEST},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id", "title"]),
+    _tool_def("shader_apply_look", "Apply one exact compatible saved Look through the native writer; source formula changes require their separate policy.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
+               "look_id", "expected_look_envelope_hash"]),
+    _tool_def("shader_rename_look", "Rename one saved Look with its exact envelope hash.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
+               "title": {"type": "string", "minLength": 1, "maxLength": 256}},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
+               "look_id", "expected_look_envelope_hash", "title"]),
+    _tool_def("shader_delete_look", "Remove one exact saved Look while retaining historical revision pins.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
+               "look_id", "expected_look_envelope_hash"]),
+    _tool_def("shader_checkpoint", "Save, rename or remove one exact checkpoint name through the bound native history action.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "action": {"enum": ["save", "rename", "remove"]},
+               "title": {"type": "string", "minLength": 1, "maxLength": 256},
+               "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT,
+               "expected_name": {"type": "string", "minLength": 1, "maxLength": 256},
+               "target": _NATIVE_HISTORY_TARGET},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id", "action"]),
+    _tool_def("shader_restore_revision", "Restore one exact retained revision or checkpoint as the next revision; an uncertain result requires original request ID recovery.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id"]),
+    _tool_def("shader_copy_revision", "Save an independent copy of one exact retained revision or checkpoint, preserving credits, Looks and resources.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT,
+               "destination_origin": {"enum": ["user", "project"]},
+               "title": {"type": "string", "minLength": 1, "maxLength": 256}},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
+               "destination_origin"]),
+    _tool_def("shader_history_retention", "Preview, compact or uncompact recoverable history. Permanent purge is human only.",
+              {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "action": {"enum": ["preview", "compact", "uncompact"]},
+               "mode": {"enum": ["current", "checkpoints"]}, "preview_token": _SHADER_DIGEST,
+               "preview_operation": {"enum": ["compact", "uncompact"]}},
+              ["shader", "project_context_witness", "base", "expected_working_digest", "action", "mode"]),
     _tool_def("shader_get_project_conventions", "Read bounded Project Shader convention profiles and digest.",
               {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),
     _tool_def("shader_get_proposal", "Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. This is source free.",
@@ -2997,6 +3056,14 @@ class HextileMcpServer:
             "shader_list_assets": self._shader_list_assets,
             "shader_get_history": self._shader_get_history,
             "shader_get_looks": self._shader_get_looks,
+            "shader_save_look": self._shader_save_look,
+            "shader_apply_look": self._shader_apply_look,
+            "shader_rename_look": self._shader_rename_look,
+            "shader_delete_look": self._shader_delete_look,
+            "shader_checkpoint": self._shader_checkpoint,
+            "shader_restore_revision": self._shader_restore_revision,
+            "shader_copy_revision": self._shader_copy_revision,
+            "shader_history_retention": self._shader_history_retention,
             "shader_get_project_conventions": self._shader_get_project_conventions,
             "shader_get_proposal": self._shader_get_proposal,
             "shader_get_workspace": self._shader_get_workspace,
@@ -3787,6 +3854,30 @@ class HextileMcpServer:
 
     def _shader_get_looks(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_looks(args)
+
+    def _shader_save_look(self, args: dict[str, Any]) -> Any:
+        return self.client.save_shader_look(args)
+
+    def _shader_apply_look(self, args: dict[str, Any]) -> Any:
+        return self.client.apply_shader_look(args)
+
+    def _shader_rename_look(self, args: dict[str, Any]) -> Any:
+        return self.client.rename_shader_look(args)
+
+    def _shader_delete_look(self, args: dict[str, Any]) -> Any:
+        return self.client.delete_shader_look(args)
+
+    def _shader_checkpoint(self, args: dict[str, Any]) -> Any:
+        return self.client.shader_checkpoint(args)
+
+    def _shader_restore_revision(self, args: dict[str, Any]) -> Any:
+        return self.client.restore_shader_revision(args)
+
+    def _shader_copy_revision(self, args: dict[str, Any]) -> Any:
+        return self.client.copy_shader_revision(args)
+
+    def _shader_history_retention(self, args: dict[str, Any]) -> Any:
+        return self.client.shader_history_retention(args)
 
     def _shader_get_project_conventions(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_project_conventions(args)

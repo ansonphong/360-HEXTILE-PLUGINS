@@ -118,6 +118,87 @@ def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set
         raise HextileClientError("Invalid history kind", status_code=422, kind="other")
 
 
+def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
+    common = {"shader", "project_context_witness", "base", "expected_working_digest"}
+    owner = {"library_intent", "confirmation_scope", "studio_surface_id", "lease_id",
+             "expected_edit_sequence"}
+    fields = {
+        "shader_save_look": ({"title"}, {"include_overrides", "look_id", "expected_look_envelope_hash"}),
+        "shader_apply_look": ({"look_id", "expected_look_envelope_hash"}, set()),
+        "shader_rename_look": ({"look_id", "expected_look_envelope_hash", "title"}, set()),
+        "shader_delete_look": ({"look_id", "expected_look_envelope_hash"}, set()),
+        "shader_checkpoint_save": ({"title"}, {"target"}),
+        "shader_checkpoint_rename": ({"checkpoint_id", "expected_name", "title"}, set()),
+        "shader_checkpoint_remove": ({"checkpoint_id", "expected_name"}, set()),
+        "shader_restore_revision": (set(), {"target", "checkpoint_id"}),
+        "shader_copy_revision": ({"destination_origin"}, {"target", "checkpoint_id", "title"}),
+        "shader_history_preview": ({"mode"}, {"preview_operation"}),
+        "shader_history_compact": ({"mode", "preview_token"}, set()),
+        "shader_history_uncompact": ({"mode", "preview_token"}, set()),
+    }
+    if operation not in fields or not isinstance(args, Mapping):
+        raise HextileClientError("Unknown Shader history operation", status_code=422, kind="other")
+    required, optional = fields[operation]
+    required = common | required | (set() if operation == "shader_history_preview" else {"request_id"})
+    if required - args.keys() or set(args) - required - optional - owner:
+        raise HextileClientError("Invalid Shader history fields", status_code=422, kind="other")
+    _native_shader_args("state", {key: args[key] for key in ("shader", "project_context_witness")})
+    base = args["base"]
+    if (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
+            or base["kind"] != "saved" or type(base["working_revision"]) is not int or base["working_revision"] < 1
+            or any(type(base[key]) is not str or not _WORKSPACE_DIGEST.fullmatch(base[key])
+                   for key in ("document_hash", "source_hash"))
+            or type(args["expected_working_digest"]) is not str
+            or not _WORKSPACE_DIGEST.fullmatch(args["expected_working_digest"])):
+        raise HextileClientError("Invalid Shader history base", status_code=422, kind="other")
+    if operation != "shader_history_preview":
+        try:
+            valid_id = str(uuid.UUID(args["request_id"])) == args["request_id"] and uuid.UUID(args["request_id"]).version == 4
+        except (ValueError, TypeError, AttributeError):
+            valid_id = False
+        if not valid_id:
+            raise HextileClientError("Invalid Shader history request_id", status_code=422, kind="other")
+    saved = args.get("library_intent") == "saved"
+    if saved:
+        if (args.get("confirmation_scope") != {"operation": operation if operation != "shader_history_preview"
+                else "shader_history_retention", "shader": dict(args["shader"])}
+                or any(key in args for key in ("studio_surface_id", "lease_id", "expected_edit_sequence"))):
+            raise HextileClientError("Invalid saved history confirmation", status_code=422, kind="other")
+    elif ("library_intent" in args or "confirmation_scope" in args
+          or not {"studio_surface_id", "lease_id", "expected_edit_sequence"} <= args.keys()
+          or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id", "lease_id"))
+          or type(args["expected_edit_sequence"]) is not int or args["expected_edit_sequence"] < 0):
+        raise HextileClientError("Invalid mounted history owner", status_code=422, kind="other")
+    for key in ("title", "expected_name"):
+        if key in args and (type(args[key]) is not str or not 1 <= len(args[key]) <= 256):
+            raise HextileClientError("Invalid Shader history name", status_code=422, kind="other")
+    for key in ("look_id", "checkpoint_id"):
+        if key in args and (type(args[key]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args[key])):
+            raise HextileClientError("Invalid Shader history ID", status_code=422, kind="other")
+    for key in ("expected_look_envelope_hash", "preview_token"):
+        if key in args and (type(args[key]) is not str or not _WORKSPACE_DIGEST.fullmatch(args[key])):
+            raise HextileClientError("Invalid Shader history hash", status_code=422, kind="other")
+    if "target" in args and (not isinstance(args["target"], Mapping)
+            or set(args["target"]) != {"document_ref", "document_hash"}
+            or type(args["target"]["document_ref"]) is not str
+            or type(args["target"]["document_hash"]) is not str
+            or not _WORKSPACE_DIGEST.fullmatch(args["target"]["document_hash"])):
+        raise HextileClientError("Invalid Shader history target", status_code=422, kind="other")
+    if operation in {"shader_restore_revision", "shader_copy_revision"} and (
+            ("target" in args) == ("checkpoint_id" in args)):
+        raise HextileClientError("History needs one exact target", status_code=422, kind="other")
+    if operation == "shader_save_look" and (("look_id" in args) != ("expected_look_envelope_hash" in args)):
+        raise HextileClientError("Look replacement needs an envelope hash", status_code=422, kind="other")
+    if "include_overrides" in args and type(args["include_overrides"]) is not bool:
+        raise HextileClientError("Invalid Look overrides choice", status_code=422, kind="other")
+    if "mode" in args and args["mode"] not in {"current", "checkpoints"}:
+        raise HextileClientError("Invalid history retention mode", status_code=422, kind="other")
+    if "preview_operation" in args and args["preview_operation"] not in {"compact", "uncompact"}:
+        raise HextileClientError("Invalid recoverable history preview", status_code=422, kind="other")
+    if "destination_origin" in args and args["destination_origin"] not in {"user", "project"}:
+        raise HextileClientError("Invalid copy destination", status_code=422, kind="other")
+
+
 def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> dict:
     try:
         size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
@@ -127,7 +208,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
         "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
                   "capability", "working_digest", "owner_generation", "title", "tags",
                   "document_schema", "draft_state", "writable", "save_state", "reasons",
-                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant"},
+                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant", "human_only"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor"},
@@ -156,6 +237,11 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
             (kind == "state" and (data.get("status") not in {"saved", "unaccepted", "incomplete"}
                                   or data.get("provenance") not in {"saved", "mounted", "unaccepted", "incomplete"}
                                   or type(data.get("writable")) is not bool
+                                  or ("human_only" in data and (type(data["human_only"]) is not dict
+                                      or set(data["human_only"]) != {"permanent_history_purge",
+                                          "developer_builtin_authoring", "physical_input"}
+                                      or any(type(reason) is not str or len(reason) > 256
+                                             for reason in data["human_only"].values())))
                                   or ("bundle_grant" in data and (type(data["bundle_grant"]) is not dict
                                       or set(data["bundle_grant"]) != {"grant_id", "sha256", "size"}
                                       or type(data["bundle_grant"]["grant_id"]) is not str
@@ -1888,6 +1974,71 @@ class Client:
         return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/looks", params={
             "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
             "project_context_witness": args["project_context_witness"]}), kind="looks", entries=128)
+
+    def _shader_history_write(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
+        checked = dict(args)
+        if operation.startswith("shader_checkpoint_"):
+            if checked.pop("action", None) != operation.removeprefix("shader_checkpoint_"):
+                raise HextileClientError("Invalid checkpoint action", status_code=422, kind="other")
+        elif operation.startswith("shader_history_"):
+            if checked.pop("action", None) != operation.removeprefix("shader_history_"):
+                raise HextileClientError("Invalid retention action", status_code=422, kind="other")
+        _native_history_args(operation, checked)
+        try:
+            receipt = self.request_json("POST", path, dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader history outcome unknown; read shader_get_operation by original request_id. Do not submit again.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]}) from exc
+            raise
+        if (not isinstance(receipt, dict) or receipt.get("request_id") != checked["request_id"]
+                or receipt.get("operation") != operation
+                or receipt.get("state") not in {"pending", "applied", "saved", "refused", "failed", "unknown", "expired"}):
+            raise HextileClientError("Shader history acknowledgement unknown; read shader_get_operation by original request_id.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]})
+        if len(json.dumps(receipt, ensure_ascii=False).encode("utf-8")) > 32768:
+            raise HextileClientError("Shader history receipt exceeds result limit", kind="other")
+        return receipt
+
+    def save_shader_look(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_history_write(args, "shader_save_look", "/api/shaders/agent-operations/looks/save")
+
+    def apply_shader_look(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_history_write(args, "shader_apply_look", "/api/shaders/agent-operations/looks/apply")
+
+    def rename_shader_look(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_history_write(args, "shader_rename_look", "/api/shaders/agent-operations/looks/rename")
+
+    def delete_shader_look(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_history_write(args, "shader_delete_look", "/api/shaders/agent-operations/looks/delete")
+
+    def shader_checkpoint(self, args: Mapping[str, Any]) -> dict:
+        action = args.get("action")
+        if action not in {"save", "rename", "remove"}:
+            raise HextileClientError("Invalid checkpoint action", status_code=422, kind="other")
+        return self._shader_history_write(args, "shader_checkpoint_" + action,
+                                          "/api/shaders/agent-operations/checkpoint")
+
+    def restore_shader_revision(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_history_write(args, "shader_restore_revision", "/api/shaders/agent-operations/revisions/restore")
+
+    def copy_shader_revision(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_history_write(args, "shader_copy_revision", "/api/shaders/agent-operations/revisions/copy")
+
+    def shader_history_retention(self, args: Mapping[str, Any]) -> dict:
+        action = args.get("action")
+        if action not in {"preview", "compact", "uncompact"}:
+            raise HextileClientError("Permanent history purge is a human action", status_code=403, kind="other")
+        if action == "preview":
+            checked = {key: value for key, value in args.items() if key != "action"}
+            _native_history_args("shader_history_preview", checked)
+            result = self.request_json("POST", "/api/shaders/agent-operations/history-retention", dict(args))
+            if (not isinstance(result, dict) or not isinstance(result.get("preview_token"), str)
+                    or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 32768):
+                raise HextileClientError("Invalid Shader history preview", kind="other")
+            return result
+        return self._shader_history_write(args, "shader_history_" + action,
+                                          "/api/shaders/agent-operations/history-retention")
 
     def get_shader_project_conventions(self, args: Mapping[str, Any]) -> dict:
         _native_read_args(args, {"project_context_witness"})
