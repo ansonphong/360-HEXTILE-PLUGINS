@@ -32,6 +32,59 @@ def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
 
 
+def test_credits_metadata_and_research_transport_are_closed(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
+    assert {"shader_get_credits", "shader_propose_credits", "shader_research_sources"} <= names
+    ref = {"origin": "user", "shaderId": "aurora"}
+    target = {"shader": ref, "project_context_witness": "wit", "lease_id": "lease"}
+    read = {**target, "section": "sources", "cursor": 0, "limit": 16}
+    jsonschema.validate(read, next(tool for tool in SHADER_EXTENSION_TOOLS
+                                   if tool["name"] == "shader_get_credits")["inputSchema"])
+    calls = []
+    client = Client("http://127.0.0.1:9")
+    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
+                        calls.append((method, path, body, kwargs)) or
+                        ({"schema": 1, "target": ref, "section": "sources", "sources": [],
+                          "provenance_hash": None, "base": {}, "working_digest": None}
+                         if method == "GET" else {"schema": 1, "state": "pending", "request_id": body["request_id"]}
+                         if path.endswith("/credits/proposals") else {"schema": 1, "pages": []}))
+    assert client.get_shader_credits(read)["sources"] == []
+    assert calls[-1][1].endswith("/credits")
+    from uuid import uuid4
+    proposal = {**target, "request_id": str(uuid4()), "base": {"kind": "saved", "working_revision": 1,
+        "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64},
+        "working_digest": "sha256:" + "c" * 64, "expected_provenance_hash": None,
+        "changes": {"author": "Artist"}}
+    jsonschema.validate(proposal, next(tool for tool in SHADER_EXTENSION_TOOLS
+                                       if tool["name"] == "shader_propose_credits")["inputSchema"])
+    assert client.propose_shader_credits(proposal)["state"] == "pending"
+    assert calls[-1][2] == proposal
+    assert client.research_shader_sources({**target, "source_url": "https://example.com"})["pages"] == []
+    with pytest.raises(HextileClientError):
+        client.propose_shader_credits({**proposal, "changes": {"distribution": {}}})
+
+
+def test_register_forwards_typed_source_proposal_without_changing_digest(monkeypatch) -> None:
+    args = _workspace_register()
+    source_proposal = {"schema": 1, "expected_provenance_hash": None, "sources": [{"kind": "append",
+        "row": {"author": "Adapter", "license_status": "unknown",
+                "evidence": {"basis": "observed", "note": "source"}}}]}
+    args["source_proposal"] = source_proposal
+    jsonschema.validate(args, _schema("register_shader_update")["inputSchema"])
+    sent = {}
+    client = Client("http://127.0.0.1:9")
+    monkeypatch.setattr(client, "_shader_workspace_request", lambda method, path, body=None:
+                        sent.update(body=body) or {"handle": args["handle"], "change_id": args["change_id"],
+                        "content_digest": args["content_digest"], "generation": 1, "candidate_id": "candidate"})
+    client.register_shader_update(args)
+    assert sent["body"]["source_proposal"] == source_proposal
+    assert sent["body"]["content_digest"] == args["content_digest"]
+    with pytest.raises(HextileClientError):
+        client.register_shader_update({**args, "source_proposal": {**source_proposal, "sources": [
+            {"kind": "remove", "index": 0}]}})
+
+
 def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
 

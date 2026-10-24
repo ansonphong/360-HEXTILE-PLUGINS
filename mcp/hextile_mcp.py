@@ -382,6 +382,7 @@ _GUIDE_ROOT = Path(__file__).resolve().parent.parent / "skills" / "360-hextile" 
 
 def _annotations(name: str) -> dict[str, bool]:
     if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation",
+                                     "shader_get_credits", "shader_research_sources",
                                      "shader_get_proposal", "shader_get_workspace"}:
         return {"readOnlyHint": True, "destructiveHint": False}
     if name in _DESTRUCTIVE:
@@ -480,6 +481,65 @@ def _shader_closed(properties: dict[str, Any], optional: tuple[str, ...] = ()) -
 _WORKSPACE_ID = {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9_-]+$"}
 _WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
 _WORKSPACE_DIGEST = {"type": "string", "pattern": r"^sha256:[0-9a-f]{64}$"}
+_CREDIT_HASH = {"anyOf": [_WORKSPACE_DIGEST, {"type": "null"}]}
+_CREDIT_PROFILE = {"oneOf": [
+    _shader_closed({"id": _WORKSPACE_DIGEST}),
+    _shader_closed({"snapshot": _shader_closed({"version": {"const": 1},
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "links": {"type": "array", "maxItems": 12, "items": _shader_closed({
+            "label": {"type": "string", "maxLength": 64},
+            "url": {"type": "string", "maxLength": 4096}})}}, ("links",))}),
+]}
+_CREDIT_SOURCE_FIELDS = {
+    **{key: {"type": "string", "maxLength": 4096} for key in
+       ("author", "title", "url", "contribution", "license", "ai_assistance", "source_revision")},
+    "relationship": {"enum": ["original", "adaptation", "inspiration"]},
+    "license_status": {"enum": ["unknown", "recorded", "user_declared", "conflicting"]},
+    "contributors": {"type": "array", "maxItems": 128, "items": _CREDIT_PROFILE},
+    "evidence": _shader_closed({"basis": {"enum": ["observed", "user_declared", "inferred"]},
+        "note": {"type": "string", "minLength": 1, "maxLength": 512},
+        "url": {"type": "string", "maxLength": 4096}}, ("url",)),
+    "source_digest": _shader_closed({"kind": {"type": "string", "maxLength": 128},
+                                     "digest": {"type": "string", "maxLength": 256}}),
+}
+_CREDIT_SOURCE = _layer_object(_CREDIT_SOURCE_FIELDS)
+_CREDIT_SOURCE_APPEND = _shader_closed({"kind": {"const": "append"}, "row": _CREDIT_SOURCE})
+_CREDIT_SOURCE_CHANGE = _shader_closed({"kind": {"const": "change"},
+    "index": {"type": "integer", "minimum": 0, "maximum": 127}, "set": _CREDIT_SOURCE})
+_SOURCE_PROPOSAL = _shader_closed({"schema": {"const": 1},
+    "expected_provenance_hash": _CREDIT_HASH,
+    "sources": {"type": "array", "maxItems": 128,
+                "items": {"oneOf": [_CREDIT_SOURCE_APPEND, _CREDIT_SOURCE_CHANGE]}}})
+_CREDIT_CURRENT_TARGET = _shader_closed({"index": {"type": "integer", "minimum": 0, "maximum": 127},
+    "contributor": _WORKSPACE_DIGEST, "role": {"enum": ["shader-author", "shader-editor"]}})
+_CREDIT_CURRENT = {"type": "array", "maxItems": 128, "items": {"oneOf": [
+    _shader_closed({"kind": {"const": "add"}, "contributor": _CREDIT_PROFILE,
+        "role": {"enum": ["shader-author", "shader-editor"]},
+        "summary": {"type": "string", "maxLength": 1024}}, ("summary",)),
+    _shader_closed({"kind": {"const": "change"}, "target": _CREDIT_CURRENT_TARGET,
+        "set": _layer_object({"contributor": _CREDIT_PROFILE,
+            "role": {"enum": ["shader-author", "shader-editor"]},
+            "summary": {"anyOf": [{"type": "string", "maxLength": 1024}, {"type": "null"}]}})}),
+    _shader_closed({"kind": {"const": "remove"}, "target": _CREDIT_CURRENT_TARGET}),
+]}}
+_CREDIT_RECORD = _shader_closed({"kind": {"enum": ["contribution", "correction"]},
+    "contributor": _CREDIT_PROFILE, "summary": {"type": "string", "maxLength": 1024},
+    "content": _shader_closed({"kind": {"const": "hextile-shader-source-v1"}, "digest": _WORKSPACE_DIGEST}),
+    "previous": {"anyOf": [_WORKSPACE_DIGEST, {"type": "null"}]}, "corrects": _WORKSPACE_DIGEST,
+    "replacement": {"anyOf": [{"type": "null"}, _shader_closed({"contributor": _CREDIT_PROFILE,
+        "summary": {"type": "string", "maxLength": 1024}})]},
+    "recorded_at": {"type": "string", "maxLength": 40}},
+    ("previous", "corrects", "replacement", "recorded_at"))
+_CREDIT_CHANGES = _layer_object({
+    **{key: {"type": "string", "maxLength": 4096} for key in ("author", "attribution", "license")},
+    "sources": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"oneOf": [
+        _CREDIT_SOURCE_APPEND, _CREDIT_SOURCE_CHANGE,
+        _shader_closed({"kind": {"const": "remove"}, "index": {"type": "integer", "minimum": 0,
+                                                         "maximum": 127}}),
+        _shader_closed({"kind": {"const": "reorder"}, "order": {"type": "array", "maxItems": 128,
+            "items": {"type": "integer", "minimum": 0, "maximum": 127}}}),
+    ]}}, "current": _CREDIT_CURRENT, "record": _CREDIT_RECORD,
+    "automatic_credit": {"type": "boolean"}})
 _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
                      "pattern": r"^[A-Za-z0-9_-]{1,64}:[1-9][0-9]{0,15}$",
                      "description": "<handle>:<expected_generation+1>; suffix <= 9007199254740991, no leading zeros. Replay the original ID, generation and digest only."}
@@ -2273,7 +2333,8 @@ TOOLS: list[dict[str, Any]] = [
         {"handle": _WORKSPACE_ID, "change_id": _WORKSPACE_CHANGE,
          "expected_generation": {"type": "integer", "minimum": 0, "maximum": 2**53 - 2},
          "content_digest": _WORKSPACE_DIGEST,
-         "attribution_action": {"enum": ["include", "skip_optional"]}},
+         "attribution_action": {"enum": ["include", "skip_optional"]},
+         "source_proposal": _SOURCE_PROPOSAL},
         required=["handle", "change_id", "expected_generation", "content_digest"]),
     _tool_def("get_shader_update",
         "Read one exact authorized workspace receipt, including attachment_state, check_attempt, "
@@ -2524,6 +2585,25 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_get_operation", "Read one route-owned native Shader operation outcome by exact request ID and target.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["request_id", "shader", "project_context_witness"]),
+    _tool_def("shader_get_credits", "Read bounded saved Credits and Sources under the current asset lease without source access.",
+              {**_NATIVE_SHADER_TARGET, "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+               "section": {"enum": ["sources", "contributors", "current_roles", "history",
+                                     "retained_credits", "notices"]},
+               "cursor": {"type": "integer", "minimum": 0},
+               "limit": {"type": "integer", "minimum": 1, "maximum": 32}},
+              ["shader", "project_context_witness", "lease_id"]),
+    _tool_def("shader_propose_credits", "Freeze a credits-only pending review intent; recover uncertain outcomes by request ID.",
+              {**_NATIVE_SHADER_TARGET, "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+               "request_id": _NATIVE_SHADER_REQUEST_ID, "base": _NATIVE_SHADER_BASE,
+               "working_digest": _CREDIT_HASH, "expected_provenance_hash": _CREDIT_HASH,
+               "changes": _CREDIT_CHANGES},
+              ["shader", "project_context_witness", "lease_id", "request_id", "base",
+               "working_digest", "expected_provenance_hash", "changes"]),
+    _tool_def("shader_research_sources", "Fetch one explicit public HTTP(S) source URL and up to four links locally with bounded text.",
+              {**_NATIVE_SHADER_TARGET, "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+               "source_url": {"type": "string", "minLength": 1, "maxLength": 2048},
+               "links": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 2048}}},
+              ["shader", "project_context_witness", "lease_id", "source_url"]),
 ]
 
 _timeline_tool = next(t for t in TOOLS if t["name"] == "control_shader_timeline")
@@ -2842,6 +2922,9 @@ class HextileMcpServer:
             "shader_stop_workspace": self._shader_stop_workspace,
             "shader_rename_asset": self._shader_rename_asset,
             "shader_get_operation": self._shader_get_operation,
+            "shader_get_credits": self._shader_get_credits,
+            "shader_propose_credits": self._shader_propose_credits,
+            "shader_research_sources": self._shader_research_sources,
             "get_shader_parameters": self._get_shader_parameters,
             "set_shader_parameter": self._set_shader_parameter,
             "propose_shader": self._propose_shader,
@@ -3633,6 +3716,15 @@ class HextileMcpServer:
 
     def _shader_get_operation(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_operation(args)
+
+    def _shader_get_credits(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_credits(args)
+
+    def _shader_propose_credits(self, args: dict[str, Any]) -> Any:
+        return self.client.propose_shader_credits(args)
+
+    def _shader_research_sources(self, args: dict[str, Any]) -> Any:
+        return self.client.research_shader_sources(args)
 
     def _propose_shader(self, args: dict[str, Any]) -> Any:
         for banned in ("import", "delete", "accept", "consume", "config_partial", "path"):

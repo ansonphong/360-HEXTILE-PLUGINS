@@ -164,6 +164,159 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
     return data
 
 
+_CREDIT_SOURCE_FIELDS = {"author", "title", "url", "contribution", "relationship", "contributors",
+                         "evidence", "license", "license_status", "ai_assistance", "source_revision",
+                         "source_digest"}
+
+
+def _credit_source_fields(value: Any) -> bool:
+    if type(value) is not dict or set(value) - _CREDIT_SOURCE_FIELDS:
+        return False
+    if any(type(item) is not str or len(item.encode("utf-8")) > 4096 for key, item in value.items()
+           if key in {"author", "title", "url", "contribution", "license", "ai_assistance", "source_revision"}):
+        return False
+    if ("relationship" in value and value["relationship"] not in {"original", "adaptation", "inspiration"}) or (
+            "license_status" in value and value["license_status"] not in
+            {"unknown", "recorded", "user_declared", "conflicting"}):
+        return False
+    if "evidence" in value:
+        row = value["evidence"]
+        if (type(row) is not dict or not {"basis", "note"} <= set(row) or set(row) - {"basis", "note", "url"}
+                or row["basis"] not in {"observed", "user_declared", "inferred"}
+                or type(row["note"]) is not str or not 1 <= len(row["note"].encode("utf-8")) <= 512
+                or ("url" in row and (type(row["url"]) is not str or len(row["url"]) > 4096))):
+            return False
+    if "source_digest" in value:
+        row = value["source_digest"]
+        if type(row) is not dict or set(row) != {"kind", "digest"} or any(type(item) is not str for item in row.values()):
+            return False
+    if "contributors" in value and (type(value["contributors"]) is not list
+            or len(value["contributors"]) > 128 or not all(_credit_profile(item) for item in value["contributors"])):
+        return False
+    return True
+
+
+def _credit_profile(value: Any) -> bool:
+    if type(value) is not dict:
+        return False
+    if set(value) == {"id"}:
+        return type(value["id"]) is str and _WORKSPACE_DIGEST.fullmatch(value["id"]) is not None
+    if set(value) != {"snapshot"} or type(value["snapshot"]) is not dict:
+        return False
+    row = value["snapshot"]
+    links = row.get("links", [])
+    return (set(row) <= {"version", "name", "links"} and row.get("version") == 1
+            and type(row.get("name")) is str and 1 <= len(row["name"]) <= 128
+            and type(links) is list and len(links) <= 12
+            and all(type(link) is dict and set(link) == {"label", "url"}
+                    and all(type(item) is str for item in link.values()) for link in links))
+
+
+def _credit_source_operations(value: Any, *, registration: bool) -> bool:
+    if type(value) is not list or len(value) > 128 or (not registration and not value):
+        return False
+    for row in value:
+        if type(row) is not dict:
+            return False
+        kind = row.get("kind")
+        if kind == "append" and set(row) == {"kind", "row"}:
+            if not _credit_source_fields(row["row"]):
+                return False
+        elif kind == "change" and set(row) == {"kind", "index", "set"}:
+            if type(row["index"]) is not int or not 0 <= row["index"] < 128 or not _credit_source_fields(row["set"]):
+                return False
+        elif not registration and kind == "remove" and set(row) == {"kind", "index"}:
+            if type(row["index"]) is not int or not 0 <= row["index"] < 128:
+                return False
+        elif not registration and kind == "reorder" and set(row) == {"kind", "order"}:
+            if type(row["order"]) is not list or len(row["order"]) > 128 or any(
+                    type(index) is not int or not 0 <= index < 128 for index in row["order"]):
+                return False
+        else:
+            return False
+    return True
+
+
+def _credit_source_proposal(value: Any) -> bool:
+    return (type(value) is dict and set(value) == {"schema", "expected_provenance_hash", "sources"}
+            and type(value["schema"]) is int and value["schema"] == 1
+            and (value["expected_provenance_hash"] is None or
+                 (type(value["expected_provenance_hash"]) is str and
+                  _WORKSPACE_DIGEST.fullmatch(value["expected_provenance_hash"]) is not None))
+            and _credit_source_operations(value["sources"], registration=True))
+
+
+def _credit_changes(value: Any) -> bool:
+    if type(value) is not dict or not value or set(value) - {
+            "author", "attribution", "license", "sources", "current", "record", "automatic_credit"}:
+        return False
+    if any(type(value[key]) is not str or len(value[key].encode("utf-8")) > 4096
+           for key in ("author", "attribution", "license") if key in value):
+        return False
+    if "automatic_credit" in value and type(value["automatic_credit"]) is not bool:
+        return False
+    if "sources" in value and not _credit_source_operations(value["sources"], registration=False):
+        return False
+    if "current" in value:
+        edits = value["current"]
+        if type(edits) is not list or len(edits) > 128:
+            return False
+        for edit in edits:
+            if type(edit) is not dict or edit.get("kind") not in {"add", "change", "remove"}:
+                return False
+            if edit["kind"] == "add":
+                if (not {"kind", "contributor", "role"} <= set(edit)
+                        or set(edit) - {"kind", "contributor", "role", "summary"}
+                        or not _credit_profile(edit["contributor"])):
+                    return False
+            else:
+                target = edit.get("target")
+                if (type(target) is not dict or set(target) != {"index", "contributor", "role"}
+                        or type(target["index"]) is not int or not 0 <= target["index"] < 128
+                        or type(target["contributor"]) is not str):
+                    return False
+                if edit["kind"] == "remove" and set(edit) != {"kind", "target"}:
+                    return False
+                if edit["kind"] == "change":
+                    patch = edit.get("set")
+                    if (set(edit) != {"kind", "target", "set"} or type(patch) is not dict or not patch
+                            or set(patch) - {"contributor", "role", "summary"}
+                            or ("contributor" in patch and not _credit_profile(patch["contributor"]))
+                            or ("role" in patch and patch["role"] not in {"shader-author", "shader-editor"})
+                            or ("summary" in patch and patch["summary"] is not None and
+                                (type(patch["summary"]) is not str or not 1 <= len(patch["summary"]) <= 1024))):
+                        return False
+            if edit.get("role", edit.get("target", {}).get("role")) not in {"shader-author", "shader-editor"}:
+                return False
+    if "record" in value:
+        row = value["record"]
+        if (type(row) is not dict or not {"kind", "contributor", "summary", "content"} <= set(row)
+                or set(row) - {"kind", "contributor", "summary", "content", "previous", "corrects",
+                               "replacement", "recorded_at"}
+                or row["kind"] not in {"contribution", "correction"}
+                or not _credit_profile(row["contributor"])
+                or type(row["summary"]) is not str or not 1 <= len(row["summary"]) <= 1024
+                or type(row["content"]) is not dict or set(row["content"]) != {"kind", "digest"}
+                or row["content"]["kind"] != "hextile-shader-source-v1"
+                or type(row["content"]["digest"]) is not str
+                or _WORKSPACE_DIGEST.fullmatch(row["content"]["digest"]) is None):
+            return False
+        if "replacement" in row:
+            replacement = row["replacement"]
+            if replacement is not None and (type(replacement) is not dict
+                    or set(replacement) != {"contributor", "summary"}
+                    or not _credit_profile(replacement["contributor"])
+                    or type(replacement["summary"]) is not str):
+                return False
+        if ("corrects" in row and (type(row["corrects"]) is not str
+                or _WORKSPACE_DIGEST.fullmatch(row["corrects"]) is None)) or (
+                "previous" in row and row["previous"] is not None and
+                (type(row["previous"]) is not str or _WORKSPACE_DIGEST.fullmatch(row["previous"]) is None)) or (
+                "recorded_at" in row and type(row["recorded_at"]) is not str):
+            return False
+    return True
+
+
 def validate_shader_doctor(operation: str, args: Mapping[str, Any]) -> None:
     """Validate the exact request identity before contacting the mounted Studio."""
     required = ({"request_id", "origin", "shader_id", "project_context_witness", "studio_surface_id"}
@@ -224,7 +377,7 @@ def validate_shader_workspace(operation: str, args: Mapping[str, Any]) -> None:
         return
     required = {"handle", "change_id", "expected_generation", "content_digest"} if operation == "register" else {"handle", "change_id", "project_context_witness"}
     optional = {"include_source_diagnostics"} if operation == "get" else (
-        {"attribution_action"} if operation == "register" else set())
+        {"attribution_action", "source_proposal"} if operation == "register" else set())
     if (operation not in {"register", "get"} or not required <= args.keys()
             or args.keys() - required - optional
             or ("include_source_diagnostics" in args and type(args["include_source_diagnostics"]) is not bool)
@@ -245,7 +398,8 @@ def validate_shader_workspace(operation: str, args: Mapping[str, Any]) -> None:
     if operation == "register":
         if (type(args["expected_generation"]) is not int
                 or not 0 <= args["expected_generation"] < MAX_WORKSPACE_GENERATION
-                or not digest(args["content_digest"])):
+                or not digest(args["content_digest"])
+                or ("source_proposal" in args and not _credit_source_proposal(args["source_proposal"]))):
             refuse()
         # APP compares suffix to expected_generation+1 after checking retained replay,
         # so altered retained inputs keep their authoritative idempotency_conflict.
@@ -1751,6 +1905,89 @@ class Client:
             params={"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
                     "project_context_witness": args["project_context_witness"]})
 
+    def get_shader_credits(self, args: Mapping[str, Any]) -> dict:
+        if not isinstance(args, Mapping) or set(args) - {
+                "shader", "project_context_witness", "lease_id", "section", "cursor", "limit"}:
+            raise HextileClientError("Expected closed Shader credits page", status_code=422, kind="other")
+        _native_read_args({key: args[key] for key in ("shader", "project_context_witness", "lease_id") if key in args},
+                          {"shader", "project_context_witness", "lease_id"})
+        if (type(args["lease_id"]) is not str or not 1 <= len(args["lease_id"]) <= 128
+                or args.get("section", "sources") not in {"sources", "contributors", "current_roles", "history",
+                                                          "retained_credits", "notices"}
+                or ("cursor" in args and (type(args["cursor"]) is not int or args["cursor"] < 0))
+                or ("limit" in args and (type(args["limit"]) is not int or not 1 <= args["limit"] <= 32))):
+            raise HextileClientError("Invalid Shader credits page", status_code=422, kind="other")
+        params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+                  "project_context_witness": args["project_context_witness"], "lease_id": args["lease_id"]}
+        params.update({key: args[key] for key in ("section", "cursor", "limit") if key in args})
+        result = self.request_json("GET", "/api/shaders/agent-operations/credits", params=params)
+        allowed = {"schema", "target", "provenance_hash", "author", "attribution", "license",
+                   "automatic_credit", "section", "cursor", "total", "next_cursor",
+                   "protected_distribution_present", "has_opaque_fields", "truncated_fields",
+                   "oversized_row", "sources", "contributors", "current_roles", "history",
+                   "retained_credits", "notices", "base", "working_digest"}
+        if (type(result) is not dict or set(result) - allowed or result.get("schema") != 1
+                or result.get("target") != args["shader"]
+                or result.get("section") != args.get("section", "sources")
+                or type(result.get(result["section"])) is not list
+                or len(result[result["section"]]) > 32
+                or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 60 * 1024
+                or "source" in result or "mutation" in result or "ticket_id" in result):
+            raise HextileClientError("Malformed Shader credits result", kind="other")
+        return result
+
+    def propose_shader_credits(self, args: Mapping[str, Any]) -> dict:
+        required = {"shader", "project_context_witness", "lease_id", "request_id", "base",
+                    "working_digest", "expected_provenance_hash", "changes"}
+        if not isinstance(args, Mapping) or set(args) != required:
+            raise HextileClientError("Expected closed Shader credits proposal", status_code=422, kind="other")
+        _native_shader_args("status", {key: args[key] for key in ("shader", "project_context_witness", "request_id")})
+        base = args["base"]
+        if (type(args["lease_id"]) is not str or not 1 <= len(args["lease_id"]) <= 128
+                or type(base) is not dict or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
+                or base["kind"] != "saved" or type(base["working_revision"]) is not int
+                or base["working_revision"] < 1 or any(type(base[key]) is not str or
+                    _WORKSPACE_DIGEST.fullmatch(base[key]) is None for key in ("document_hash", "source_hash"))
+                or any(args[key] is not None and (type(args[key]) is not str or
+                    _WORKSPACE_DIGEST.fullmatch(args[key]) is None)
+                       for key in ("working_digest", "expected_provenance_hash"))
+                or not _credit_changes(args["changes"])
+                or len(json.dumps(dict(args), ensure_ascii=False).encode("utf-8")) > 60 * 1024):
+            raise HextileClientError("Invalid Shader credits proposal", status_code=422, kind="other")
+        request_id = args["request_id"]
+        try:
+            result = self.request_json("POST", "/api/shaders/agent-operations/credits/proposals", dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Credits proposal outcome unknown; read shader_get_operation by request_id.",
+                                         kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
+            raise
+        if (type(result) is not dict or set(result) - {"schema", "proposal_id", "request_id", "state",
+                "shader", "project_context_witness", "expected_provenance_hash", "mutation_hash"}
+                or result.get("request_id") != request_id
+                or result.get("state") not in {"pending", "applied", "saved", "refused", "expired", "unknown"}
+                or "ticket_id" in result or "mutation" in result or "provenance" in result
+                or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 32768):
+            raise HextileClientError("Credits proposal acknowledgement unknown; read shader_get_operation.",
+                                     kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
+        return result
+
+    def research_shader_sources(self, args: Mapping[str, Any]) -> dict:
+        _native_read_args(args, {"shader", "project_context_witness", "lease_id", "source_url"}, {"links"})
+        links = args.get("links", [])
+        if (type(args["lease_id"]) is not str or not 1 <= len(args["lease_id"]) <= 128
+                or type(args["source_url"]) is not str or not 1 <= len(args["source_url"].encode("utf-8")) <= 2048
+                or type(links) is not list or len(links) > 4
+                or any(type(link) is not str or len(link.encode("utf-8")) > 2048 for link in links)):
+            raise HextileClientError("Invalid source research URLs", status_code=422, kind="other")
+        result = self.request_json("POST", "/api/shaders/agent-operations/research-sources", dict(args))
+        if (type(result) is not dict or set(result) - {"schema", "pages", "omitted_links", "omitted_bytes", "limits"}
+                or result.get("schema") != 1 or type(result.get("pages")) is not list
+                or len(result["pages"]) > 5 or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 60 * 1024
+                or "source" in result or "ticket_id" in result):
+            raise HextileClientError("Malformed source research result", kind="other")
+        return result
+
     def _shader_workspace_request(self, method: str, path: str, body: Optional[Mapping[str, Any]] = None,
                                   *, params: Optional[Mapping[str, Any]] = None) -> Any:
         """Proxy once. An uncertain reply never becomes a receipt or automatic retry."""
@@ -1808,6 +2045,8 @@ class Client:
         body = {key: args[key] for key in ("change_id", "expected_generation", "content_digest")}
         if "attribution_action" in args:
             body["attribution_action"] = args["attribution_action"]
+        if "source_proposal" in args:
+            body["source_proposal"] = args["source_proposal"]
         result = self._shader_workspace_request("POST", f"/api/agent/shader-workspaces/{handle}/updates", body)
         if (not isinstance(result, dict) or result.get("handle") != args["handle"]
                 or result.get("change_id") != args["change_id"]
