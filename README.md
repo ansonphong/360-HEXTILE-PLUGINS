@@ -10,6 +10,10 @@ Standalone marketplace (footnote): **`ansonphong/360-hextile-agent`** — this r
 The MCP process is a thin **stdio** JSON-RPC ↔ HTTP proxy (`python3`, stdlib only).  
 All merge, validation, and render logic stay in the running app at `http://127.0.0.1:8000`.
 
+## Qualification status (2026-10-24)
+
+The connected MCP tool inventory still showed the original 16 Shader tools; new names including `shader_get_credits` and `shader_get_output_job` were absent. An actual `get_capabilities` call returned `isError` with “MCP availability could not be verified. Check 360 Hextile Settings → MCP and retry.” The loaded connector revision and installed APP behavior are therefore unverified. Native filesystem access, GPU output, and desktop behavior have not been qualified for this delivery. Source checkout and bundled-file checks do not establish installed-host behavior.
+
 ## Prerequisites
 
 | Requirement | Notes |
