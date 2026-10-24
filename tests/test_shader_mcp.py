@@ -1464,7 +1464,9 @@ def test_workspace_requests_validate_with_live_app_closed_models() -> None:
     route = ROOT.parent / "360-HEXTILE-APP/backend/api/routes/agent_shader_workspaces.py"
     tree = ast.parse(route.read_text(encoding="utf-8"))
     imports = [node for node in tree.body if isinstance(node, ast.ImportFrom) and node.module in {"typing", "pydantic"}]
-    names = {"ClosedModel", "ShaderRef", "ExistingWorkspace", "OpenIn", "RegisterIn"}
+    names = {"ClosedModel", "ShaderRef", "ExistingWorkspace", "OpenIn", "RegisterIn",
+             "SourceEvidence", "SourceDigest", "SourceProfileLink", "SourceProfile",
+             "SourceProfileRef", "SourceFields", "SourceAppend", "SourceChange", "SourceProposal"}
     assignments = {"Digest", "Name", "SurfaceId"}
     definitions = [node for node in tree.body if (isinstance(node, ast.ClassDef) and node.name in names)
                    or (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in assignments for target in node.targets))]
@@ -1480,6 +1482,15 @@ def test_workspace_requests_validate_with_live_app_closed_models() -> None:
         assert validated == body
         with pytest.raises(ValueError):
             model.model_validate({**body, "source": "forbidden GLSL JSON"})
+    source_body = {key: value for key, value in _workspace_register().items() if key != "handle"}
+    source_body["source_proposal"] = {"schema": 1, "expected_provenance_hash": None,
+        "sources": [{"kind": "append", "row": {"author": "Adapter",
+            "evidence": {"basis": "observed", "note": "source"}}}]}
+    assert namespace["RegisterIn"].model_validate(source_body).model_dump(exclude_unset=True) == source_body
+    with pytest.raises(ValueError):
+        namespace["RegisterIn"].model_validate({**source_body, "source_proposal": {
+            **source_body["source_proposal"], "sources": [{"kind": "append", "row": {
+                "author": "Adapter", "evidence": {"basis": "observed", "note": "source", "private": True}}}]}})
     schema = namespace["OpenIn"].model_json_schema()
     public = _schema("open_shader_workspace")["inputSchema"]
     assert set(public["properties"]) == set(schema["properties"])
@@ -1873,7 +1884,7 @@ def test_playable_recipes_match_shipped_sources_and_bound_contracts() -> None:
     from backend.modulation.conventions import validate_conventions
     from backend.modulation.contracts import validate_modulation
 
-    examples = json.loads((app / "frontend/src/lib/shader/convention-examples.json").read_text(encoding="utf-8"))
+    examples = json.loads((app / "plugins/shader/frontend/convention-examples.json").read_text(encoding="utf-8"))
     sources, extensions = _playable_recipe()
     assert sources == [row["candidate"]["source"] for row in examples]
     assert extensions == examples[1]["candidate"]["extensions"]
@@ -1931,7 +1942,8 @@ def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls()
     assert "hxCameraDirection(vec3 canonicalDirection)" in workspace
     assert "never arms Interact" in workspace
     operations = _schema("propose_shader")["inputSchema"]["properties"]["modulation_edits"]
-    assert operations["properties"]["schema"] == {"const": 1}
+    assert {variant["properties"]["schema"]["const"] for variant in operations["oneOf"]} == {1, 2}
+    assert all(variant["additionalProperties"] is False for variant in operations["oneOf"])
     assert not {"press_key", "set_pose", "arm_interact", "save_project_convention"} & {tool["name"] for tool in TOOLS}
     source = (ROOT / "skills/360-hextile/SKILL.md").read_text(encoding="utf-8")
     fragment = (ROOT / "codex/AGENTS-fragment.md").read_text(encoding="utf-8")
