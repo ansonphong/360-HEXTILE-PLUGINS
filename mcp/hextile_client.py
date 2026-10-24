@@ -60,12 +60,138 @@ _OUTPUT_OWNER = {"request_id", "shader", "project_context_witness", "base",
                  "studio_surface_id", "lease_id", "expected_edit_sequence"}
 
 
+def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
+                           *, mutation: bool = False) -> dict:
+    """Close the native output boundary without copying private destination data."""
+    def invalid() -> HextileClientError:
+        return HextileClientError("Invalid bounded Shader output receipt",
+            kind="shader_output_outcome_unknown" if mutation else "other",
+            receipt={"request_id": args["request_id"]} if mutation else None)
+
+    try:
+        if type(result) is not dict or len(json.dumps(result, ensure_ascii=False,
+                                                      allow_nan=False).encode("utf-8")) > 32768:
+            raise invalid()
+        if result.get("request_id") != args["request_id"]:
+            raise invalid()
+        keys = set(result)
+        if operation in {"preview", "preflight"}:
+            if (keys not in ({"request_id", "state"},
+                             {"schema", "request_id", "operation", "state", "shader",
+                              "project_context_witness"})
+                    or result["state"] not in {"pending", "applied", "refused", "unknown", "expired"}):
+                raise invalid()
+            if "schema" in result and (result["schema"] != 1
+                    or result["operation"] != "shader_capture_output"
+                    or result["shader"] != args["shader"]
+                    or result["project_context_witness"] != args["project_context_witness"]):
+                raise invalid()
+        elif operation == "get_preview":
+            if result.get("state") in {"pending", "unavailable"}:
+                if keys != {"request_id", "state"}:
+                    raise invalid()
+            elif (result.get("state") != "ready" or keys != {"request_id", "state", "width",
+                    "height", "sha256", "format"} or type(result["width"]) is not int
+                    or type(result["height"]) is not int or not 0 < result["width"] <= 1024
+                    or not 0 < result["height"] <= 512 or result["width"] * result["height"] > 524288
+                    or type(result["sha256"]) is not str
+                    or _WORKSPACE_DIGEST.fullmatch(result["sha256"]) is None
+                    or result["format"] != "rgb8-srgb-top-origin"):
+                raise invalid()
+        elif operation == "release_preview":
+            if keys != {"request_id", "released"} or result["released"] is not True:
+                raise invalid()
+        elif operation in {"still", "get_job", "stop_job"}:
+            allowed = {"request_id", "profile", "job", "publication", "state", "output_name"}
+            if (not {"request_id", "profile", "job"} <= keys or keys - allowed
+                    or operation == "still" and "state" not in result
+                    or result["profile"] != args["profile"]
+                    or result["profile"] not in _OUTPUT_PROFILES
+                    or "state" in result and result["state"] not in {"recovered", "queued", "processing",
+                         "completed", "publication_failed", "failed", "cancelled", "stop_requested",
+                         "stopped", "Interrupted"}
+                    or "publication" in result and result["publication"] not in {
+                         "unknown", "complete", "failed", "queued", "processing", "completed",
+                         "cancelled", "stop_requested", "stopped", "Interrupted"}
+                    or "output_name" in result and (type(result["output_name"]) is not str
+                         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,160}", result["output_name"]) is None)):
+                raise invalid()
+            job = result["job"]
+            if type(job) is not dict:
+                raise invalid()
+            state = job.get("state")
+            if state not in {"queued", "processing", "completed", "failed", "cancelled",
+                             "stop_requested", "stopped", "Interrupted"}:
+                raise invalid()
+            profile = result["profile"]
+            if profile == "png-master/1":
+                if (set(job) != {"id", "shader_ref", "state", "progress", "output_identity"}
+                        or job["shader_ref"] != args["shader"]
+                        or job["output_identity"] is not None and (type(job["output_identity"]) is not dict
+                            or set(job["output_identity"]) != {"render_id", "node_id"}
+                            or type(job["output_identity"]["render_id"]) is not str
+                            or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job["output_identity"]["render_id"]) is None
+                            or job["output_identity"]["node_id"] is not None
+                            and (type(job["output_identity"]["node_id"]) is not str
+                                 or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job["output_identity"]["node_id"]) is None))):
+                    raise invalid()
+                job_id = job["id"]
+            elif profile == "shader-linear-rgba-exr/1":
+                if (set(job) != {"job_id", "state", "progress", "profile", "output"}
+                        or job["profile"] != profile or job["output"] is not None
+                        and (type(job["output"]) is not str
+                             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,151}\.exr", job["output"]) is None)):
+                    raise invalid()
+                job_id = job["job_id"]
+            else:
+                if (set(job) != {"job_id", "state", "progress", "idempotency_key", "output"}
+                        or job["idempotency_key"] != args["request_id"]):
+                    raise invalid()
+                output = job["output"]
+                if output is not None and (type(output) is not dict
+                        or not {"projection", "diameter", "fov_deg"} <= set(output)
+                        or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file"}
+                        or output["projection"] not in {"fulldome", "fulldome_angular"}
+                        or type(output["diameter"]) is not int
+                        or output["diameter"] not in {1024, 2048, 4096, 8192}
+                        or any(type(output[key]) not in (int, float) or not math.isfinite(output[key])
+                               for key in ("fov_deg", "pan", "tilt", "roll") if key in output)
+                        or not 10 <= output["fov_deg"] <= 360
+                        or "file" in output and (type(output["file"]) is not str
+                            or re.fullmatch(r"domes/[A-Za-z0-9_-]{1,64}\.png", output["file"]) is None)):
+                    raise invalid()
+                job_id = job["job_id"]
+            if (type(job_id) is not str or re.fullmatch(r"[0-9a-f]{32}", job_id) is None
+                    or type(job["progress"]) not in (int, float)
+                    or not math.isfinite(job["progress"]) or not 0 <= job["progress"] <= 1):
+                raise invalid()
+        elif operation == "bundle":
+            if (keys != {"request_id", "state", "output_name", "resource_count", "resource_bytes"}
+                    or result["state"] != "saved" or type(result["output_name"]) is not str
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,127}\.hexshader", result["output_name"]) is None
+                    or type(result["resource_count"]) is not int or result["resource_count"] < 0
+                    or type(result["resource_bytes"]) is not int or result["resource_bytes"] < 0):
+                raise invalid()
+        elif operation == "project":
+            if (keys != {"request_id", "state", "shader_id", "target_name"}
+                    or result["state"] not in {"accepted", "deleted", "uncertain"}
+                    or type(result["shader_id"]) is not str
+                    or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result["shader_id"]) is None
+                    or type(result["target_name"]) is not str or len(result["target_name"]) > 256):
+                raise invalid()
+        else:
+            raise invalid()
+        return result
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise invalid() from exc
+
+
 def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
         "preview": (_OUTPUT_OWNER | {"output"}, set()),
         "preflight": (_OUTPUT_OWNER | {"profile", "output"}, set()),
-        "still": (_OUTPUT_OWNER | {"preflight_request_id"}, set()),
+        "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, set()),
         "get_preview": (common, {"image"}),
         "release_preview": (common, set()),
         "get_job": (common | {"profile"}, set()),
@@ -94,7 +220,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
                 or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id", "lease_id"))
                 or type(args["expected_edit_sequence"]) is not int or args["expected_edit_sequence"] < 0):
             raise HextileClientError("Invalid saved output owner", status_code=422, kind="other")
-    if operation in {"preflight", "get_job", "stop_job"} and (
+    if operation in {"preflight", "still", "get_job", "stop_job"} and (
             type(args["profile"]) is not str or args["profile"] not in _OUTPUT_PROFILES):
         raise HextileClientError("Unsupported Shader still profile", status_code=422, kind="other")
     if operation in {"preview", "preflight"}:
@@ -928,8 +1054,7 @@ class Client:
                     return data
                 if content_type == "application/json":
                     result = json.loads(data.decode("utf-8"))
-                    if isinstance(result, dict) and result.get("state") in {"pending", "unavailable"}:
-                        return result
+                    return _shader_output_receipt("get_preview", {"request_id": request_id}, result)
                 raise HextileClientError("Invalid Shader image response", status_code=502, kind="other")
         except HextileClientError:
             raise
@@ -2413,16 +2538,37 @@ class Client:
     def _create_shader_asset(self, args: Mapping[str, Any], action: str) -> dict:
         if not isinstance(args, Mapping):
             raise HextileClientError("Invalid Shader creation", kind="other", status_code=422)
-        source = ({"origin": "builtin", "shaderId": "hx_starter"} if action == "new" else args.get("shader"))
-        _native_shader_args("status", {"shader": source,
-            "project_context_witness": args.get("project_context_witness"), "request_id": args.get("request_id")})
+        source = ({"origin": "builtin", "shaderId": "hx_starter"} if action == "new" else
+                  None if action == "paste" else args.get("shader"))
+        if action == "paste":
+            try:
+                valid_id = (type(args.get("request_id")) is str
+                            and str(uuid.UUID(args["request_id"])) == args["request_id"]
+                            and uuid.UUID(args["request_id"]).version == 4)
+            except (ValueError, AttributeError):
+                valid_id = False
+            if (not valid_id or type(args.get("project_context_witness")) is not str
+                    or not args["project_context_witness"]):
+                raise HextileClientError("Invalid Shader creation", kind="other", status_code=422)
+        else:
+            _native_shader_args("status", {"shader": source,
+                "project_context_witness": args.get("project_context_witness"), "request_id": args.get("request_id")})
         expected = ({"request_id", "project_context_witness", "action", "template_id"} if action == "new" else
+                    {"request_id", "project_context_witness", "action", "source"} if action == "paste" else
                     {"request_id", "project_context_witness", "action", "shader", "expected_document_hash"})
-        optional = {"space"} if action == "new" else {"checkpoint_id"}
+        optional = {"space"} if action == "new" else {"title"} if action == "paste" else {"checkpoint_id"}
         valid = (expected <= set(args) and not set(args) - expected - optional and args.get("action") == action)
         if action == "new":
             valid = valid and args.get("template_id") == "hx_starter" and args.get("space", "direction_360") in {
                 "direction_360", "equirect_map", "ray_360", "shadertoy_image"}
+        elif action == "paste":
+            try:
+                source_bytes = args["source"].encode("utf-8", errors="strict") if type(args["source"]) is str else b""
+            except UnicodeError:
+                source_bytes = b""
+            valid = valid and bool(source_bytes) and len(source_bytes) <= 2 * 1024 * 1024
+            if "title" in args:
+                valid = valid and type(args["title"]) is str and 1 <= len(args["title"]) <= 256
         else:
             valid = valid and type(args.get("expected_document_hash")) is str and bool(
                 _WORKSPACE_DIGEST.fullmatch(args["expected_document_hash"]))
@@ -2437,17 +2583,42 @@ class Client:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Shader creation outcome unknown; read shader_get_operation by original request ID.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
-                    "shader": source}) from exc
+                    **({"scope": "creation"} if action == "paste" else {"shader": source})}) from exc
             raise
         if type(result) is not dict or result.get("request_id") != args["request_id"] or result.get("operation") != (
-                "shader_create_asset" if action == "new" else "shader_fork_asset"):
+                "shader_create_asset" if action in {"new", "paste"} else "shader_fork_asset"):
             raise HextileClientError("Shader creation acknowledgement unknown; read shader_get_operation.",
                 kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
-                "shader": source})
+                **({"scope": "creation"} if action == "paste" else {"shader": source})})
+        if action == "paste":
+            receipt = result.get("receipt")
+            valid = (set(result) == {"schema", "request_id", "operation", "scope", "state",
+                                    "project_context_witness", "receipt"}
+                     and result["schema"] == 1 and result["scope"] == "creation"
+                     and result["state"] == "saved"
+                     and result["project_context_witness"] == args["project_context_witness"]
+                     and type(receipt) is dict and set(receipt) == {"shader", "working_revision",
+                         "document_hash", "source_hash", "manifest_hash"}
+                     and type(receipt["shader"]) is dict
+                     and set(receipt["shader"]) == {"origin", "shaderId"}
+                     and receipt["shader"]["origin"] in {"user", "project"}
+                     and type(receipt["shader"]["shaderId"]) is str
+                     and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", receipt["shader"]["shaderId"]) is not None
+                     and type(receipt["working_revision"]) is int and receipt["working_revision"] == 1
+                     and all(type(receipt[key]) is str and _WORKSPACE_DIGEST.fullmatch(receipt[key])
+                             for key in ("document_hash", "source_hash"))
+                     and (receipt["manifest_hash"] is None or
+                          type(receipt["manifest_hash"]) is str and
+                          _WORKSPACE_DIGEST.fullmatch(receipt["manifest_hash"]) is not None))
+            if not valid:
+                raise HextileClientError("Shader Paste acknowledgement unknown; read original creation status.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
+                    "scope": "creation"})
         return result
 
     def create_shader_asset(self, args: Mapping[str, Any]) -> dict:
-        return self._create_shader_asset(args, "new")
+        return self._create_shader_asset(args, "paste" if isinstance(args, Mapping)
+                                         and args.get("action") == "paste" else "new")
 
     def fork_shader_asset(self, args: Mapping[str, Any]) -> dict:
         return self._create_shader_asset(args, "fork")
@@ -2482,9 +2653,26 @@ class Client:
         return result
 
     def get_shader_operation(self, args: Mapping[str, Any]) -> Any:
-        _native_shader_args("status", args)
+        if (not isinstance(args, Mapping) or not {"request_id", "project_context_witness"} <= set(args)
+                or set(args) - {"request_id", "project_context_witness", "shader", "scope"}):
+            raise HextileClientError("Expected closed Shader operation lookup", status_code=422, kind="other")
+        scope = args.get("scope", "asset")
+        if scope not in {"asset", "creation", "library", "project", "output"} or (
+                "shader" in args) != (scope in {"asset", "output"}):
+            raise HextileClientError("Invalid Shader operation scope", status_code=422, kind="other")
+        if scope in {"asset", "output"}:
+            _native_shader_args("status", {key: args[key] for key in
+                ("shader", "project_context_witness", "request_id")})
+        else:
+            try:
+                valid = type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"] and uuid.UUID(args["request_id"]).version == 4
+            except (ValueError, AttributeError):
+                valid = False
+            if not valid or type(args["project_context_witness"]) is not str or not args["project_context_witness"]:
+                raise HextileClientError("Invalid Shader operation scope", status_code=422, kind="other")
         return self.request_json("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",
-            params={"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+            params={**({"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"]}
+                       if "shader" in args else {}), "scope": scope,
                     "project_context_witness": args["project_context_witness"]})
 
     def get_shader_credits(self, args: Mapping[str, Any]) -> dict:
@@ -4145,10 +4333,7 @@ class Client:
                     "Shader output outcome unknown; inspect the original request_id without reposting.",
                     kind="shader_output_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
             raise
-        if (not isinstance(result, dict) or len(json.dumps(result, default=str).encode("utf-8")) > 32768):
-            raise HextileClientError("Invalid bounded Shader output receipt", kind="shader_output_outcome_unknown",
-                                     receipt={"request_id": args["request_id"]})
-        return result
+        return _shader_output_receipt(operation, args, result, mutation=True)
 
     def request_shader_preview(self, args: Mapping[str, Any]) -> dict:
         return self._shader_output_post("preview", args, "/api/shaders/agent-operations/output/preview")
@@ -4165,26 +4350,29 @@ class Client:
                   "project_context_witness": args["project_context_witness"]}
         if args.get("image") is True:
             return self.request_shader_preview_image(args["request_id"], params)
-        return self.request_json("GET", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
-                                 params=params)
+        return _shader_output_receipt("get_preview", args,
+            self.request_json("GET", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
+                              params=params))
 
     def release_shader_preview(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("release_preview", args)
-        return self.request_json("DELETE", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
-                                 {key: args[key] for key in ("shader", "project_context_witness")})
+        return _shader_output_receipt("release_preview", args,
+            self.request_json("DELETE", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
+                              {key: args[key] for key in ("shader", "project_context_witness")}), mutation=True)
 
     def get_shader_output_job(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("get_job", args)
-        return self.request_json("GET", "/api/shaders/agent-operations/output/jobs/" + args["request_id"],
+        return _shader_output_receipt("get_job", args, self.request_json("GET", "/api/shaders/agent-operations/output/jobs/" + args["request_id"],
             params={"profile": args["profile"], "origin": args["shader"]["origin"],
                     "shader_id": args["shader"]["shaderId"],
-                    "project_context_witness": args["project_context_witness"]})
+                    "project_context_witness": args["project_context_witness"]}))
 
     def stop_shader_output_job(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("stop_job", args)
         try:
-            return self.request_json("POST", "/api/shaders/agent-operations/output/jobs/" + args["request_id"] + "/stop",
-                {key: args[key] for key in ("shader", "project_context_witness", "profile")})
+            return _shader_output_receipt("stop_job", args,
+                self.request_json("POST", "/api/shaders/agent-operations/output/jobs/" + args["request_id"] + "/stop",
+                    {key: args[key] for key in ("shader", "project_context_witness", "profile")}), mutation=True)
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Shader output stop outcome unknown; read the original job status.",

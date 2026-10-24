@@ -95,7 +95,9 @@ def test_shader_preview_binary_transport_requires_explicit_image_opt_in() -> Non
         seen.append(request)
         if "image=true" in request.full_url:
             return Reply(b"\x89PNG\r\n\x1a\nFAKE", "image/png")
-        return Reply(b'{"request_id":"' + request_id.encode() + b'","state":"ready"}', "application/json")
+        return Reply(json.dumps({"request_id": request_id, "state": "ready", "width": 2,
+                                 "height": 1, "sha256": "sha256:" + "a" * 64,
+                                 "format": "rgb8-srgb-top-origin"}).encode(), "application/json")
     client = Client(opener=opener)
     metadata = client.get_shader_preview(args)
     assert metadata["state"] == "ready" and seen[-1].headers["X-hextile-agent"] == "mcp"
@@ -111,7 +113,9 @@ def test_known_shader_output_job_recovers_through_disabled_mcp_proxy(monkeypatch
         calls.append((method, path))
         if path == "/api/agent/mcp-status":
             return {"enabled": False}
-        return {"request_id": request_id, "profile": "png-master/1", "job": {"state": "completed"}}
+        return {"request_id": request_id, "profile": "png-master/1", "publication": "unknown",
+                "job": {"id": "a" * 32, "shader_ref": {"origin": "user", "shaderId": "aurora"},
+                        "state": "completed", "progress": 1.0, "output_identity": None}}
     monkeypatch.setattr(client, "request_json", reply)
     server = HextileMcpServer(client=client)
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
@@ -123,6 +127,66 @@ def test_known_shader_output_job_recovers_through_disabled_mcp_proxy(monkeypatch
     assert calls[-1] == ("POST", "/api/shaders/agent-operations/output/jobs/" + request_id + "/stop")
     assert server.call_tool("shader_request_preview", {})["isError"] is True
     assert calls[-1] == ("GET", "/api/agent/mcp-status")
+
+
+def test_shader_output_receipts_refuse_wrong_identity_and_private_fields(monkeypatch) -> None:
+    client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    shader = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "a" * 64
+    owner = {"request_id": request_id, "shader": shader, "project_context_witness": "w",
+             "base": {"kind": "saved", "working_revision": 1,
+                      "document_hash": digest, "source_hash": digest},
+             "studio_surface_id": "surface", "lease_id": "lease", "expected_edit_sequence": 1}
+    preview = {**owner, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
+    replies = [{"request_id": "wrong-id", "state": "pending"},
+               {"request_id": request_id, "state": "pending", "private_path": "D:/secret"},
+               {"request_id": request_id, "state": "saved"}]
+    calls = []
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path))
+        return replies.pop(0)
+    monkeypatch.setattr(client, "request_json", reply)
+    for _ in range(3):
+        with pytest.raises(HextileClientError) as error:
+            client.request_shader_preview(preview)
+        assert error.value.kind == "shader_output_outcome_unknown"
+    assert len(calls) == 3
+    replies[:] = [{"request_id": request_id, "profile": "png-master/1",
+                   "job": {"state": "completed", "private_path": "D:/secret"}}]
+    with pytest.raises(HextileClientError):
+        client.get_shader_output_job({"request_id": request_id, "shader": shader,
+                                      "project_context_witness": "w", "profile": "png-master/1"})
+
+
+def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    descriptor = next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == "shader_create_asset")
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    paste = {"request_id": request_id, "project_context_witness": "w", "action": "paste",
+             "source": "// λ\r\nvoid main(){}\n"}
+    jsonschema.validate(paste, descriptor["inputSchema"])
+    for wrong in ({**paste, "template_id": "hx_starter"},
+                  {**paste, "source": ""},
+                  {**paste, "action": "new"}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(wrong, descriptor["inputSchema"])
+    client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    calls = []
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        return {"schema": 1, "request_id": request_id, "operation": "shader_create_asset",
+                "scope": "creation", "state": "saved", "project_context_witness": "w",
+                "receipt": {"shader": {"origin": "user", "shaderId": "shader_created"},
+                            "working_revision": 1, "document_hash": "sha256:" + "a" * 64,
+                            "source_hash": "sha256:" + "b" * 64, "manifest_hash": None}}
+    monkeypatch.setattr(client, "request_json", reply)
+    result = client.create_shader_asset(paste)
+    assert result["scope"] == "creation" and "source" not in result
+    status = client.get_shader_operation({"request_id": request_id,
+        "project_context_witness": "w", "scope": "creation"})
+    assert status["scope"] == "creation" and calls[-1][3]["params"]["scope"] == "creation"
+    assert "origin" not in calls[-1][3]["params"]
 
 
 def test_resource_and_library_extensions_have_closed_explicit_transport(monkeypatch) -> None:
