@@ -81,6 +81,47 @@ def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> N
     assert unknown.value.receipt == {"request_id": request_id}
 
 
+def test_call_tool_allows_exact_shader_status_through_unavailable_preflight(monkeypatch) -> None:
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    args = {"request_id": request_id, "shader": {"origin": "user", "shaderId": "aurora"},
+            "project_context_witness": "wit"}
+    status = {"request_id": request_id, "state": "applied"}
+
+    for unavailable in ("disabled", "failure"):
+        client = Client("http://127.0.0.1:9")
+        calls = []
+
+        def request_json(method, path, body=None, **kwargs):
+            calls.append((method, path, body, kwargs))
+            if path == "/api/agent/mcp-status":
+                if unavailable == "failure":
+                    raise HextileClientError("offline", kind="app_down")
+                return {"enabled": False}
+            if path.endswith("/operations/" + request_id):
+                return status
+            raise AssertionError(f"unexpected request: {method} {path}")
+
+        monkeypatch.setattr(client, "request_json", request_json)
+        server = HextileMcpServer(client=client)
+        recovered = server.call_tool("shader_get_operation", args)
+        assert recovered.get("isError") is not True
+        assert calls == [("GET", f"/api/shaders/agent-operations/operations/{request_id}", None,
+                          {"params": {"origin": "user", "shader_id": "aurora",
+                                       "project_context_witness": "wit"}})]
+
+        calls.clear()
+        fresh_write = {**args, "base": {}, "expected_working_digest": "sha256:" + "c" * 64,
+                       "title": "Renamed"}
+        refused = server.call_tool("shader_rename_asset", fresh_write)
+        assert refused["isError"] is True
+        assert [call[1] for call in calls] == ["/api/agent/mcp-status"]
+
+        calls.clear()
+        unknown = server.call_tool("shader_get_operation_unknown", args)
+        assert unknown["isError"] is True
+        assert [call[1] for call in calls] == ["/api/agent/mcp-status"]
+
+
 def test_served_best_practices_preserve_shader_credit_authority() -> None:
     from hextile_mcp import load_guide
 

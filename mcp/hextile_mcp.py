@@ -2918,6 +2918,7 @@ class HextileMcpServer:
             not self.internal_mode
             and getattr(self.client, "_opener", None) is None
             and name not in _LOCAL_FILE_DIAGNOSTICS
+            and name != "shader_get_operation"
         ):
             probe = getattr(self.client, "request_json", None)
             if callable(probe):
