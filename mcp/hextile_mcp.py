@@ -2470,8 +2470,24 @@ _NATIVE_SHADER_BASE = _shader_closed({
 _NATIVE_SHADER_REQUEST_ID = {"type": "string", "format": "uuid",
                              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
 SHADER_EXTENSION_TOOLS = [
+    _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
+              {"project_context_witness": _SHADER_TEXT,
+               "shelf": {"enum": ["builtin", "user", "project"]},
+               "search": {"type": "string", "maxLength": 128},
+               "cursor": {"type": "string", "maxLength": 160},
+               "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+              ["project_context_witness"]),
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
+    _tool_def("shader_get_history", "Read bounded retained Shader revision or checkpoint metadata; a stale cursor requires restart.",
+              {**_NATIVE_SHADER_TARGET, "kind": {"enum": ["revisions", "checkpoints"]},
+               "cursor": {"type": "string", "maxLength": 8192},
+               "limit": {"type": "integer", "minimum": 1, "maximum": 20}},
+              ["shader", "project_context_witness"]),
+    _tool_def("shader_get_looks", "Read bounded saved Look identities without source or pixel data.",
+              _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
+    _tool_def("shader_get_project_conventions", "Read bounded Project Shader convention profiles and digest.",
+              {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),
     _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. An uncertain write must be checked by shader_get_operation.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
@@ -2790,6 +2806,10 @@ class HextileMcpServer:
             "get_spot_clone": self._get_spot_clone,
             "get_shader_context": self._get_shader_context,
             "shader_get_asset_state": self._shader_get_asset_state,
+            "shader_list_assets": self._shader_list_assets,
+            "shader_get_history": self._shader_get_history,
+            "shader_get_looks": self._shader_get_looks,
+            "shader_get_project_conventions": self._shader_get_project_conventions,
             "shader_rename_asset": self._shader_rename_asset,
             "shader_get_operation": self._shader_get_operation,
             "get_shader_parameters": self._get_shader_parameters,
@@ -3552,6 +3572,18 @@ class HextileMcpServer:
 
     def _shader_get_asset_state(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_asset_state(args)
+
+    def _shader_list_assets(self, args: dict[str, Any]) -> Any:
+        return self.client.list_shader_assets(args)
+
+    def _shader_get_history(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_history(args)
+
+    def _shader_get_looks(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_looks(args)
+
+    def _shader_get_project_conventions(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_project_conventions(args)
 
     def _shader_rename_asset(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_asset(args)

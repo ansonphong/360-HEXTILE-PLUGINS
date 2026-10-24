@@ -36,6 +36,8 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
 
     names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
+    assert {"shader_list_assets", "shader_get_history", "shader_get_looks",
+            "shader_get_project_conventions"} <= names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_get_operation"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
@@ -52,9 +54,13 @@ def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> N
     calls = []
     monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
                         calls.append((method, path, body, kwargs)) or
-                        ({"request_id": body["request_id"], "state": "applied"} if body else {"state": "applied"}))
+                        ({"request_id": body["request_id"], "state": "applied"} if body else
+                         {"schema": 1, "shader": {"origin": "user", "shaderId": "aurora"},
+                          "project_context_witness": "wit", "status": "saved", "provenance": "saved",
+                          "base": {}, "capability": {}, "writable": False, "save_state": "saved"}
+                         if path.endswith("/asset-state") else {"state": "applied"}))
     ref = {"origin": "user", "shaderId": "aurora"}
-    assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"}) == {"state": "applied"}
+    assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})["status"] == "saved"
     request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
     base = {"kind": "saved", "working_revision": 1, "document_hash": "sha256:" + "a" * 64,
             "source_hash": "sha256:" + "b" * 64}
@@ -79,6 +85,45 @@ def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> N
         client.rename_shader_asset(body)
     assert unknown.value.kind == "shader_operation_outcome_unknown"
     assert unknown.value.receipt == {"request_id": request_id}
+
+
+def test_native_shader_discovery_transport_rejects_unbounded_results(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
+                        calls.append((method, path, kwargs)) or
+                        ({"schema": 1, "project_context_witness": "wit", "digest": None,
+                          "writable": False, "profiles": []} if path.endswith("/project-conventions")
+                         else {"schema": 1, "shader": {"origin": "user", "shaderId": "aurora"},
+                               "project_context_witness": "wit", "kind": "revisions",
+                               "entries": [], "next_cursor": None} if path.endswith("/history")
+                         else {"schema": 1, "shader": {"origin": "user", "shaderId": "aurora"},
+                               "project_context_witness": "wit", "provenance": "saved",
+                               "entries": []} if path.endswith("/looks")
+                         else {"schema": 1, "project_context_witness": "wit", "project": {},
+                               "entries": [], "next_cursor": None}))
+    assert client.list_shader_assets({"project_context_witness": "wit", "shelf": "user"})["entries"] == []
+    assert calls[0][1].endswith("/assets")
+    assert calls[0][2]["params"]["shelf"] == "user"
+    ref = {"shader": {"origin": "user", "shaderId": "aurora"}, "project_context_witness": "wit"}
+    assert client.get_shader_history(ref)["entries"] == []
+    assert calls[1][1].endswith("/history")
+    assert client.get_shader_looks(ref)["entries"] == []
+    assert calls[2][1].endswith("/looks")
+    assert client.get_shader_project_conventions({"project_context_witness": "wit"})["schema"] == 1
+    assert calls[3][1].endswith("/project-conventions")
+    with pytest.raises(HextileClientError):
+        client.list_shader_assets({"project_context_witness": "wit", "limit": 1000})
+    with pytest.raises(HextileClientError):
+        client.get_shader_history({**ref, "kind": "source"})
+    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs:
+                        {"schema": 1, "entries": [{}] * 51})
+    with pytest.raises(HextileClientError):
+        client.list_shader_assets({"project_context_witness": "wit"})
+    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs:
+                        {"schema": 1, "entries": [], "source": "private"})
+    with pytest.raises(HextileClientError):
+        client.list_shader_assets({"project_context_witness": "wit"})
 
 
 def test_call_tool_allows_exact_shader_status_through_unavailable_preflight(monkeypatch) -> None:

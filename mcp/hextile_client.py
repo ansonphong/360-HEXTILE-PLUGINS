@@ -93,6 +93,76 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Invalid native Shader rename", status_code=422, kind="other")
 
 
+def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set[str] = frozenset()) -> None:
+    if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
+        raise HextileClientError("Expected closed Shader read arguments", status_code=422, kind="other")
+    witness = args.get("project_context_witness")
+    if type(witness) is not str or not 1 <= len(witness) <= 256:
+        raise HextileClientError("Invalid Project witness", status_code=422, kind="other")
+    if "shader" in required:
+        _native_shader_args("state", {"shader": args["shader"], "project_context_witness": witness})
+    if "limit" in args and (type(args["limit"]) is not int or not 1 <= args["limit"] <=
+                            (50 if "shelf" in optional else 20)):
+        raise HextileClientError("Invalid page limit", status_code=422, kind="other")
+    if "cursor" in args and (type(args["cursor"]) is not str or len(args["cursor"]) > 8192):
+        raise HextileClientError("Invalid page cursor", status_code=422, kind="other")
+    if "search" in args and (type(args["search"]) is not str or len(args["search"]) > 128):
+        raise HextileClientError("Invalid discovery search", status_code=422, kind="other")
+    if "shelf" in args and args["shelf"] not in {"builtin", "user", "project"}:
+        raise HextileClientError("Invalid discovery shelf", status_code=422, kind="other")
+    if "kind" in args and args["kind"] not in {"revisions", "checkpoints"}:
+        raise HextileClientError("Invalid history kind", status_code=422, kind="other")
+
+
+def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> dict:
+    try:
+        size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise HextileClientError("Malformed Shader read result", kind="other") from exc
+    allowed = {
+        "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
+                  "capability", "working_digest", "owner_generation", "title", "tags",
+                  "document_schema", "draft_state", "writable", "save_state"},
+        "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
+        "history": {"schema", "shader", "project_context_witness", "kind", "current",
+                    "inventory_generation", "entries", "next_cursor"},
+        "looks": {"schema", "shader", "project_context_witness", "provenance", "entries"},
+        "conventions": {"schema", "project_context_witness", "digest", "writable",
+                        "default_profile_id", "profiles", "reason"},
+    }[kind]
+    required = {
+        "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
+                  "capability", "writable", "save_state"},
+        "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
+        "history": {"schema", "shader", "project_context_witness", "kind", "entries", "next_cursor"},
+        "looks": {"schema", "shader", "project_context_witness", "provenance", "entries"},
+        "conventions": {"schema", "project_context_witness", "digest", "writable", "profiles"},
+    }[kind]
+    entry_allowed = {
+        "assets": {"shader", "title", "status", "reasons", "base"},
+        "history": {"document_ref", "document_hash", "ordinal", "integrity", "publication",
+                    "schema", "timestamp", "hash_suffix", "restore_eligible", "copy_eligible",
+                    "eligibility_reason", "id", "name", "actor", "error", "target_family"},
+        "looks": {"id", "title", "revision", "content_hash", "envelope_hash", "manifest_hash",
+                  "frozen_document_revision", "frozen_document_hash"},
+    }.get(kind)
+    if (type(data) is not dict or size > 32768 or data.get("schema") != 1 or
+            set(data) - allowed or required - set(data) or
+            (kind == "state" and (data.get("status") not in {"saved", "unaccepted", "incomplete"}
+                                  or data.get("provenance") not in {"saved", "mounted", "unaccepted"}
+                                  or type(data.get("writable")) is not bool)) or
+            (entries is not None and (type(data.get("entries")) is not list or
+                                      len(data["entries"]) > entries or
+                                      any(type(row) is not dict or set(row) - entry_allowed
+                                          for row in data["entries"]))) or
+            (kind == "conventions" and (type(data.get("profiles")) is not list or
+                                         len(data["profiles"]) > 8)) or
+            ("next_cursor" in data and data["next_cursor"] is not None and
+             (type(data["next_cursor"]) is not str or len(data["next_cursor"]) > 8192))):
+        raise HextileClientError("Malformed or unbounded Shader read result", kind="other")
+    return data
+
+
 def validate_shader_doctor(operation: str, args: Mapping[str, Any]) -> None:
     """Validate the exact request identity before contacting the mounted Studio."""
     required = ({"request_id", "origin", "shader_id", "project_context_witness", "studio_surface_id"}
@@ -1629,9 +1699,33 @@ class Client:
 
     def get_shader_asset_state(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("state", args)
-        return self.request_json("GET", "/api/shaders/agent-operations/asset-state", params={
+        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/asset-state", params={
             "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
-            "project_context_witness": args["project_context_witness"]})
+            "project_context_witness": args["project_context_witness"]}), kind="state")
+
+    def list_shader_assets(self, args: Mapping[str, Any]) -> dict:
+        _native_read_args(args, {"project_context_witness"}, {"shelf", "search", "cursor", "limit"})
+        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/assets",
+                                                     params=dict(args)), kind="assets", entries=50)
+
+    def get_shader_history(self, args: Mapping[str, Any]) -> dict:
+        _native_read_args(args, {"shader", "project_context_witness"}, {"kind", "cursor", "limit"})
+        params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+                  "project_context_witness": args["project_context_witness"]}
+        params.update({key: args[key] for key in ("kind", "cursor", "limit") if key in args})
+        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/history",
+                                                     params=params), kind="history", entries=20)
+
+    def get_shader_looks(self, args: Mapping[str, Any]) -> dict:
+        _native_read_args(args, {"shader", "project_context_witness"})
+        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/looks", params={
+            "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+            "project_context_witness": args["project_context_witness"]}), kind="looks", entries=128)
+
+    def get_shader_project_conventions(self, args: Mapping[str, Any]) -> dict:
+        _native_read_args(args, {"project_context_witness"})
+        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/project-conventions",
+                                                     params=dict(args)), kind="conventions")
 
     def rename_shader_asset(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("rename", args)
