@@ -2013,6 +2013,48 @@ class Client:
     def save_shader_asset(self, args: Mapping[str, Any]) -> dict:
         return self._mounted_shader_action(args, "shader_save_asset", "/api/shaders/agent-operations/save")
 
+    def _create_shader_asset(self, args: Mapping[str, Any], action: str) -> dict:
+        if not isinstance(args, Mapping):
+            raise HextileClientError("Invalid Shader creation", kind="other", status_code=422)
+        source = ({"origin": "builtin", "shaderId": "hx_starter"} if action == "new" else args.get("shader"))
+        _native_shader_args("status", {"shader": source,
+            "project_context_witness": args.get("project_context_witness"), "request_id": args.get("request_id")})
+        expected = ({"request_id", "project_context_witness", "action", "template_id"} if action == "new" else
+                    {"request_id", "project_context_witness", "action", "shader", "expected_document_hash"})
+        optional = {"space"} if action == "new" else {"checkpoint_id"}
+        valid = (expected <= set(args) and not set(args) - expected - optional and args.get("action") == action)
+        if action == "new":
+            valid = valid and args.get("template_id") == "hx_starter" and args.get("space", "direction_360") in {
+                "direction_360", "equirect_map", "ray_360", "shadertoy_image"}
+        else:
+            valid = valid and type(args.get("expected_document_hash")) is str and bool(
+                _WORKSPACE_DIGEST.fullmatch(args["expected_document_hash"]))
+            if "checkpoint_id" in args:
+                valid = valid and type(args["checkpoint_id"]) is str and bool(
+                    re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args["checkpoint_id"]))
+        if not valid:
+            raise HextileClientError("Invalid Shader creation", kind="other", status_code=422)
+        try:
+            result = self.request_json("POST", "/api/shaders/agent-operations/create", dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader creation outcome unknown; read shader_get_operation by original request ID.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
+                    "shader": source}) from exc
+            raise
+        if type(result) is not dict or result.get("request_id") != args["request_id"] or result.get("operation") != (
+                "shader_create_asset" if action == "new" else "shader_fork_asset"):
+            raise HextileClientError("Shader creation acknowledgement unknown; read shader_get_operation.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
+                "shader": source})
+        return result
+
+    def create_shader_asset(self, args: Mapping[str, Any]) -> dict:
+        return self._create_shader_asset(args, "new")
+
+    def fork_shader_asset(self, args: Mapping[str, Any]) -> dict:
+        return self._create_shader_asset(args, "fork")
+
     def get_shader_operation(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("status", args)
         return self.request_json("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",

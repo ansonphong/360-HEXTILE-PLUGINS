@@ -2638,6 +2638,17 @@ SHADER_EXTENSION_TOOLS = [
               _MOUNTED_SHADER_REQUIRED + ["target"]),
     _tool_def("shader_save_asset", "Save the exact dirty MCP-held RAM draft through the native Prepare and writer ticket. No human autosave. Recover uncertainty by the original request ID.",
               _MOUNTED_SHADER_FIELDS, _MOUNTED_SHADER_REQUIRED),
+    _tool_def("shader_create_asset", "Create a saved Shader from hx_starter under effective Trusted Local Full Access. It is not selected until Open. Recover uncertainty by request ID and builtin hx_starter source.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID,
+               "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
+               "action": {"const": "new"}, "template_id": {"const": "hx_starter"},
+               "space": {"enum": ["direction_360", "equirect_map", "ray_360", "shadertoy_image"]}},
+              ["request_id", "project_context_witness", "action", "template_id"]),
+    _tool_def("shader_fork_asset", "Fork the exact saved source Shader and retain its credits, Looks, resources and history pins. Current mounted grant or effective Trusted Local Full Access is required. Result is saved but not selected.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "action": {"const": "fork"}, "expected_document_hash": _SHADER_DIGEST,
+               "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 128}},
+              ["request_id", "project_context_witness", "action", "shader", "expected_document_hash"]),
     _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. Capture and Apply consent are required. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
@@ -2987,6 +2998,8 @@ class HextileMcpServer:
             "shader_delete_asset": self._shader_delete_asset,
             "shader_open_asset": self._shader_open_asset,
             "shader_save_asset": self._shader_save_asset,
+            "shader_create_asset": self._shader_create_asset,
+            "shader_fork_asset": self._shader_fork_asset,
             "shader_get_operation": self._shader_get_operation,
             "shader_get_credits": self._shader_get_credits,
             "shader_propose_credits": self._shader_propose_credits,
@@ -3791,6 +3804,12 @@ class HextileMcpServer:
 
     def _shader_save_asset(self, args: dict[str, Any]) -> Any:
         return self.client.save_shader_asset(args)
+
+    def _shader_create_asset(self, args: dict[str, Any]) -> Any:
+        return self.client.create_shader_asset(args)
+
+    def _shader_fork_asset(self, args: dict[str, Any]) -> Any:
+        return self.client.fork_shader_asset(args)
 
     def _shader_get_operation(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_operation(args)

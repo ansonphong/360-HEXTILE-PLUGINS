@@ -148,7 +148,8 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     assert {"shader_get_proposal", "shader_get_workspace", "shader_recheck_update",
             "shader_stop_workspace"} <= names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset",
-            "shader_open_asset", "shader_save_asset", "shader_get_operation"} <= names
+            "shader_open_asset", "shader_save_asset", "shader_create_asset", "shader_fork_asset",
+            "shader_get_operation"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
     listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
@@ -189,6 +190,28 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/save", save)
     with pytest.raises(HextileClientError):
         client.save_shader_asset({**save, "shader": {"origin": "builtin", "shaderId": "hx_starter"}})
+
+
+def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    sent = []
+    monkeypatch.setattr(client, "request_json", lambda method, path, body:
+                        sent.append((method, path, body)) or {"request_id": body["request_id"],
+                            "operation": "shader_create_asset" if body["action"] == "new" else "shader_fork_asset",
+                            "state": "saved", "receipt": {"shader": {"origin": "user", "shaderId": "result"}}})
+    common = {"request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea",
+              "project_context_witness": "wit"}
+    new = {**common, "action": "new", "template_id": "hx_starter"}
+    assert client.create_shader_asset(new)["state"] == "saved"
+    assert sent[-1] == ("POST", "/api/shaders/agent-operations/create", new)
+    with pytest.raises(HextileClientError):
+        client.create_shader_asset({**new, "template_id": "arbitrary"})
+    fork = {**common, "action": "fork", "shader": {"origin": "user", "shaderId": "source"},
+            "expected_document_hash": "sha256:" + "a" * 64}
+    assert client.fork_shader_asset(fork)["state"] == "saved"
+    assert sent[-1] == ("POST", "/api/shaders/agent-operations/create", fork)
+    with pytest.raises(HextileClientError):
+        client.fork_shader_asset({**fork, "actor": "human"})
 
 
 def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:
