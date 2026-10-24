@@ -32,6 +32,52 @@ def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
 
 
+def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
+    assert {"shader_get_asset_state", "shader_rename_asset", "shader_get_operation"} <= names
+    assert "shader_apply_mutation" not in names
+    server = HextileMcpServer(client=mock.Mock())
+    listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+    assert names <= {tool["name"] for tool in listed["result"]["tools"]}
+    assert names <= set(server._handlers)
+    for tool in SHADER_EXTENSION_TOOLS:
+        assert tool["inputSchema"]["additionalProperties"] is False
+        assert not {"actor", "mutation", "authority_ticket", "path"} & set(tool["inputSchema"]["properties"])
+
+
+def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
+                        calls.append((method, path, body, kwargs)) or
+                        ({"request_id": body["request_id"], "state": "applied"} if body else {"state": "applied"}))
+    ref = {"origin": "user", "shaderId": "aurora"}
+    assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"}) == {"state": "applied"}
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    base = {"kind": "saved", "working_revision": 1, "document_hash": "sha256:" + "a" * 64,
+            "source_hash": "sha256:" + "b" * 64}
+    body = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
+            "base": base, "expected_working_digest": "sha256:" + "c" * 64, "title": "Renamed"}
+    assert client.rename_shader_asset(body) == {"request_id": request_id, "state": "applied"}
+    assert calls[0][1].endswith("/asset-state")
+    assert calls[1][1].endswith("/rename")
+    assert calls[1][2] == body
+    assert client.get_shader_operation({"request_id": request_id, "shader": ref,
+                                        "project_context_witness": "wit"}) == {"state": "applied"}
+    assert calls[2][1].endswith("/operations/" + request_id)
+    with pytest.raises(HextileClientError) as error:
+        client.rename_shader_asset({**body, "actor": "human"})
+    assert error.value.status_code == 422
+    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        HextileClientError("connection lost", kind="app_down")))
+    with pytest.raises(HextileClientError) as unknown:
+        client.rename_shader_asset(body)
+    assert unknown.value.kind == "shader_operation_outcome_unknown"
+    assert unknown.value.receipt == {"request_id": request_id}
+
+
 def test_served_best_practices_preserve_shader_credit_authority() -> None:
     from hextile_mcp import load_guide
 

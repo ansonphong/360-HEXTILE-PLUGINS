@@ -39,6 +39,7 @@ from hextile_mcp import (  # noqa: E402
     GUIDE_NAMES,
     TOOL_NAMES,
     TOOLS,
+    SHADER_EXTENSION_TOOLS,
     HextileMcpServer,
     _BATCH_TOOLS,
     _DESTRUCTIVE,
@@ -1068,8 +1069,8 @@ def test_mcp_tools_list_rpc() -> None:
     )
     assert resp is not None
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert names == list(EXPECTED_TOOLS)
-    assert set(server._handlers) == set(EXPECTED_TOOLS)
+    assert names == list(EXPECTED_TOOLS) + [tool["name"] for tool in SHADER_EXTENSION_TOOLS]
+    assert set(server._handlers) == set(names)
     discovered = {tool["name"]: tool for tool in resp["result"]["tools"]}
     opened = discovered["open_shader_workspace"]["inputSchema"]
     got = discovered["get_shader_update"]["inputSchema"]
@@ -1120,7 +1121,7 @@ def test_mcp_initialize() -> None:
     )
     assert resp is not None
     assert resp["result"]["serverInfo"]["name"] == "hextile"
-    assert resp["result"]["serverInfo"]["version"] == "0.5.3"
+    assert resp["result"]["serverInfo"]["version"] == "0.5.4"
     assert resp["result"]["protocolVersion"] == "2024-11-05"
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]

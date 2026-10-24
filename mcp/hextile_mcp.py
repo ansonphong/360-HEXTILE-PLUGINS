@@ -41,7 +41,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.5.3"
+SERVER_VERSION = "0.5.4"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -381,7 +381,7 @@ _GUIDE_ROOT = Path(__file__).resolve().parent.parent / "skills" / "360-hextile" 
 
 
 def _annotations(name: str) -> dict[str, bool]:
-    if name in _READ_ONLY:
+    if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation"}:
         return {"readOnlyHint": True, "destructiveHint": False}
     if name in _DESTRUCTIVE:
         return {"readOnlyHint": False, "destructiveHint": True}
@@ -2455,6 +2455,33 @@ TOOLS: list[dict[str, Any]] = [
     ),
 ]
 
+# Native Shader additions are separate from the fixed baseline and activity tripwire.
+_NATIVE_SHADER_REF = _shader_closed({
+    "origin": {"enum": ["builtin", "user", "project"]},
+    "shaderId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"},
+})
+_NATIVE_SHADER_TARGET = {"shader": _NATIVE_SHADER_REF,
+                         "project_context_witness": {"type": "string", "minLength": 1}}
+_NATIVE_SHADER_BASE = _shader_closed({
+    "kind": {"const": "saved"}, "working_revision": {"type": "integer", "minimum": 1},
+    "document_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "source_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+})
+SHADER_EXTENSION_TOOLS = [
+    _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
+              _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
+    _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. An uncertain write must be checked by shader_get_operation.",
+              {**_NATIVE_SHADER_TARGET, "request_id": {"type": "string", "format": "uuid"},
+               "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+               "title": {"type": "string", "minLength": 1, "maxLength": 256},
+               "expected_owner_generation": {"type": "string", "minLength": 1},
+               "library_intent": {"const": "saved"}},
+              ["request_id", "shader", "project_context_witness", "base", "expected_working_digest", "title"]),
+    _tool_def("shader_get_operation", "Read one route-owned native Shader operation outcome by exact request ID and target.",
+              {**_NATIVE_SHADER_TARGET, "request_id": {"type": "string", "format": "uuid"}},
+              ["request_id", "shader", "project_context_witness"]),
+]
+
 _timeline_tool = next(t for t in TOOLS if t["name"] == "control_shader_timeline")
 _timeline_tool["inputSchema"]["oneOf"] = [
     {"properties": {"operation": {"const": "status"}},
@@ -2760,6 +2787,9 @@ class HextileMcpServer:
             "clone_spot": self._clone_spot,
             "get_spot_clone": self._get_spot_clone,
             "get_shader_context": self._get_shader_context,
+            "shader_get_asset_state": self._shader_get_asset_state,
+            "shader_rename_asset": self._shader_rename_asset,
+            "shader_get_operation": self._shader_get_operation,
             "get_shader_parameters": self._get_shader_parameters,
             "set_shader_parameter": self._set_shader_parameter,
             "propose_shader": self._propose_shader,
@@ -2839,7 +2869,7 @@ class HextileMcpServer:
             return self._response(msg_id, {})
 
         if method == "tools/list":
-            return self._response(msg_id, {"tools": TOOLS})
+            return self._response(msg_id, {"tools": TOOLS + SHADER_EXTENSION_TOOLS})
 
         if method == "tools/call":
             name = params.get("name") or ""
@@ -3101,7 +3131,7 @@ class HextileMcpServer:
         outcome: Optional[str] = None,
         ticket_id: Optional[str] = None,
     ) -> None:
-        if self.internal_mode:
+        if self.internal_mode or tool in {item["name"] for item in SHADER_EXTENSION_TOOLS}:
             return
         # ids/phase only — never config/nav/tool_op/args. Timeout 1s; swallow.
         envelope: dict[str, Any] = {
@@ -3516,6 +3546,15 @@ class HextileMcpServer:
             include_formula=args.get("include_formula", False),
             working_revision=args.get("working_revision"),
         )
+
+    def _shader_get_asset_state(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_asset_state(args)
+
+    def _shader_rename_asset(self, args: dict[str, Any]) -> Any:
+        return self.client.rename_shader_asset(args)
+
+    def _shader_get_operation(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_operation(args)
 
     def _propose_shader(self, args: dict[str, Any]) -> Any:
         for banned in ("import", "delete", "accept", "consume", "config_partial", "path"):

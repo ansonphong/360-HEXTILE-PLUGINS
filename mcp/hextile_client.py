@@ -56,6 +56,42 @@ _WORKSPACE_SUFFIX = re.compile(r"[1-9][0-9]{0,15}\Z")
 MAX_WORKSPACE_GENERATION = 2**53 - 1
 
 
+def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
+    common = {"shader", "project_context_witness"}
+    expected = (common if operation == "state" else
+                common | {"request_id"} if operation == "status" else
+                common | {"request_id", "base", "expected_working_digest", "title"})
+    optional = {"expected_owner_generation", "library_intent"} if operation == "rename" else set()
+    if not isinstance(args, Mapping) or expected - args.keys() or set(args) - expected - optional:
+        raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
+    ref = args["shader"]
+    if (not isinstance(ref, Mapping) or set(ref) != {"origin", "shaderId"}
+            or ref["origin"] not in {"builtin", "user", "project"}
+            or type(ref["shaderId"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ref["shaderId"])
+            or type(args["project_context_witness"]) is not str or not args["project_context_witness"]):
+        raise HextileClientError("Invalid native Shader target", status_code=422, kind="other")
+    if operation in {"status", "rename"}:
+        try:
+            valid = type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"]
+        except (ValueError, AttributeError):
+            valid = False
+        if not valid:
+            raise HextileClientError("Invalid native Shader request_id", status_code=422, kind="other")
+    if operation == "rename":
+        base = args["base"]
+        if (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
+                or base["kind"] != "saved" or type(base["working_revision"]) is not int
+                or base["working_revision"] < 1 or any(type(base[key]) is not str or not _WORKSPACE_DIGEST.fullmatch(base[key])
+                                                        for key in ("document_hash", "source_hash"))
+                or type(args["expected_working_digest"]) is not str
+                or not _WORKSPACE_DIGEST.fullmatch(args["expected_working_digest"])
+                or type(args["title"]) is not str or not args["title"] or len(args["title"]) > 256
+                or args.get("library_intent") not in {None, "saved"}
+                or ("expected_owner_generation" in args and
+                    (type(args["expected_owner_generation"]) is not str or not args["expected_owner_generation"]))):
+            raise HextileClientError("Invalid native Shader rename", status_code=422, kind="other")
+
+
 def validate_shader_doctor(operation: str, args: Mapping[str, Any]) -> None:
     """Validate the exact request identity before contacting the mounted Studio."""
     required = ({"request_id", "origin", "shader_id", "project_context_witness", "studio_surface_id"}
@@ -1589,6 +1625,35 @@ class Client:
             params={"project_context_witness": args["project_context_witness"]},
             headers={"X-Hextile-Agent": "mcp"},
         )
+
+    def get_shader_asset_state(self, args: Mapping[str, Any]) -> Any:
+        _native_shader_args("state", args)
+        return self.request_json("GET", "/api/shaders/agent-operations/asset-state", params={
+            "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+            "project_context_witness": args["project_context_witness"]})
+
+    def rename_shader_asset(self, args: Mapping[str, Any]) -> Any:
+        _native_shader_args("rename", args)
+        request_id = args["request_id"]
+        try:
+            receipt = self.request_json("POST", "/api/shaders/agent-operations/rename", dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError(
+                    "Shader rename outcome unknown; read shader_get_operation by request_id. Do not submit again.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
+            raise
+        if not isinstance(receipt, dict) or receipt.get("request_id") != request_id:
+            raise HextileClientError(
+                "Shader rename acknowledgement unknown; read shader_get_operation by request_id.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
+        return receipt
+
+    def get_shader_operation(self, args: Mapping[str, Any]) -> Any:
+        _native_shader_args("status", args)
+        return self.request_json("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",
+            params={"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+                    "project_context_witness": args["project_context_witness"]})
 
     def _shader_workspace_request(self, method: str, path: str, body: Optional[Mapping[str, Any]] = None,
                                   *, params: Optional[Mapping[str, Any]] = None) -> Any:
