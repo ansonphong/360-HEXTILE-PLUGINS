@@ -216,6 +216,20 @@ def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> 
     assert "origin" not in calls[-1][3]["params"]
 
 
+def test_shader_output_original_status_refuses_private_result(monkeypatch) -> None:
+    client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    shader = {"origin": "user", "shaderId": "aurora"}
+    args = {"request_id": request_id, "project_context_witness": "w", "shader": shader,
+            "scope": "output"}
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
+        "schema": 1, "request_id": request_id, "scope": "output", "operation": "shader_export_bundle",
+        "project_context_witness": "w", "shader": shader, "state": "saved",
+        "receipt": {"request_id": request_id, "state": "saved", "private_path": "D:/secret"}})
+    with pytest.raises(HextileClientError):
+        client.get_shader_operation(args)
+
+
 def test_resource_and_library_extensions_have_closed_explicit_transport(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     names = {item["name"] for item in SHADER_EXTENSION_TOOLS}

@@ -198,13 +198,51 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     or result["state"] not in {"accepted", "deleted", "uncertain"}
                     or type(result["shader_id"]) is not str
                     or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result["shader_id"]) is None
-                    or type(result["target_name"]) is not str or len(result["target_name"]) > 256):
+                    or type(result["target_name"]) is not str or not 1 <= len(result["target_name"]) <= 256
+                    or any(ch in result["target_name"] for ch in "/\\:\r\n\x00")):
                 raise invalid()
         else:
             raise invalid()
         return result
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         raise invalid() from exc
+
+
+def _valid_shader_paste_status(result: Any, args: Mapping[str, Any], *, complete: bool) -> bool:
+    if type(result) is not dict:
+        return False
+    common = {"schema", "request_id", "operation", "scope", "state", "project_context_witness"}
+    try:
+        if (not common <= set(result) or set(result) - common - {"receipt", "error"}
+                or result["schema"] != 1 or result["request_id"] != args["request_id"]
+                or result["operation"] != "shader_create_asset" or result["scope"] != "creation"
+                or result["project_context_witness"] != args["project_context_witness"]
+                or type(result["state"]) is not str
+                or result["state"] not in {"pending", "unknown", "refused", "expired", "saved"}
+                or complete and result["state"] != "saved"
+                or len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 32768):
+            return False
+        if "error" in result and (result["state"] != "refused" or result["error"] !=
+                                  {"message": "Native Paste refused"}):
+            return False
+        if result["state"] != "saved":
+            return "receipt" not in result
+        receipt = result.get("receipt")
+        return (type(receipt) is dict and set(receipt) == {"shader", "working_revision",
+                "document_hash", "source_hash", "manifest_hash"}
+                and type(receipt["shader"]) is dict
+                and set(receipt["shader"]) == {"origin", "shaderId"}
+                and receipt["shader"]["origin"] in {"user", "project"}
+                and type(receipt["shader"]["shaderId"]) is str
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", receipt["shader"]["shaderId"]) is not None
+                and type(receipt["working_revision"]) is int and receipt["working_revision"] == 1
+                and all(type(receipt[key]) is str and _WORKSPACE_DIGEST.fullmatch(receipt[key])
+                        for key in ("document_hash", "source_hash"))
+                and (receipt["manifest_hash"] is None or
+                     type(receipt["manifest_hash"]) is str and
+                     _WORKSPACE_DIGEST.fullmatch(receipt["manifest_hash"]) is not None))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
 
 
 def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
@@ -2618,26 +2656,7 @@ class Client:
                 kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
                 **({"scope": "creation"} if action == "paste" else {"shader": source})})
         if action == "paste":
-            receipt = result.get("receipt")
-            valid = (set(result) == {"schema", "request_id", "operation", "scope", "state",
-                                    "project_context_witness", "receipt"}
-                     and result["schema"] == 1 and result["scope"] == "creation"
-                     and result["state"] == "saved"
-                     and result["project_context_witness"] == args["project_context_witness"]
-                     and type(receipt) is dict and set(receipt) == {"shader", "working_revision",
-                         "document_hash", "source_hash", "manifest_hash"}
-                     and type(receipt["shader"]) is dict
-                     and set(receipt["shader"]) == {"origin", "shaderId"}
-                     and receipt["shader"]["origin"] in {"user", "project"}
-                     and type(receipt["shader"]["shaderId"]) is str
-                     and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", receipt["shader"]["shaderId"]) is not None
-                     and type(receipt["working_revision"]) is int and receipt["working_revision"] == 1
-                     and all(type(receipt[key]) is str and _WORKSPACE_DIGEST.fullmatch(receipt[key])
-                             for key in ("document_hash", "source_hash"))
-                     and (receipt["manifest_hash"] is None or
-                          type(receipt["manifest_hash"]) is str and
-                          _WORKSPACE_DIGEST.fullmatch(receipt["manifest_hash"]) is not None))
-            if not valid:
+            if not _valid_shader_paste_status(result, args, complete=True):
                 raise HextileClientError("Shader Paste acknowledgement unknown; read original creation status.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
                     "scope": "creation"})
@@ -2697,10 +2716,35 @@ class Client:
                 valid = False
             if not valid or type(args["project_context_witness"]) is not str or not args["project_context_witness"]:
                 raise HextileClientError("Invalid Shader operation scope", status_code=422, kind="other")
-        return self.request_json("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",
+        result = self.request_json("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",
             params={**({"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"]}
                        if "shader" in args else {}), "scope": scope,
                     "project_context_witness": args["project_context_witness"]})
+        if scope == "creation" and not _valid_shader_paste_status(result, args, complete=False):
+            raise HextileClientError("Invalid Shader creation status", kind="other")
+        if scope == "output":
+            expected = {"schema", "request_id", "operation", "state", "shader",
+                        "project_context_witness", "scope"}
+            try:
+                bounded = len(json.dumps(result, ensure_ascii=False,
+                                         allow_nan=False).encode("utf-8")) <= 65536
+            except (TypeError, ValueError, OverflowError):
+                bounded = False
+            if (type(result) is not dict or not expected <= set(result)
+                    or set(result) - expected - {"receipt"}
+                    or result["schema"] != 1 or result["request_id"] != args["request_id"]
+                    or result["scope"] != "output" or result["shader"] != args["shader"]
+                    or result["project_context_witness"] != args["project_context_witness"]
+                    or type(result["operation"]) is not str
+                    or result["operation"] not in {"shader_export_bundle", "shader_export_to_project"}
+                    or type(result["state"]) is not str
+                    or result["state"] not in {"unknown", "saved", "applied"}
+                    or not bounded):
+                raise HextileClientError("Invalid Shader output status", kind="other")
+            if "receipt" in result:
+                _shader_output_receipt("bundle" if result["operation"] == "shader_export_bundle"
+                                       else "project", args, result["receipt"])
+        return result
 
     def get_shader_credits(self, args: Mapping[str, Any]) -> dict:
         if not isinstance(args, Mapping) or set(args) - {
