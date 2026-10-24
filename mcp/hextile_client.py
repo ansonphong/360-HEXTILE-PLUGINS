@@ -55,6 +55,74 @@ _WORKSPACE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _WORKSPACE_SUFFIX = re.compile(r"[1-9][0-9]{0,15}\Z")
 MAX_WORKSPACE_GENERATION = 2**53 - 1
 
+_OUTPUT_PROFILES = {"png-master/1", "shader-linear-rgba-exr/1", "dome-png/1"}
+_OUTPUT_OWNER = {"request_id", "shader", "project_context_witness", "base",
+                 "studio_surface_id", "lease_id", "expected_edit_sequence"}
+
+
+def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
+    common = {"shader", "project_context_witness", "request_id"}
+    fields = {
+        "preview": (_OUTPUT_OWNER | {"output"}, set()),
+        "preflight": (_OUTPUT_OWNER | {"profile", "output"}, set()),
+        "still": (_OUTPUT_OWNER | {"preflight_request_id"}, set()),
+        "get_preview": (common, {"image"}),
+        "release_preview": (common, set()),
+        "get_job": (common | {"profile"}, set()),
+        "stop_job": (common | {"profile"}, set()),
+        "bundle": (_OUTPUT_OWNER | {"grant_id", "name", "expected_looks", "expected_provenance_hash"}, set()),
+        "project": (_OUTPUT_OWNER | {"grant_id"}, set()),
+    }
+    required, optional = fields[operation]
+    if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
+        raise HextileClientError("Expected closed Shader output arguments", status_code=422, kind="other")
+    _native_shader_args("state", {key: args[key] for key in ("shader", "project_context_witness")})
+    for key in ("request_id", "preflight_request_id"):
+        if key in args:
+            try:
+                valid = type(args[key]) is str and str(uuid.UUID(args[key])) == args[key] and uuid.UUID(args[key]).version == 4
+            except (TypeError, ValueError, AttributeError):
+                valid = False
+            if not valid:
+                raise HextileClientError("Expected canonical output UUID", status_code=422, kind="other")
+    if operation in {"preview", "preflight", "still", "bundle", "project"}:
+        base = args["base"]
+        if (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
+                or base["kind"] != "saved" or type(base["working_revision"]) is not int or base["working_revision"] < 1
+                or any(type(base[key]) is not str or not _WORKSPACE_DIGEST.fullmatch(base[key]) for key in
+                       ("document_hash", "source_hash"))
+                or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id", "lease_id"))
+                or type(args["expected_edit_sequence"]) is not int or args["expected_edit_sequence"] < 0):
+            raise HextileClientError("Invalid saved output owner", status_code=422, kind="other")
+    if operation in {"preflight", "get_job", "stop_job"} and (
+            type(args["profile"]) is not str or args["profile"] not in _OUTPUT_PROFILES):
+        raise HextileClientError("Unsupported Shader still profile", status_code=422, kind="other")
+    if operation in {"preview", "preflight"}:
+        output = args["output"]
+        if not isinstance(output, Mapping):
+            raise HextileClientError("Invalid Shader output settings", status_code=422, kind="other")
+        if operation == "preview":
+            projection = output.get("projection")
+            fields = ({"projection", "pan", "tilt", "roll", "supersampling"}
+                      if projection == "equirectangular" else
+                      {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "supersampling"})
+            required = fields - {"supersampling"}
+            valid = (type(projection) is str and projection in {"equirectangular", "fulldome", "fulldome_angular"}
+                     and required <= output.keys() and set(output) <= fields)
+        else:
+            shape = {"png-master/1": ({"width", "height", "grant_id", "name"}, {"supersampling"}),
+                     "shader-linear-rgba-exr/1": ({"width", "height", "grant_id", "name"}, set()),
+                     "dome-png/1": ({"projection", "diameter", "fov_deg", "pan", "tilt", "roll",
+                                    "grant_id", "name"}, set())}[args["profile"]]
+            valid = shape[0] <= output.keys() and set(output) <= shape[0] | shape[1]
+        if not valid:
+            raise HextileClientError("Unsupported closed Shader output settings", status_code=422, kind="other")
+    if operation in {"bundle", "project"}:
+        if type(args["grant_id"]) is not str or re.fullmatch(r"sof_[0-9a-f]{32}", args["grant_id"]) is None:
+            raise HextileClientError("Selected output folder grant required", status_code=422, kind="other")
+    if operation == "get_preview" and "image" in args and type(args["image"]) is not bool:
+        raise HextileClientError("Image opt-in must be boolean", status_code=422, kind="other")
+
 
 def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness"}
@@ -818,20 +886,38 @@ class Client:
                 body=snippet,
                 kind="http",
             ) from exc
-        except (
-            urllib.error.URLError,
-            ConnectionError,
-            socket.timeout,
-            TimeoutError,
-            OSError,
-        ) as exc:
-            # Connection refused / DNS / timeout while app is down.
-            raise HextileClientError(
-                APP_DOWN_MSG,
-                status_code=None,
-                body=str(exc),
-                kind="app_down",
-            ) from exc
+        except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as exc:
+            raise HextileClientError(APP_DOWN_MSG, status_code=None, body=str(exc), kind="app_down") from exc
+
+    def request_shader_preview_image(self, request_id: str, params: Mapping[str, Any]) -> bytes | dict:
+        """Explicit pixel opt-in; bytes never enter a JSON result."""
+        path = "/api/shaders/agent-operations/output/preview/" + request_id
+        url = self._url(path) + "?" + urllib.parse.urlencode({**params, "image": "true"})
+        headers = {**_REQUEST_HEADERS.get(), "X-Hextile-Agent": "mcp", "Accept": "image/png"}
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            cm = self._opener(req, timeout=self.timeout) if self._opener is not None else urllib.request.urlopen(req, timeout=self.timeout)
+            with cm as response:
+                data = response.read(8 * 1024 * 1024 + 1)
+                if len(data) > 8 * 1024 * 1024:
+                    raise HextileClientError("Shader image exceeds bounded output", status_code=413, kind="other")
+                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                if content_type == "image/png":
+                    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                        raise HextileClientError("Invalid Shader image bytes", status_code=502, kind="other")
+                    return data
+                if content_type == "application/json":
+                    result = json.loads(data.decode("utf-8"))
+                    if isinstance(result, dict) and result.get("state") in {"pending", "unavailable"}:
+                        return result
+                raise HextileClientError("Invalid Shader image response", status_code=502, kind="other")
+        except HextileClientError:
+            raise
+        except urllib.error.HTTPError as exc:
+            raise HextileClientError("Shader image unavailable", status_code=exc.code,
+                                     body=(exc.read(800) or b"").decode("utf-8", "replace"), kind="http") from exc
+        except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as exc:
+            raise HextileClientError(APP_DOWN_MSG, status_code=None, body=str(exc), kind="app_down") from exc
 
     def hotkeys_request(self, op: str, args: Mapping[str, Any]) -> Any:
         """Proxy the frontend-owned profile once; never replay an uncertain write."""
@@ -4026,6 +4112,70 @@ class Client:
         if publication and type(args.get("attempt_id")) is str:
             receipt["attempt_id"] = args["attempt_id"]
         return receipt
+
+    # ── Shader output tools ─────────────────────────────────────────────
+
+    def _shader_output_post(self, operation: str, args: Mapping[str, Any], path: str) -> dict:
+        _shader_output_args(operation, args)
+        try:
+            result = self.request_json("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError(
+                    "Shader output outcome unknown; inspect the original request_id without reposting.",
+                    kind="shader_output_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
+            raise
+        if (not isinstance(result, dict) or len(json.dumps(result, default=str).encode("utf-8")) > 32768):
+            raise HextileClientError("Invalid bounded Shader output receipt", kind="shader_output_outcome_unknown",
+                                     receipt={"request_id": args["request_id"]})
+        return result
+
+    def request_shader_preview(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_output_post("preview", args, "/api/shaders/agent-operations/output/preview")
+
+    def preflight_shader_still(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_output_post("preflight", args, "/api/shaders/agent-operations/output/still/preflight")
+
+    def export_shader_still(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_output_post("still", args, "/api/shaders/agent-operations/output/still")
+
+    def get_shader_preview(self, args: Mapping[str, Any]) -> dict | bytes:
+        _shader_output_args("get_preview", args)
+        params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+                  "project_context_witness": args["project_context_witness"]}
+        if args.get("image") is True:
+            return self.request_shader_preview_image(args["request_id"], params)
+        return self.request_json("GET", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
+                                 params=params)
+
+    def release_shader_preview(self, args: Mapping[str, Any]) -> dict:
+        _shader_output_args("release_preview", args)
+        return self.request_json("DELETE", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
+                                 {key: args[key] for key in ("shader", "project_context_witness")})
+
+    def get_shader_output_job(self, args: Mapping[str, Any]) -> dict:
+        _shader_output_args("get_job", args)
+        return self.request_json("GET", "/api/shaders/agent-operations/output/jobs/" + args["request_id"],
+            params={"profile": args["profile"], "origin": args["shader"]["origin"],
+                    "shader_id": args["shader"]["shaderId"],
+                    "project_context_witness": args["project_context_witness"]})
+
+    def stop_shader_output_job(self, args: Mapping[str, Any]) -> dict:
+        _shader_output_args("stop_job", args)
+        try:
+            return self.request_json("POST", "/api/shaders/agent-operations/output/jobs/" + args["request_id"] + "/stop",
+                {key: args[key] for key in ("shader", "project_context_witness", "profile")})
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader output stop outcome unknown; read the original job status.",
+                    kind="shader_output_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
+            raise
+
+    def export_shader_bundle(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_output_post("bundle", args, "/api/shaders/agent-operations/output/bundle")
+
+    def export_shader_to_project(self, args: Mapping[str, Any]) -> dict:
+        return self._shader_output_post("project", args, "/api/shaders/agent-operations/output/project")
 
     # ── internals ───────────────────────────────────────────────────────
 

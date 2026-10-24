@@ -10,6 +10,7 @@ Catalog + persist + run + monitor + config + seed + models + guides + live conte
 from __future__ import annotations
 
 import http.client
+import base64
 import json
 import math
 import os
@@ -384,7 +385,8 @@ def _annotations(name: str) -> dict[str, bool]:
     if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation",
                                      "shader_get_credits", "shader_research_sources",
                                      "shader_get_proposal", "shader_get_workspace",
-                                     "shader_get_library_organization"}:
+                                     "shader_get_library_organization", "shader_get_preview",
+                                     "shader_get_output_job"}:
         return {"readOnlyHint": True, "destructiveHint": False}
     if name in _DESTRUCTIVE or name in {"shader_set_resource", "shader_organize_library",
                                        "shader_set_project_conventions"}:
@@ -2563,6 +2565,39 @@ _CAPTURE_DEFAULTS = _shader_closed({
     "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
     "ray_origin": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
 })
+_OUTPUT_OWNER = {**_MOUNTED_SHADER_FIELDS, "base": _NATIVE_SHADER_BASE}
+_OUTPUT_OWNER_REQUIRED = [*_MOUNTED_SHADER_REQUIRED, "base"]
+_OUTPUT_GRANT = {"type": "string", "pattern": "^sof_[0-9a-f]{32}$"}
+_OUTPUT_NAME = {"type": "string", "minLength": 1, "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9 _-]*$"}
+_OUTPUT_PROFILE = {"enum": ["png-master/1", "shader-linear-rgba-exr/1", "dome-png/1"]}
+_PREVIEW_OUTPUT = {"oneOf": [
+    _shader_closed({"projection": {"const": "equirectangular"}, "pan": {"const": 0},
+                    "tilt": {"const": 0}, "roll": {"const": 0},
+                    "supersampling": {"type": "number", "minimum": 1, "maximum": 2}},
+                   ("supersampling",)),
+    _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
+                    "diameter": {"enum": [1024, 2048, 4096, 8192]},
+                    "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
+                    "pan": {"type": "number", "minimum": -180, "maximum": 180},
+                    "tilt": {"type": "number", "minimum": -90, "maximum": 90},
+                    "roll": {"type": "number", "minimum": -180, "maximum": 180},
+                    "supersampling": {"type": "number", "minimum": 1, "maximum": 2}},
+                   ("supersampling",)),
+]}
+_STILL_OUTPUT = {"anyOf": [
+    _shader_closed({"width": {"type": "integer", "minimum": 1024, "maximum": 16384},
+                    "height": {"type": "integer", "minimum": 512, "maximum": 8192},
+                    "supersampling": {"type": "number", "minimum": 1, "maximum": 2},
+                    "grant_id": _OUTPUT_GRANT, "name": _OUTPUT_NAME}, ("supersampling",)),
+    _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
+                    "diameter": {"enum": [1024, 2048, 4096, 8192]},
+                    "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
+                    "pan": {"type": "number", "minimum": -180, "maximum": 180},
+                    "tilt": {"type": "number", "minimum": -90, "maximum": 90},
+                    "roll": {"type": "number", "minimum": -180, "maximum": 180},
+                    "grant_id": _OUTPUT_GRANT, "name": _OUTPUT_NAME}),
+]}
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
               {"project_context_witness": _SHADER_TEXT,
@@ -2573,6 +2608,35 @@ SHADER_EXTENSION_TOOLS = [
               ["project_context_witness"]),
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
+    _tool_def("shader_request_preview", "Request a bounded preview of the exact clean saved current frame through the private mounted Capture owner. Response is an operation ticket.",
+              {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT}, _OUTPUT_OWNER_REQUIRED + ["output"]),
+    _tool_def("shader_get_preview", "Read preview metadata by default. Set image true to opt in to one bounded MCP ImageContent block; pixels never enter text JSON.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "image": {"type": "boolean"}}, ["shader", "project_context_witness", "request_id"]),
+    _tool_def("shader_release_preview", "Release one exact private preview lease and GPU broker without starting work.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
+              ["shader", "project_context_witness", "request_id"]),
+    _tool_def("shader_preflight_still_export", "Preflight one native PNG master, linear EXR, or dome profile using the mounted completed frame and a separate human-selected output folder grant; no GPU start.",
+              {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT},
+              _OUTPUT_OWNER_REQUIRED + ["profile", "output"]),
+    _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting.",
+              {**_OUTPUT_OWNER, "preflight_request_id": _NATIVE_SHADER_REQUEST_ID},
+              _OUTPUT_OWNER_REQUIRED + ["preflight_request_id"]),
+    _tool_def("shader_get_output_job", "Read a native still job by original UUID and Project witness without starting GPU work.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
+    _tool_def("shader_stop_output_job", "Signal Stop for an existing exact native still job only.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
+    _tool_def("shader_export_bundle", "Publish an accepted saved .hexshader Bundle with exact Looks and provenance into a human-selected output folder.",
+              {**_OUTPUT_OWNER, "grant_id": _OUTPUT_GRANT, "name": _OUTPUT_NAME,
+               "expected_looks": {"type": "array", "maxItems": 32, "items": _shader_closed({
+                   "id": _NATIVE_HISTORY_CHECKPOINT, "revision": {"type": "integer", "minimum": 1},
+                   "envelope_hash": _SHADER_DIGEST})},
+               "expected_provenance_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]}},
+              _OUTPUT_OWNER_REQUIRED + ["grant_id", "name", "expected_looks", "expected_provenance_hash"]),
+    _tool_def("shader_export_to_project", "Copy the exact accepted saved Shader, Looks, resources, credits and originals to the separately selected existing Project.",
+              {**_OUTPUT_OWNER, "grant_id": _OUTPUT_GRANT}, _OUTPUT_OWNER_REQUIRED + ["grant_id"]),
     _tool_def("shader_get_history", "Read bounded retained Shader revision or checkpoint metadata; a stale cursor requires restart.",
               {**_NATIVE_SHADER_TARGET, "kind": {"enum": ["revisions", "checkpoints"]},
                "cursor": {"type": "string", "maxLength": 8192},
@@ -3022,7 +3086,15 @@ def _layer_error_payload(exc: HextileClientError) -> dict[str, Any]:
             "code": code or ("app_down" if exc.kind == "app_down" else "layer_refused")}
 
 
+class _McpImage:
+    def __init__(self, png: bytes) -> None:
+        self.png = png
+
+
 def _ok_result(data: Any) -> dict[str, Any]:
+    if isinstance(data, _McpImage):
+        return {"content": [{"type": "image", "data": base64.b64encode(data.png).decode("ascii"),
+                              "mimeType": "image/png"}], "isError": False}
     text = data if isinstance(data, str) else json.dumps(data, indent=2, default=str)
     return {"content": [{"type": "text", "text": text}], "isError": False}
 
@@ -3113,6 +3185,15 @@ class HextileMcpServer:
             "get_spot_clone": self._get_spot_clone,
             "get_shader_context": self._get_shader_context,
             "shader_get_asset_state": self._shader_get_asset_state,
+            "shader_request_preview": self._shader_request_preview,
+            "shader_get_preview": self._shader_get_preview,
+            "shader_release_preview": self._shader_release_preview,
+            "shader_preflight_still_export": self._shader_preflight_still_export,
+            "shader_export_still": self._shader_export_still,
+            "shader_get_output_job": self._shader_get_output_job,
+            "shader_stop_output_job": self._shader_stop_output_job,
+            "shader_export_bundle": self._shader_export_bundle,
+            "shader_export_to_project": self._shader_export_to_project,
             "shader_list_assets": self._shader_list_assets,
             "shader_get_history": self._shader_get_history,
             "shader_get_looks": self._shader_get_looks,
@@ -3277,7 +3358,8 @@ class HextileMcpServer:
             and getattr(self.client, "_opener", None) is None
             and name not in _LOCAL_FILE_DIAGNOSTICS
             and name not in {"shader_get_operation", "shader_get_proposal", "shader_get_workspace",
-                             "shader_stop_workspace"}
+                             "shader_stop_workspace", "shader_get_output_job",
+                             "shader_stop_output_job"}
         ):
             probe = getattr(self.client, "request_json", None)
             if callable(probe):
@@ -3911,6 +3993,34 @@ class HextileMcpServer:
 
     def _shader_get_asset_state(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_asset_state(args)
+
+    def _shader_request_preview(self, args: dict[str, Any]) -> Any:
+        return self.client.request_shader_preview(args)
+
+    def _shader_get_preview(self, args: dict[str, Any]) -> Any:
+        result = self.client.get_shader_preview(args)
+        return _McpImage(result) if isinstance(result, bytes) else result
+
+    def _shader_release_preview(self, args: dict[str, Any]) -> Any:
+        return self.client.release_shader_preview(args)
+
+    def _shader_preflight_still_export(self, args: dict[str, Any]) -> Any:
+        return self.client.preflight_shader_still(args)
+
+    def _shader_export_still(self, args: dict[str, Any]) -> Any:
+        return self.client.export_shader_still(args)
+
+    def _shader_get_output_job(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_output_job(args)
+
+    def _shader_stop_output_job(self, args: dict[str, Any]) -> Any:
+        return self.client.stop_shader_output_job(args)
+
+    def _shader_export_bundle(self, args: dict[str, Any]) -> Any:
+        return self.client.export_shader_bundle(args)
+
+    def _shader_export_to_project(self, args: dict[str, Any]) -> Any:
+        return self.client.export_shader_to_project(args)
 
     def _shader_list_assets(self, args: dict[str, Any]) -> Any:
         return self.client.list_shader_assets(args)

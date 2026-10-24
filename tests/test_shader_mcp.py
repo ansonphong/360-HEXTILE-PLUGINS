@@ -32,6 +32,99 @@ def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
 
 
+def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    descriptor = lambda name: next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == name)
+    names = {item["name"] for item in SHADER_EXTENSION_TOOLS}
+    expected = {"shader_request_preview", "shader_get_preview", "shader_release_preview",
+                "shader_preflight_still_export", "shader_export_still", "shader_get_output_job",
+                "shader_stop_output_job", "shader_export_bundle", "shader_export_to_project"}
+    assert expected <= names
+    shader = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "a" * 64
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    owner = {"request_id": request_id, "shader": shader, "project_context_witness": "w",
+             "base": {"kind": "saved", "working_revision": 1,
+                      "document_hash": digest, "source_hash": digest},
+             "studio_surface_id": "surface", "lease_id": "lease", "expected_edit_sequence": 1}
+    preview = {**owner, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
+    jsonschema.validate(preview, descriptor("shader_request_preview")["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**preview, "output": {**preview["output"], "path": "C:/pixels.png"}},
+                            descriptor("shader_request_preview")["inputSchema"])
+    still = {**owner, "profile": "shader-linear-rgba-exr/1",
+             "output": {"width": 2048, "height": 1024, "grant_id": "sof_" + "a" * 32, "name": "test"}}
+    jsonschema.validate(still, descriptor("shader_preflight_still_export")["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**still, "destination": "C:/pixels.exr"},
+                            descriptor("shader_preflight_still_export")["inputSchema"])
+    calls = []
+    client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        return {"request_id": request_id, "state": "pending"}
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.request_shader_preview(preview)["state"] == "pending"
+    assert calls[-1][1].endswith("/output/preview")
+    assert client.preflight_shader_still(still)["state"] == "pending"
+    assert calls[-1][1].endswith("/output/still/preflight")
+    with pytest.raises(HextileClientError):
+        client.preflight_shader_still({**still, "output": {**still["output"], "path": "C:/pixels.exr"}})
+    with pytest.raises(HextileClientError):
+        client.preflight_shader_still({**still, "profile": ["png-master/1"]})
+    image_args = {"shader": shader, "project_context_witness": "w", "request_id": request_id, "image": True}
+    monkeypatch.setattr(client, "request_shader_preview_image", lambda *_a: b"\x89PNG\r\n\x1a\nFAKE")
+    result = HextileMcpServer(client=client).call_tool("shader_get_preview", image_args)
+    assert result["content"][0]["type"] == "image" and result["content"][0]["mimeType"] == "image/png"
+    assert all(block["type"] != "text" for block in result["content"])
+
+
+def test_shader_preview_binary_transport_requires_explicit_image_opt_in() -> None:
+    shader = {"origin": "user", "shaderId": "aurora"}
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    args = {"shader": shader, "project_context_witness": "w", "request_id": request_id}
+    seen = []
+    class Reply(io.BytesIO):
+        def __init__(self, data, content_type):
+            super().__init__(data)
+            self.headers = {"Content-Type": content_type}
+            self.status = 200
+        def getcode(self):
+            return 200
+    def opener(request, timeout=None):
+        seen.append(request)
+        if "image=true" in request.full_url:
+            return Reply(b"\x89PNG\r\n\x1a\nFAKE", "image/png")
+        return Reply(b'{"request_id":"' + request_id.encode() + b'","state":"ready"}', "application/json")
+    client = Client(opener=opener)
+    metadata = client.get_shader_preview(args)
+    assert metadata["state"] == "ready" and seen[-1].headers["X-hextile-agent"] == "mcp"
+    image = client.get_shader_preview({**args, "image": True})
+    assert isinstance(image, bytes) and image.startswith(b"\x89PNG")
+    assert "image=true" in seen[-1].full_url
+
+
+def test_known_shader_output_job_recovers_through_disabled_mcp_proxy(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path))
+        if path == "/api/agent/mcp-status":
+            return {"enabled": False}
+        return {"request_id": request_id, "profile": "png-master/1", "job": {"state": "completed"}}
+    monkeypatch.setattr(client, "request_json", reply)
+    server = HextileMcpServer(client=client)
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    args = {"request_id": request_id, "shader": {"origin": "user", "shaderId": "aurora"},
+            "project_context_witness": "w", "profile": "png-master/1"}
+    result = server.call_tool("shader_get_output_job", args)
+    assert result["isError"] is False and calls == [("GET", "/api/shaders/agent-operations/output/jobs/" + request_id)]
+    server.call_tool("shader_stop_output_job", args)
+    assert calls[-1] == ("POST", "/api/shaders/agent-operations/output/jobs/" + request_id + "/stop")
+    assert server.call_tool("shader_request_preview", {})["isError"] is True
+    assert calls[-1] == ("GET", "/api/agent/mcp-status")
+
+
 def test_resource_and_library_extensions_have_closed_explicit_transport(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     names = {item["name"] for item in SHADER_EXTENSION_TOOLS}
