@@ -147,7 +147,7 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
             "shader_get_project_conventions"} <= names
     assert {"shader_get_proposal", "shader_get_workspace", "shader_recheck_update",
             "shader_stop_workspace"} <= names
-    assert {"shader_get_asset_state", "shader_rename_asset", "shader_get_operation"} <= names
+    assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset", "shader_get_operation"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
     listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
@@ -156,6 +156,24 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     for tool in SHADER_EXTENSION_TOOLS:
         assert tool["inputSchema"]["additionalProperties"] is False
         assert not {"actor", "mutation", "authority_ticket", "path"} & set(tool["inputSchema"]["properties"])
+
+
+def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    ref = {"origin": "user", "shaderId": "aurora"}
+    body = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
+            "base": {"kind": "saved", "working_revision": 1,
+                     "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64},
+            "expected_working_digest": "sha256:" + "c" * 64,
+            "library_intent": "saved", "confirmation_scope": {"operation": "delete", "shader": ref}}
+    sent = []
+    monkeypatch.setattr(client, "request_json", lambda method, path, payload:
+                        sent.append((method, path, payload)) or {"request_id": request_id, "state": "applied"})
+    assert client.delete_shader_asset(body)["state"] == "applied"
+    assert sent == [("POST", "/api/shaders/agent-operations/delete", body)]
+    with pytest.raises(HextileClientError):
+        client.delete_shader_asset({**body, "confirmation_scope": {"operation": "rename", "shader": ref}})
 
 
 def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:

@@ -60,8 +60,9 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness"}
     expected = (common if operation == "state" else
                 common | {"request_id"} if operation == "status" else
-                common | {"request_id", "base", "expected_working_digest", "title"})
-    optional = {"expected_owner_generation", "library_intent"} if operation == "rename" else set()
+                common | {"request_id", "base", "expected_working_digest"} |
+                ({"title"} if operation == "rename" else set()))
+    optional = {"expected_owner_generation", "library_intent", "confirmation_scope"} if operation in {"rename", "delete"} else set()
     if not isinstance(args, Mapping) or expected - args.keys() or set(args) - expected - optional:
         raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
     ref = args["shader"]
@@ -70,7 +71,7 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             or type(ref["shaderId"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ref["shaderId"])
             or type(args["project_context_witness"]) is not str or not args["project_context_witness"]):
         raise HextileClientError("Invalid native Shader target", status_code=422, kind="other")
-    if operation in {"status", "rename"}:
+    if operation in {"status", "rename", "delete"}:
         try:
             valid = (type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"]
                      and uuid.UUID(args["request_id"]).version == 4)
@@ -78,7 +79,7 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             valid = False
         if not valid:
             raise HextileClientError("Invalid native Shader request_id", status_code=422, kind="other")
-    if operation == "rename":
+    if operation in {"rename", "delete"}:
         base = args["base"]
         if (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
                 or base["kind"] != "saved" or type(base["working_revision"]) is not int
@@ -86,8 +87,11 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
                                                         for key in ("document_hash", "source_hash"))
                 or type(args["expected_working_digest"]) is not str
                 or not _WORKSPACE_DIGEST.fullmatch(args["expected_working_digest"])
-                or type(args["title"]) is not str or not args["title"] or len(args["title"]) > 256
+                or (operation == "rename" and (type(args["title"]) is not str or not args["title"] or len(args["title"]) > 256))
                 or args.get("library_intent") not in {None, "saved"}
+                or ("confirmation_scope" in args and args["confirmation_scope"] !=
+                    {"operation": operation, "shader": dict(ref)})
+                or (args.get("library_intent") == "saved" and "confirmation_scope" not in args)
                 or ("expected_owner_generation" in args and
                     (type(args["expected_owner_generation"]) is not str or not args["expected_owner_generation"]))):
             raise HextileClientError("Invalid native Shader rename", status_code=422, kind="other")
@@ -1896,6 +1900,21 @@ class Client:
         if not isinstance(receipt, dict) or receipt.get("request_id") != request_id:
             raise HextileClientError(
                 "Shader rename acknowledgement unknown; read shader_get_operation by request_id.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
+        return receipt
+
+    def delete_shader_asset(self, args: Mapping[str, Any]) -> Any:
+        _native_shader_args("delete", args)
+        request_id = args["request_id"]
+        try:
+            receipt = self.request_json("POST", "/api/shaders/agent-operations/delete", dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Shader delete outcome unknown; read shader_get_operation by request_id.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
+            raise
+        if not isinstance(receipt, dict) or receipt.get("request_id") != request_id:
+            raise HextileClientError("Shader delete acknowledgement unknown; read shader_get_operation by request_id.",
                 kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
         return receipt
 

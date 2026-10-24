@@ -2595,8 +2595,20 @@ SHADER_EXTENSION_TOOLS = [
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "expected_owner_generation": {"type": "string", "minLength": 1},
-               "library_intent": {"const": "saved"}},
+               "library_intent": {"const": "saved"},
+               "confirmation_scope": {"type": "object", "properties": {"operation": {"const": "rename"},
+                                      "shader": _NATIVE_SHADER_TARGET["shader"]},
+                                      "required": ["operation", "shader"], "additionalProperties": False}},
               ["request_id", "shader", "project_context_witness", "base", "expected_working_digest", "title"]),
+    _tool_def("shader_delete_asset", "Delete one exact saved Shader. Explicit confirmation scope is required; recover uncertain outcome by request ID.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "base": _NATIVE_SHADER_BASE, "expected_working_digest": _SHADER_DIGEST,
+               "expected_owner_generation": {"type": "string", "minLength": 1},
+               "library_intent": {"const": "saved"},
+               "confirmation_scope": {"type": "object", "properties": {"operation": {"const": "delete"},
+                                      "shader": _NATIVE_SHADER_TARGET["shader"]},
+                                      "required": ["operation", "shader"], "additionalProperties": False}},
+              ["request_id", "shader", "project_context_witness", "base", "expected_working_digest"]),
     _tool_def("shader_get_operation", "Read one route-owned native Shader operation outcome by exact request ID and target.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["request_id", "shader", "project_context_witness"]),
@@ -2967,6 +2979,7 @@ class HextileMcpServer:
             "shader_recheck_update": self._shader_recheck_update,
             "shader_stop_workspace": self._shader_stop_workspace,
             "shader_rename_asset": self._shader_rename_asset,
+            "shader_delete_asset": self._shader_delete_asset,
             "shader_get_operation": self._shader_get_operation,
             "shader_get_credits": self._shader_get_credits,
             "shader_propose_credits": self._shader_propose_credits,
@@ -3762,6 +3775,9 @@ class HextileMcpServer:
 
     def _shader_rename_asset(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_asset(args)
+
+    def _shader_delete_asset(self, args: dict[str, Any]) -> Any:
+        return self.client.delete_shader_asset(args)
 
     def _shader_get_operation(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_operation(args)
