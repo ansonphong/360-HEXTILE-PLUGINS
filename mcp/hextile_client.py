@@ -1899,6 +1899,83 @@ class Client:
                 kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
         return receipt
 
+    def _mounted_shader_action(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
+        common = {"shader", "project_context_witness", "studio_surface_id", "lease_id",
+                  "request_id", "expected_edit_sequence"}
+        extras = ({"action", "seed", "capture_defaults"} if operation == "shader_set_capture" else
+                  {"action", "bpm", "speed"} if operation == "shader_control_clock" else
+                  {"direction", "owner"})
+        if not isinstance(args, Mapping) or not common <= set(args) or set(args) - common - extras:
+            raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
+        ref = args["shader"]
+        try:
+            valid_id = str(uuid.UUID(args["request_id"])) == args["request_id"] and uuid.UUID(args["request_id"]).version == 4
+        except (ValueError, AttributeError, TypeError):
+            valid_id = False
+        if (not valid_id or type(ref) is not dict or set(ref) != {"origin", "shaderId"}
+                or ref["origin"] not in {"builtin", "user", "project"}
+                or type(ref["shaderId"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ref["shaderId"])
+                or any(type(args[key]) is not str or not 1 <= len(args[key]) <= 256
+                       for key in ("project_context_witness", "studio_surface_id", "lease_id"))
+                or type(args["expected_edit_sequence"]) is not int or not 0 <= args["expected_edit_sequence"] <= 2**53 - 1):
+            raise HextileClientError("Invalid mounted Shader owner", kind="other", status_code=422)
+        if operation == "shader_set_capture":
+            if args.get("action") == "live_seed":
+                valid = (set(args) == common | {"action", "seed"} and type(args["seed"]) is int
+                         and 0 <= args["seed"] <= 0xffffffff)
+            else:
+                valid = (args.get("action") == "defaults" and set(args) == common | {"action", "capture_defaults"}
+                         and type(args["capture_defaults"]) is dict
+                         and set(args["capture_defaults"]) == {"frame", "time", "time_delta", "frame_rate",
+                                                                "pointer", "seed", "ray_origin"})
+        elif operation == "shader_control_clock":
+            action = args.get("action")
+            valid = action in {"tap", "align", "reset_master", "reanchor"}
+            if action == "reanchor":
+                valid = valid and bool({"bpm", "speed"} & set(args))
+                valid = valid and all(type(args[key]) in {int, float} and math.isfinite(args[key])
+                                      and (0 < args[key] <= 1000 if key == "bpm" else 0 <= args[key] <= 1024)
+                                      for key in ("bpm", "speed") if key in args)
+            else:
+                valid = valid and set(args) == common | {"action"}
+        else:
+            owner = args.get("owner")
+            valid = (set(args) == common | {"direction", "owner"} and type(args["direction"]) is int
+                     and args["direction"] in {-1, 1} and type(owner) is dict
+                     and set(owner) == {"owner_id", "owner_generation", "viewer_generation", "source_epoch"}
+                     and type(owner["owner_id"]) is str and 1 <= len(owner["owner_id"]) <= 128
+                     and all(type(owner[key]) is int and owner[key] >= 0
+                             for key in ("owner_generation", "viewer_generation", "source_epoch")))
+        try:
+            bounded = len(json.dumps(dict(args), allow_nan=False).encode("utf-8")) <= 4096
+        except (TypeError, ValueError, UnicodeError):
+            bounded = False
+        if not valid or not bounded:
+            raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
+        try:
+            receipt = self.request_json("POST", path, dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError(
+                    "Mounted Shader outcome unknown; read shader_get_operation with the original request_id.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
+            raise
+        if (type(receipt) is not dict or receipt.get("request_id") != args["request_id"]
+                or receipt.get("operation") != operation
+                or receipt.get("state") not in {"pending", "applied", "refused", "unknown", "expired"}):
+            raise HextileClientError("Mounted Shader acknowledgement unknown; read shader_get_operation.",
+                                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]})
+        return receipt
+
+    def set_shader_capture(self, args: Mapping[str, Any]) -> dict:
+        return self._mounted_shader_action(args, "shader_set_capture", "/api/shaders/agent-operations/capture")
+
+    def control_shader_clock(self, args: Mapping[str, Any]) -> dict:
+        return self._mounted_shader_action(args, "shader_control_clock", "/api/shaders/agent-operations/clock")
+
+    def step_shader_frame(self, args: Mapping[str, Any]) -> dict:
+        return self._mounted_shader_action(args, "shader_step_frame", "/api/shaders/agent-operations/frame-step")
+
     def get_shader_operation(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("status", args)
         return self.request_json("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",

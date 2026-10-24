@@ -2534,6 +2534,21 @@ _NATIVE_SHADER_REQUEST_ID = {"type": "string", "format": "uuid",
 _NATIVE_WORKSPACE_HANDLE = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}
 _NATIVE_WORKSPACE_CHANGE = {"type": "string", "minLength": 3, "maxLength": 81}
 _NATIVE_WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
+_MOUNTED_SHADER_FIELDS = {**_NATIVE_SHADER_TARGET,
+    "studio_surface_id": _WORKSPACE_ID,
+    "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "request_id": _NATIVE_SHADER_REQUEST_ID,
+    "expected_edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}
+_MOUNTED_SHADER_REQUIRED = list(_MOUNTED_SHADER_FIELDS)
+_CAPTURE_DEFAULTS = _shader_closed({
+    "frame": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+    "time": {"type": "number"}, "time_delta": {"type": "number"},
+    "frame_rate": _shader_closed({"num": {"type": "integer", "minimum": 1},
+                                  "den": {"type": "integer", "minimum": 1}}),
+    "pointer": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}},
+    "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "ray_origin": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+})
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
               {"project_context_witness": _SHADER_TEXT,
@@ -2604,7 +2619,36 @@ SHADER_EXTENSION_TOOLS = [
                "source_url": {"type": "string", "minLength": 1, "maxLength": 2048},
                "links": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 2048}}},
               ["shader", "project_context_witness", "lease_id", "source_url"]),
+    _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. Capture and Apply consent are required. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
+              {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
+               "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+               "capture_defaults": _CAPTURE_DEFAULTS}, _MOUNTED_SHADER_REQUIRED + ["action"]),
+    _tool_def("shader_control_clock", "Reanchor the authored Master Clock at the native preview action time, collect Tap tempo, Align beat, or reset Master. The Workshop's native gesture and writer own the change. An applied edit is not a saved document; recover uncertainty with shader_get_operation.",
+              {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["reanchor", "tap", "align", "reset_master"]},
+               "bpm": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+               "speed": {"type": "number", "minimum": 0, "maximum": 1024}},
+              _MOUNTED_SHADER_REQUIRED + ["action"]),
+    _tool_def("shader_step_frame", "Step one exact frame on the current mounted published Shader. Uses the native scrub clock port, pauses playback and resets live input; cannot synthesize physical input. Boundary or stale owner refuses. Session transport is not Save. Recover uncertainty with shader_get_operation.",
+              {**_MOUNTED_SHADER_FIELDS, "direction": {"enum": [-1, 1]},
+               "owner": _shader_closed({"owner_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                   "owner_generation": {"type": "integer", "minimum": 0},
+                   "viewer_generation": {"type": "integer", "minimum": 0},
+                   "source_epoch": {"type": "integer", "minimum": 0}})},
+              _MOUNTED_SHADER_REQUIRED + ["direction", "owner"]),
 ]
+
+for _name, _variants in {
+    "shader_set_capture": [
+        {"properties": {"action": {"const": "live_seed"}}, "required": ["seed"], "not": {"required": ["capture_defaults"]}},
+        {"properties": {"action": {"const": "defaults"}}, "required": ["capture_defaults"], "not": {"required": ["seed"]}},
+    ],
+    "shader_control_clock": [
+        {"properties": {"action": {"const": "reanchor"}}, "anyOf": [{"required": ["bpm"]}, {"required": ["speed"]}]},
+        {"properties": {"action": {"enum": ["tap", "align", "reset_master"]}},
+         "not": {"anyOf": [{"required": ["bpm"]}, {"required": ["speed"]}]}},
+    ],
+}.items():
+    next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == _name)["inputSchema"]["oneOf"] = _variants
 
 _timeline_tool = next(t for t in TOOLS if t["name"] == "control_shader_timeline")
 _timeline_tool["inputSchema"]["oneOf"] = [
@@ -2925,6 +2969,9 @@ class HextileMcpServer:
             "shader_get_credits": self._shader_get_credits,
             "shader_propose_credits": self._shader_propose_credits,
             "shader_research_sources": self._shader_research_sources,
+            "shader_set_capture": self._shader_set_capture,
+            "shader_control_clock": self._shader_control_clock,
+            "shader_step_frame": self._shader_step_frame,
             "get_shader_parameters": self._get_shader_parameters,
             "set_shader_parameter": self._set_shader_parameter,
             "propose_shader": self._propose_shader,
@@ -3725,6 +3772,15 @@ class HextileMcpServer:
 
     def _shader_research_sources(self, args: dict[str, Any]) -> Any:
         return self.client.research_shader_sources(args)
+
+    def _shader_set_capture(self, args: dict[str, Any]) -> Any:
+        return self.client.set_shader_capture(args)
+
+    def _shader_control_clock(self, args: dict[str, Any]) -> Any:
+        return self.client.control_shader_clock(args)
+
+    def _shader_step_frame(self, args: dict[str, Any]) -> Any:
+        return self.client.step_shader_frame(args)
 
     def _propose_shader(self, args: dict[str, Any]) -> Any:
         for banned in ("import", "delete", "accept", "consume", "config_partial", "path"):

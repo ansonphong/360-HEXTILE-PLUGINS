@@ -32,6 +32,32 @@ def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
 
 
+def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
+    assert {"shader_set_capture", "shader_control_clock", "shader_step_frame"} <= names
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
+                        calls.append((method, path, body, kwargs)) or
+                        {"schema": 1, "request_id": body["request_id"], "state": "pending",
+                         "operation": {"capture": "shader_set_capture", "clock": "shader_control_clock",
+                                       "frame-step": "shader_step_frame"}[path.rsplit("/", 1)[-1]]})
+    target = {"shader": {"origin": "user", "shaderId": "aurora"},
+              "project_context_witness": "witness", "studio_surface_id": "surface",
+              "lease_id": "lease", "request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e",
+              "expected_edit_sequence": 3}
+    assert client.set_shader_capture({**target, "action": "live_seed", "seed": 7})["state"] == "pending"
+    assert calls[-1][1].endswith("/capture")
+    assert client.control_shader_clock({**target, "action": "align"})["state"] == "pending"
+    assert calls[-1][1].endswith("/clock")
+    assert client.step_shader_frame({**target, "direction": 1, "owner": {"owner_id": "view",
+        "owner_generation": 1, "viewer_generation": 2, "source_epoch": 3}})["state"] == "pending"
+    assert calls[-1][1].endswith("/frame-step")
+    with pytest.raises(HextileClientError):
+        client.set_shader_capture({**target, "action": "live_seed", "seed": 7, "actor": "human"})
+
+
 def test_credits_metadata_and_research_transport_are_closed(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
