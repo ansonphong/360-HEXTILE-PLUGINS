@@ -330,6 +330,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                                           or set(data["output_grant"]) != {"grant_id", "purpose"}
                                           or type(data["output_grant"]["grant_id"]) is not str
                                           or re.fullmatch(r"sof_[0-9a-f]{32}", data["output_grant"]["grant_id"]) is None
+                                          or type(data["output_grant"]["purpose"]) is not str
                                           or data["output_grant"]["purpose"] not in {"png", "exr", "dome", "bundle", "project"}))
                                       or ("bundle_state" in data and (type(data["bundle_state"]) is not dict
                                           or set(data["bundle_state"]) != {"expected_looks", "expected_provenance_hash"}

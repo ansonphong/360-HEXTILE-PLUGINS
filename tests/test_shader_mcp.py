@@ -473,6 +473,11 @@ def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) 
         "bundle_grant": {**grant, "path": "private"}})
     with pytest.raises(HextileClientError):
         client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})
+    for bad_purpose in ([], {"purpose": "bundle"}):
+        monkeypatch.setattr(client, "request_json", lambda *a, **k: {**state,
+            "output_grant": {"grant_id": "sof_" + "e" * 32, "purpose": bad_purpose}})
+        with pytest.raises(HextileClientError):
+            client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})
 
 
 def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:
