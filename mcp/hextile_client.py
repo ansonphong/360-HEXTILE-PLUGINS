@@ -122,7 +122,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
     allowed = {
         "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
                   "capability", "working_digest", "owner_generation", "title", "tags",
-                  "document_schema", "draft_state", "writable", "save_state"},
+                  "document_schema", "draft_state", "writable", "save_state", "reasons"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor"},
@@ -149,7 +149,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
     if (type(data) is not dict or size > 32768 or data.get("schema") != 1 or
             set(data) - allowed or required - set(data) or
             (kind == "state" and (data.get("status") not in {"saved", "unaccepted", "incomplete"}
-                                  or data.get("provenance") not in {"saved", "mounted", "unaccepted"}
+                                  or data.get("provenance") not in {"saved", "mounted", "unaccepted", "incomplete"}
                                   or type(data.get("writable")) is not bool)) or
             (entries is not None and (type(data.get("entries")) is not list or
                                       len(data["entries"]) > entries or
