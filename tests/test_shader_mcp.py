@@ -147,7 +147,7 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
             "shader_get_project_conventions"} <= names
     assert {"shader_get_proposal", "shader_get_workspace", "shader_recheck_update",
             "shader_stop_workspace"} <= names
-    assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset", "shader_get_operation"} <= names
+    assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset", "shader_open_asset", "shader_get_operation"} <= names
     assert "shader_apply_mutation" not in names
     server = HextileMcpServer(client=mock.Mock())
     listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
@@ -169,11 +169,19 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
             "library_intent": "saved", "confirmation_scope": {"operation": "delete", "shader": ref}}
     sent = []
     monkeypatch.setattr(client, "request_json", lambda method, path, payload:
-                        sent.append((method, path, payload)) or {"request_id": request_id, "state": "applied"})
+                        sent.append((method, path, payload)) or {"request_id": request_id,
+                            "operation": "shader_open_asset", "state": "applied"})
     assert client.delete_shader_asset(body)["state"] == "applied"
     assert sent == [("POST", "/api/shaders/agent-operations/delete", body)]
     with pytest.raises(HextileClientError):
         client.delete_shader_asset({**body, "confirmation_scope": {"operation": "rename", "shader": ref}})
+    mounted = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
+               "studio_surface_id": "surface", "lease_id": "lease", "expected_edit_sequence": 2,
+               "target": {"origin": "builtin", "shaderId": "hx_starter"}}
+    assert client.open_shader_asset(mounted)["state"] == "applied"
+    assert sent[-1] == ("POST", "/api/shaders/agent-operations/open", mounted)
+    with pytest.raises(HextileClientError):
+        client.open_shader_asset({**mounted, "target": ref})
 
 
 def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:
