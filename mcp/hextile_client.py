@@ -701,7 +701,7 @@ def validate_shader_doctor(operation: str, args: Mapping[str, Any]) -> None:
 
 
 def validate_shader_workspace(operation: str, args: Mapping[str, Any]) -> None:
-    """Closed transport admission; APP owns grants, replay and saved-base checks."""
+    """Closed transport admission; APP owns writer identity, replay and saved-base checks."""
     def refuse(message: str = "Expected closed Shader workspace arguments") -> None:
         raise HextileClientError(message, kind="other", status_code=422)
 
@@ -891,7 +891,7 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
         refuse()
 
 
-# Transport shape only. The APP store alone resolves references, checks domains/grants,
+# Transport shape only. The APP store alone resolves references, checks domains/current ownership,
 # and materializes a canonical candidate; this proxy never generates IDs or replays edits.
 _SHADER_EDIT_FIELDS = {
     "add_source": ({"definition"}, {"ref"}), "remove_source": ({"source"}, set()),
@@ -1236,11 +1236,9 @@ class Client:
         data = self.get_json("/api/agent/mcp-status")
         if type(data) is not dict:
             raise HextileClientError("Invalid MCP status", kind="other")
-        result: dict[str, Any] = {}
-        for key in ("enabled", "trusted_local_full_access"):
-            if type(data.get(key)) is bool:
-                result[key] = data[key]
-        return result
+        if type(data.get("enabled")) is not bool:
+            raise HextileClientError("Invalid MCP connection status", kind="other")
+        return {"enabled": data["enabled"]}
 
     def local_file_stat(self, path: Any) -> Any:
         """GET /api/agent/local-files/stat."""
@@ -1797,11 +1795,6 @@ class Client:
         value = args["value"]
         if not finite_json(value) or len(json.dumps(value, allow_nan=False).encode("utf-8")) > 65536:
             raise HextileClientError("Shader parameter value must be bounded finite JSON", kind="other", status_code=422)
-        discovery = self.get_shader_parameters(session_id=session_id)
-        if not isinstance(discovery, Mapping) or type(discovery.get("follow_ready")) is not bool:
-            raise HextileClientError(
-                "Upgrade 360 Hextile before changing a Shader parameter; this APP lacks session-bound Follow readiness.",
-                kind="upgrade", status_code=409)
         body = {key: args[key] for key in ("client_request_id", "witness", "parameter_id", "value")}
         try:
             data = self.post_json("/api/agent/shader-parameter", body, headers=headers)
@@ -2108,7 +2101,7 @@ class Client:
 
     @staticmethod
     def _shader_timeline_receipt(data: Any, request_id: str, *, submit: bool) -> dict[str, Any]:
-        reasons = {"stale_snapshot", "wrong_owner", "follow_off", "expired", "studio_closed",
+        reasons = {"stale_snapshot", "wrong_owner", "mcp_disabled", "expired", "studio_closed",
                    "cancelled", "preview_unavailable", "outcome_unconfirmed"}
         if (not isinstance(data, Mapping) or (submit and data.get("ok") is not True)
                 or "client_request_id" in data and data["client_request_id"] != request_id
@@ -2139,7 +2132,7 @@ class Client:
         try:
             detail = json.loads(exc.body or "").get("detail")
             if type(detail) is str and detail in {"invalid_external_authority", "request_conflict",
-                                                      "follow_off", "stale_snapshot", "apply_busy",
+                                                      "mcp_disabled", "stale_snapshot", "apply_busy",
                                                       "invalid_client_request_id"}:
                 code = detail
         except (ValueError, AttributeError, TypeError):
@@ -2953,7 +2946,7 @@ class Client:
         result = self._shader_workspace_request("GET", f"/api/agent/shader-workspaces/{handle}/updates/{change_id}", params=params)
         if args.get("include_source_diagnostics") is True and (
                 not isinstance(result, dict) or type(result.get("source_diagnostics")) is not list):
-            raise HextileClientError("Upgrade 360 Hextile and reconnect for granted source diagnostics; this APP did not acknowledge support.",
+            raise HextileClientError("Upgrade 360 Hextile and reconnect for bounded source diagnostics; this APP did not acknowledge support.",
                                      kind="upgrade")
         return result
 
@@ -3982,15 +3975,7 @@ class Client:
                 "draft_generation", "source_generation", "viewer_generation", "renderer_generation", "owner_id",
             ) if key in surface and surface[key] is not None})
         except HextileClientError:
-            pass  # An incomplete source-free observation cannot authorize an edit.
-        if isinstance(data.get("follow"), dict) and type(data["follow"].get("on")) is bool:
-            result["follow"] = {"on": data["follow"]["on"]}
-        grant = data.get("fractal_grant")
-        if isinstance(grant, dict) and grant.get("actor") == "external_mcp":
-            result["fractal_grant"] = {key: grant[key] for key in (
-                "actor", "scene_id", "expected_draft_generation") if key in grant}
-        if type(data.get("trusted_local_full_access")) is bool:
-            result["trusted_local_full_access"] = data["trusted_local_full_access"]
+            pass  # An incomplete observation has no current document/renderer witness.
         return result
 
     @classmethod

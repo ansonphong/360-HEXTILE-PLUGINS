@@ -956,7 +956,8 @@ def test_shader_parameter_client_transport_and_unknown_recovery() -> None:
     ticket_id = "123e4567-e89b-42d3-a456-426614174000"
     session_id = "123e4567-e89b-42d3-a456-426614174001"
     seen = []
-    discovery = {"witness": witness, "writable": True, "follow_ready": True, "parameters": [
+    completion = {"applied": False}
+    discovery = {"witness": witness, "writable": True, "parameters": [
         {"id": "cellCount", "type": "integer", "value": 32, "default": 32, "ui": {"min": 1, "max": 64}}]}
 
     class Response:
@@ -976,7 +977,7 @@ def test_shader_parameter_client_transport_and_unknown_recovery() -> None:
             return Response(discovery)
         if req.get_method() == "POST":
             return Response({"ok": True, "ticket_id": ticket_id,
-                             "status": "applied" if not discovery["follow_ready"] else "pending"})
+                             "status": "applied" if completion["applied"] else "pending"})
         return Response({"ticket_id": ticket_id, "status": "applied", "parameter_id": "cellCount"})
 
     client = Client(opener=opener)
@@ -986,20 +987,20 @@ def test_shader_parameter_client_transport_and_unknown_recovery() -> None:
         key: val for key, val in witness["base"].items() if key != "manifest_hash"}}}
     assert client.set_shader_parameter(no_manifest, session_id=session_id)["status"] == "pending"
     assert client.set_shader_parameter(status, session_id=session_id)["status"] == "applied"
-    assert [req.get_method() for req in seen] == ["GET", "GET", "POST", "GET", "POST", "GET"]
-    assert seen[2].full_url.endswith("/api/agent/shader-parameter")
-    assert json.loads(seen[2].data) == {key: submit[key] for key in ("client_request_id", "witness", "parameter_id", "value")}
-    assert seen[5].full_url.endswith("/api/agent/shader-parameter/requests/known_1")
+    assert [req.get_method() for req in seen] == ["GET", "POST", "POST", "GET"]
+    assert seen[1].full_url.endswith("/api/agent/shader-parameter")
+    assert json.loads(seen[1].data) == {key: submit[key] for key in ("client_request_id", "witness", "parameter_id", "value")}
+    assert seen[3].full_url.endswith("/api/agent/shader-parameter/requests/known_1")
     assert all(req.get_header("X-hextile-agent") == "mcp" for req in seen)
     assert all(req.get_header("X-hextile-mcp-session") == session_id for req in seen)
 
-    # Save may advance the witness and a session switch may pause Follow. The
-    # original ID still reaches APP's journal for replay and status recovery.
-    discovery.update(follow_ready=False, witness={**witness, "edit_sequence": 8})
+    # Original-ID replay/status reaches the native journal despite later owner/witness changes.
+    completion["applied"] = True
+    discovery.update(witness={**witness, "edit_sequence": 8})
     assert client.set_shader_parameter(submit, session_id=session_id)["status"] == "applied"
     assert client.set_shader_parameter(status, session_id=session_id)["status"] == "applied"
-    assert [req.get_method() for req in seen[-3:]] == ["GET", "POST", "GET"]
-    assert json.loads(seen[-2].data) == json.loads(seen[2].data)
+    assert [req.get_method() for req in seen[-2:]] == ["POST", "GET"]
+    assert json.loads(seen[-2].data) == json.loads(seen[1].data)
     assert all(req.get_header("X-hextile-mcp-session") == session_id for req in seen[-3:])
 
     old_seen = []
@@ -1009,8 +1010,8 @@ def test_shader_parameter_client_transport_and_unknown_recovery() -> None:
     old_app = Client(opener=old_opener)
     with pytest.raises(HextileClientError) as upgrade:
         old_app.set_shader_parameter(submit, session_id=session_id)
-    assert upgrade.value.kind == "upgrade"
-    assert [req.get_method() for req in old_seen] == ["GET"]
+    assert upgrade.value.kind == "shader_parameter_outcome_unknown"
+    assert [req.get_method() for req in old_seen] == ["POST"]
 
     with pytest.raises(HextileClientError):
         client.set_shader_parameter(submit, session_id="model-chosen")
@@ -2035,10 +2036,11 @@ def test_playable_recipe_variants_use_real_intrinsic_admission(variant: str) -> 
 
 
 def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls() -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
     context = _schema("get_shader_context")["description"]
     proposal = _schema("propose_shader")["description"]
     workspace = _schema("open_shader_workspace")["description"]
-    assert "source-free" in context and "include_formula only" in context
+    assert "source-free" in context and "include_formula selects" in context
     assert "every Board row" in proposal and "preserve" in proposal
     assert "attested" in proposal and "envelope" in proposal
     assert "conventions/1" in workspace and "modulation/2" in workspace
@@ -2051,3 +2053,9 @@ def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls()
     source = (ROOT / "skills/360-hextile/SKILL.md").read_text(encoding="utf-8")
     fragment = (ROOT / "codex/AGENTS-fragment.md").read_text(encoding="utf-8")
     assert fragment.split("-->\n\n", 1)[1] == source.split("\n---\n", 1)[1].lstrip("\n")
+    catalog_text = json.dumps(TOOLS + SHADER_EXTENSION_TOOLS)
+    for obsolete in ("source grant", "Capture and Apply consent", "Trusted Local Full Access",
+                     "human Fractal grant", "session selected and follow_ready", "Follow and whole-source"):
+        assert obsolete not in catalog_text
+    assert all("lease_id" not in row["inputSchema"].get("properties", {}) for row in TOOLS + SHADER_EXTENSION_TOOLS)
+

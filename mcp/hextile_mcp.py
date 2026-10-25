@@ -401,11 +401,7 @@ def _map_apply_live_refuse(exc: HextileClientError) -> str:
     blob = f"{exc.body or ''} {exc}"
     if "studio_not_present" in blob:
         return "Studio isn't present. Open 360 Hextile with a document."
-    if "follow_off" in blob:
-        return (
-            "Studio isn't following. Turn on MCP follow to apply this to the "
-            "open file, or use run_workflow to queue a render."
-        )
+
     if "stale_snapshot" in blob:
         return "The open file changed. Call get_live_context again and retry."
     if "identity_key" in blob:
@@ -471,7 +467,7 @@ def _layer_object(properties: dict[str, Any], required: tuple[str, ...] = ()) ->
 
 
 # Closed catalog syntax for the existing Shader proposal route. Semantic admission
-# (bounds relationships, expressions, references and source grants) stays in APP.
+# (bounds relationships, expressions, references and current ownership) stays in APP.
 _SHADER_TEXT = {"type": "string", "minLength": 1}
 _SHADER_BOOL = {"type": "boolean"}
 _SHADER_NUMBER = {"type": "number"}
@@ -552,14 +548,14 @@ _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
                      "description": "<handle>:<expected_generation+1>; suffix <= 9007199254740991, no leading zeros. Replay the original ID, generation and digest only."}
 _WORKSPACE_GUIDANCE = (
     "Discover the three workspace tools via MCP tools/list; get_capabilities remains the APP workflow handshake. "
-    "Read get_live_context.current_surface and existing Follow/grants; presence alone grants nothing. "
+    "Read get_live_context.current_surface and bind its actual document and writer identity. "
     "Omit workspace_schema for the unchanged v1 pair; request workspace_schema:2 for the complete portable manifest. "
     "V2 returns server-owned saved/unaccepted base, root and ordered source paths; preserve these exact identities. "
     "Use strict UTF-8 confined relative GLSL paths (<=256 UTF-8 bytes), no .git, native/absolute paths or escapes. "
     "Declare every source in authoring.json: <=32 GLSL files, <=64 KiB aggregate raw and expanded source, include depth <=16. "
     "V2 registers the full declared set, including unused modules, Looks and provenance: follow APP's raw-byte v2 digest instructions. "
     "Never reuse the v1 pair digest for v2. Originals/resources are verified separately; unlisted files confer nothing. "
-    "get_shader_update include_source_diagnostics:true requests bounded logical locations under the current source grant, witness and candidate. "
+    "get_shader_update include_source_diagnostics:true requests bounded logical locations for the current writer, witness and candidate. "
     "Omitted/false keeps the source-free legacy receipt. Missing support requires upgrade/reconnect, never downgrade. "
     "Workspace schema 2 is format support; source-modules/1 execution requires APP available and executable_capabilities. "
     "frame-accumulation/1 is executable only when listed in executable_capabilities. "
@@ -568,28 +564,28 @@ _WORKSPACE_GUIDANCE = (
     "Do not author it when the id is absent. Do not add a get_capabilities flag, a pass graph, a history file, or a new tool. "
     "Replay from the start, at most 240 frames, full frame at most 2048×1024. "
     "Recognized capabilities, guide text and version numbers do not prove execution or installed host filesystem access. "
-    "Open requires a clean Project or My Library Shader, Follow and whole-source read/propose authority. "
+    "Open requires a clean Project or My Library Shader and its actual current private writer. "
     "Only acknowledged open returns files after APP acquires the mounted readonly/autosave hold. "
     "V1 edits source.glsl (64 KiB) and authoring.json (2 MiB), with a complete derived document <= 2 MiB. "
     "Keep v1 sidecar base immutable. V1 digest raw bytes without newline/JSON normalization: sha256: + SHA256("
     "b'360hextile.shader-workspace.v1\\0' + uint64be(len(source)) + source + uint64be(len(authoring)) + authoring). "
     "Register automatically checks the frozen candidate; it never wakes idle intelligence or synthesizes Apply. "
     "Poll prepare/compile/preview/presentation/save, attachment_state, check_attempt and candidate-bound diagnostics; "
-    "prepare success is not compile proof or a save. Human Apply in Workshop advances the accepted base after acknowledgement. "
+    "prepare success is not compile proof or a save. Native Apply in Workshop advances the accepted base after its exact acknowledgement. "
     "APP Retry rechecks the same candidate; a native-file repair uses a fresh canonical change_id. "
     "After a lost open reply, make at most one identical open request with the same surface, witness, Shader, saved hashes/revision "
     "and optional adoption digest; changed authority requires rediscovery. Never infer attachment from a notice or timeout. "
-    "410 means authority/receipt expired: preserve files, rediscover and reopen; never recreate successful receipts. "
+    "410 means workspace/receipt expired: preserve files, rediscover and reopen; never recreate successful receipts. "
     "Existing divergent files require explicit existing_workspace adoption of the reported exact digest. "
     "APP owns eight handles, one attachment, eight receipts per handle, one current complete candidate, a 300-second idle TTL "
-    "capped by lease and an aggregate 8 MiB workspace-copy budget; this proxy has no workspace cache or scheduler. "
+    "and an aggregate 8 MiB workspace-copy budget; this proxy has no workspace cache or scheduler. "
     "For Playable Shaders, read recipes and best-practices plus acknowledged closed conventions/1 instructions. "
     "Pass through APP ABI/conventions instructions, available and executable_capabilities; observe execution_ready "
     "independently of the current document declaration. Check conventions/1 and modulation/2 separately. "
     "For schema-2 expression edits check parameter-expressions/1, shader-timeline/1 and admitted modulation/3 separately. "
     "Discover control_shader_timeline through tools/list; current_surface owner generations are opaque witness, "
     "and known client_request_id status recovers uncertain control replies without a new action. "
-    "Session playback does not save: propose_shader set_timeline edits document start/end/loop for human Apply. "
+    "Session playback does not save: propose_shader set_timeline edits document start/end/loop through native Apply. "
     "Author Enter -> default-0 logical gate -> schema-2 oneshot BLAST (20 ms Linear Attack, "
     "400 ms Ease Out Release, exponent 2) -> Range -> declared Glow parameter and GLSL effect "
     "as one complete two-file candidate, with the default Master Clock and sorted sidecar declarations. "
@@ -605,7 +601,7 @@ _WORKSPACE_GUIDANCE = (
     "A shortcut conflict requires an explicit remap proposal, not a compiler-failure claim or Hotkeys override."
     " Saved Shader native sequences use preflight_shader_sequence, render_shader_sequence, then "
     "get_shader_sequence with the preflight-known deterministic ID and matching request_hash. "
-    "Require a confirmed human Apply and saved revision/hash, explicit deferred publication_mode, "
+    "Require confirmed native Apply and its saved revision/hash, explicit deferred publication_mode, "
     "exact rational interval/frame count and explicit native output. A lost render reply is recovered "
     "by GET of that same ID; a missing ID leaves the outcome unknown. After verified native masters, "
     "preflight_shader_sequence_export and export_shader_sequence use an explicitly chosen existing local folder, "
@@ -1127,7 +1123,7 @@ _HOTKEY_REVISION = {"type": "string", "minLength": 1, "maxLength": 128,
 
 
 TOOLS: list[dict[str, Any]] = [
-    _tool_def("list_hotkeys", "Read this app's device-local Hotkeys profile, revision, effective bindings and availability in pages of 20 actions. Start with no cursor; pass next_cursor unchanged until null. On stale_revision restart with no cursor. Requires the app; no Follow or render document needed.",
+    _tool_def("list_hotkeys", "Read this app's device-local Hotkeys profile, revision, effective bindings and availability in pages of 20 actions. Start with no cursor; pass next_cursor unchanged until null. On stale_revision restart with no cursor. Requires the app; no render document needed.",
               {"cursor": {"type": "string", "minLength": 1, "maxLength": 128,
                           "description": "Opaque next_cursor from the previous page at the same profile revision."}}),
     _tool_def("inspect_hotkey", "Inspect one Hotkey and optional candidate bindings for edit errors, conflicts and explained overlaps at the current revision.",
@@ -1212,7 +1208,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_live_context",
-        "Read-only studio snapshot (K1). Follow state, doc_generation FNV hex, "
+        "Read-only studio snapshot (K1). Current document/owner state, doc_generation FNV hex, "
         "and identity-stripped live export when the studio is present. "
         "403 studio_not_present if the FE RAM slot is empty. "
         "Does not merge. include_nav and include_active_tool default false.",
@@ -1231,10 +1227,10 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "apply_config_delta",
-        "Apply a live delta to the open studio document when MCP follow is ON. "
+        "Apply a live delta to the exact current studio document while MCP is enabled. "
         "Never queues GPU. Requires config_partial + doc_generation (FNV hex). "
         "Forbidden: confirm, dry_run, workflow_id, document, queue. "
-        "Follow OFF → follow_off. Pipeline / identity keys refused.",
+        "Disconnected MCP refuses fresh work. Pipeline / identity keys refused.",
         {
             "config_partial": {
                 "type": "object",
@@ -2191,8 +2187,8 @@ TOOLS: list[dict[str, Any]] = [
         "Read the open Shader, including bounded source-free conventions/1, modulation/2 or /3, "
         "parameter-expressions/1, shader-timeline/1, stable typed parameter addresses, aliases and camera helpers. "
         "Default metadata omits both hx-math and parameter expression formula source. "
-        "include_formula only requests both formula families under its separate grant; "
-        "GLSL and resolved authoring bytes require include_source and its independent source grant. "
+        "include_formula selects bounded content from both formula families; "
+        "include_source selects bounded GLSL and resolved authoring bytes. "
         "Does not Import, delete, Accept a Board, prepare, or consume. "
         "Never returns an absolute path or pixels.",
         {
@@ -2201,25 +2197,25 @@ TOOLS: list[dict[str, Any]] = [
             "project_context_witness": {"type": "string", "minLength": 1},
             "include_source": {"type": "boolean", "default": False},
             "include_formula": {"type": "boolean", "default": False,
-                "description": "Explicitly include bounded hx-math and parameter-expression formulas in metadata; never grants GLSL read."},
+                "description": "Include bounded hx-math and parameter-expression formulas in metadata; include_source independently selects GLSL content."},
             "working_revision": {"type": "integer", "minimum": 1},
         },
         required=["origin", "shader_id", "project_context_witness"],
     ),
     _tool_def("get_shader_parameters",
-        "Read exposed controls on the mounted Shader without a source grant. Returns bounded IDs, labels, "
+        "Read exposed controls on the mounted Shader without including source. Returns bounded IDs, labels, "
         "types, current/default values, UI bounds and choices, plus an exact witness, authoring writable state, "
-        "and this session's follow_ready state or block reason. No GLSL, formula or help source is returned. "
-        "MCP must be enabled; Follow may be off for this read.",
+        "and current writer readiness or its block reason. No GLSL, formula or help source is returned. "
+        "MCP must be enabled.",
         {}),
     _tool_def("set_shader_parameter",
-        "Change one exposed control on the exact witnessed mounted Shader. Ordinary mode requires this MCP "
-        "session selected and follow_ready; effective Trusted Local Full Access requires no session pick or Follow. "
+        "Change one exposed control on the exact witnessed mounted Shader. The APP binds this MCP "
+        "session and the actual current writer locally. "
         "Submit a caller-known ID once; use operation=status with that original ID after "
-        "an uncertain reply, including after Follow or selection changes. Writable describes authoring only. "
+        "an uncertain reply, including after document or owner changes. Writable describes authoring only. "
         "Applied acknowledges an edit, not Save or a permanent current value. An unknown outcome needs a fresh "
-        "read and human direction before any new ID. Source and formula access require separate grants; "
-        "structural proposals need human Apply.",
+        "read before any new ID. Source and formula include flags select bounded content; "
+        "structural proposals use native Prepare, Apply and Save.",
         {"operation": {"enum": ["submit", "status"]},
          "client_request_id": {"type": "string", "minLength": 1, "maxLength": 64,
                                "pattern": r"^[A-Za-z0-9_-]+$"},
@@ -2241,7 +2237,7 @@ TOOLS: list[dict[str, Any]] = [
         required=["operation", "client_request_id"]),
     {"name": "propose_shader",
      "description": "POST one closed Shader proposal, including schema-2 parameter expression, mode and saved timeline edits, and return ticket identity. "
-                    "APP alone checks grants and materializes IDs. Legacy proposals and every Board row must preserve Playable "
+                    "APP alone checks current ownership/base and materializes IDs. Legacy proposals and every Board row must preserve Playable "
                     "conventions, envelope definitions/input refs/settings, envelope-sourced mappings and their capability declarations. "
                     "To first create or revise Playable controls, use the attested source.glsl/authoring.json workspace "
                     "and installed shader skill. Does not Import, Accept, Apply, Run, arm Interact, press keys, "
@@ -2250,7 +2246,7 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def("control_shader_timeline",
         "Control only the currently mounted Shader Workshop session after fresh get_live_context discovery. "
         "Submit play, pause, seek (seconds), or reset with a caller-known client_request_id and the exact "
-        "current_surface witness including opaque owner generations. Follow and the live lease are required. "
+        "current_surface witness including opaque owner generations. APP binds its private current writer. "
         "If the reply is uncertain, call this same tool with operation=status and that ID; unknown or 404 "
         "is not proof of refusal. Never mint a fresh ID or blindly replay the action. "
         "This changes session playback, not the saved timeline or Shader document.",
@@ -2349,7 +2345,7 @@ TOOLS: list[dict[str, Any]] = [
         "Read one exact authorized workspace receipt, including attachment_state, check_attempt, "
         "prepare/compile/preview/presentation/save and bounded diagnostics/raw_log/reason. "
         "Pass the Project witness returned by open; no files or source are returned. "
-        "Optional include_source_diagnostics defaults false; explicit true requires APP-validated current source grant/witness/candidate "
+        "Optional include_source_diagnostics defaults false; explicit true selects bounded diagnostics for the APP-validated current witness/candidate "
         "and acknowledges bounded logical source_diagnostics (64 rows, 2 KiB messages), never code, native paths or Apply authority. "
         "Unsupported APP requires upgrade/reconnect; do not silently downgrade. "
         "Honor next_poll_ms and check_deadline_at; polling never extends the attempt or saves. "
@@ -2359,7 +2355,7 @@ TOOLS: list[dict[str, Any]] = [
         required=["handle", "change_id", "project_context_witness"]),
     _tool_def("request_shader_doctor",
         "Request one GPU Doctor pass for the clean, currently previewed Shader in the mounted Workshop. "
-        "Requires Follow and a current whole-asset capture grant; builtin, My Library and Project are eligible. "
+        "Requires the actual current native frame owner; builtin, My Library and Project are eligible. "
         "Submit a new UUID once. On an uncertain reply, poll get_shader_doctor with the same request_id; never retry automatically.",
         {"request_id": {"type": "string", "format": "uuid"},
          "origin": {"type": "string", "enum": ["builtin", "user", "project"]},
@@ -2377,12 +2373,12 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def("get_fractal_context",
         "Read the mounted Fractal workshop. Returns scene identity, SHA revisions, registry target IDs, "
         "retained orphan driver targets, admitted capabilities, suspensions, diagnostics, and numeric base/effective values. "
-        "Includes the public action witness and source-free Follow/grant discovery, never a private lease. "
+        "Includes the public action witness from the actual current renderer, never a private writer ID. "
         "No source, path or formula image. Missing optional summaries are unavailable, not inferred. "
-        "A context receipt is not Follow and not a Fractal lease.",
+        "Use the exact current witness for authoring operations.",
         {}),
     {"name": "apply_fractal_edits",
-     "description": "Submit one closed Fractal authoring batch through Follow and the current human Fractal grant. "
+     "description": "Submit one closed Fractal authoring batch through the actual current native writer. "
                     "At most 32 ops. remove_driver is exactly {op, target} for a retained driver, even when that target "
                     "is absent from the active registry. Input ops declare Mouse, gates, and key bindings only. "
                     "They do not acquire a host input lease or inject events. "
@@ -2396,7 +2392,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _FRACTAL_TRANSPORT, "annotations": _annotations("control_fractal_timeline")},
     {"name": "open_fractal_scene",
      "description": "Open one saved Fractal scene id on the mounted workshop. "
-                    "Requires Follow and a fresh human Fractal grant. "
+                    "Requires the actual current Fractal document/renderer witness. "
                     "Reopening a document does not enable interaction. "
                     "Recover uncertainty with get_fractal_request. Do not mint a replacement id.",
      "inputSchema": _FRACTAL_OPEN, "annotations": _annotations("open_fractal_scene")},
@@ -2447,20 +2443,20 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _FRACTAL_EXPORT_SUBMIT, "annotations": _annotations("export_fractal_sequence")},
     _tool_def(
         "get_local_access_status",
-        "Read MCP enabled and effective Trusted Local Full Access from GET /api/agent/mcp-status. "
-        "Works without Studio and when MCP is disabled. Does not grant file access.",
+        "Read the MCP connection switch from GET /api/agent/mcp-status. "
+        "Works without Studio and when MCP is disabled.",
         {},
     ),
     _tool_def(
         "local_file_stat",
-        "Stat one absolute regular file through APP. Requires effective Trusted Local Full Access. "
+        "Stat one absolute regular file through APP. Requires connected MCP. "
         "Returns size, sha256, and an opaque version. No symlink following.",
         {"path": _ABS_PATH},
         required=["path"],
     ),
     _tool_def(
         "local_file_read",
-        "Read a bounded chunk of one absolute regular file. Requires effective trust and expected_version. "
+        "Read a bounded chunk of one absolute regular file. Requires connected MCP and expected_version. "
         "Decoded data is at most 32 KiB; the complete JSON result is at most 65536 UTF-8 bytes. "
         "encoding is utf-8 or base64; APP may return base64 rather than omit bytes.",
         {
@@ -2476,7 +2472,7 @@ TOOLS: list[dict[str, Any]] = [
         "local_file_write_begin",
         "Start a staged create or replace. Canonical UUIDv4 request_id. "
         "create requires expected_sha256 null; replace requires the current 64-hex SHA-256. "
-        "Same request_id and body replay the receipt. Requires effective trust. "
+        "Same request_id and body replay the receipt. Requires connected MCP. "
         "The proxy supplies X-Hextile-Mcp-Session; do not send it as a tool argument.",
         {
             "request_id": _CANONICAL_UUID,
@@ -2490,7 +2486,7 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def(
         "local_file_write_append",
         "Append one ordered chunk to a pending write. data_base64 is at most 64 KiB decoded. "
-        "Identical index and data retry is idempotent. Requires effective trust.",
+        "Identical index and data retry is idempotent. Requires connected MCP.",
         {
             "write_id": _WRITE_ID,
             "index": {"type": "integer", "minimum": 0},
@@ -2501,7 +2497,7 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def(
         "local_file_write_abort",
         "Abort staging for write_id. Terminal status is aborted. Does not publish the target. "
-        "Requires effective trust. Recover the original request with local_file_write_status.",
+        "Requires connected MCP. Recover the original request with local_file_write_status.",
         {"write_id": _WRITE_ID},
         required=["write_id"],
     ),
@@ -2511,7 +2507,7 @@ TOOLS: list[dict[str, Any]] = [
         "then atomic same-directory publication, serialized among APP file-service writers. An outside process "
         "can edit after the check and before publication; this is not atomic expected-hash CAS against "
         "arbitrary outside editors. Observed stale targets still refuse as stale_cas. "
-        "Requires effective trust at commit. A lost reply is local_file_write_status with the original "
+        "Requires connected MCP at commit. A lost reply is local_file_write_status with the original "
         "request_id; never mint a new id or auto-retry outcome_unknown.",
         {"write_id": _WRITE_ID},
         required=["write_id"],
@@ -2799,7 +2795,7 @@ SHADER_EXTENSION_TOOLS = [
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "scope": {"enum": ["asset", "creation", "library", "project", "output"]}},
               ["request_id", "project_context_witness"]),
-    _tool_def("shader_get_credits", "Read paged saved Credits and Sources under the current asset lease without source access. Follow text_ref pages to inspect complete known notices and retained credits; unknown or conflicting licence evidence grants no permission.",
+    _tool_def("shader_get_credits", "Read paged saved Credits and Sources for the current Shader identity without including source. Follow text_ref pages to inspect complete known notices and retained credits; unknown or conflicting licence evidence grants no permission.",
               {**_NATIVE_SHADER_TARGET,
                "section": {"enum": ["sources", "contributors", "current_roles", "history",
                                      "retained_credits", "notices", "text"]},
@@ -2828,7 +2824,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_save_as", "Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. A dirty draft must be MCP-held. The new asset is selected only after its original-ticket transition acknowledgement.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
-    _tool_def("shader_create_asset", "Create a saved Shader from hx_starter or paste exact supplied UTF-8 source as an inert original under effective Trusted Local Full Access. Paste preserves the original with unknown licence and never reads local source. It is not selected until Open. Recover Paste by request ID with creation scope.",
+    _tool_def("shader_create_asset", "Create a saved Shader from hx_starter or paste exact supplied UTF-8 source as an inert original while MCP is connected. Paste preserves the original with unknown licence and never reads local source. It is not selected until Open. Recover Paste by request ID with creation scope.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID,
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
                "action": {"enum": ["new", "paste"]}, "template_id": {"const": "hx_starter"},
@@ -2846,7 +2842,7 @@ SHADER_EXTENSION_TOOLS = [
                "input_path": _ABS_PATH, "bundle_sha256": _SHADER_DIGEST,
                "collision_intent": {"const": "fork"}},
               ["request_id", "project_context_witness", "input_path", "collision_intent"]),
-    _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. Capture and Apply consent are required. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
+    _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. APP binds the actual current writer and captured frame. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
                "capture_defaults": _CAPTURE_DEFAULTS}, _MOUNTED_SHADER_REQUIRED + ["action"]),

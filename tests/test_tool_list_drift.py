@@ -443,7 +443,7 @@ def test_trusted_local_file_contract() -> None:
         if url.endswith("/api/agent/events"):
             return Response({"ok": True})
         if url.endswith("/api/agent/mcp-status"):
-            return Response({"enabled": True, "trusted_local_full_access": True})
+            return Response({"enabled": True})
         if "/api/agent/local-files/stat" in url:
             return Response({"size": 4, "sha256": _SHA256, "version": "v1"})
         if "/api/agent/local-files/read" in url:
@@ -490,7 +490,7 @@ def test_trusted_local_file_contract() -> None:
     access_result = server.call_tool("get_local_access_status", {})
     assert access_result["isError"] is False
     assert json.loads(access_result["content"][0]["text"]) == {
-        "enabled": True, "trusted_local_full_access": True,
+        "enabled": True,
     }
 
     stat_result = server.call_tool("local_file_stat", {"path": "/tmp/x"})
@@ -558,9 +558,9 @@ def test_trusted_local_file_contract() -> None:
     fractal = server.call_tool("get_fractal_context", {})
     assert fractal["isError"] is False
     fractal_payload = json.loads(fractal["content"][0]["text"])
-    assert fractal_payload["trusted_local_full_access"] is True
+    assert "trusted_local_full_access" not in fractal_payload
     assert fractal_payload["scene_id"] == "scn_abcdef12"
-    assert fractal_payload["follow"] == {"on": True}
+    assert "follow" not in fractal_payload and "fractal_grant" not in fractal_payload
     assert "path" not in fractal_payload
     assert "secret" not in json.dumps(fractal_payload)
 
@@ -569,7 +569,7 @@ def test_trusted_local_file_contract() -> None:
     def disabled_request(method: str, path: str, body: Any = None, **kwargs: Any) -> Any:
         disabled.append(path)
         if path == "/api/agent/mcp-status":
-            return {"enabled": False, "trusted_local_full_access": False}
+            return {"enabled": False}
         if path.startswith("/api/agent/local-files/writes/requests/"):
             return {
                 "request_id": _REQUEST_ID, "write_id": _WRITE_ID, "status": "revoked",
@@ -585,7 +585,7 @@ def test_trusted_local_file_contract() -> None:
     off_status = diagnostic.call_tool("get_local_access_status", {})
     assert off_status["isError"] is False
     assert json.loads(off_status["content"][0]["text"]) == {
-        "enabled": False, "trusted_local_full_access": False,
+        "enabled": False,
     }
     off_write = diagnostic.call_tool("local_file_write_status", {"request_id": _REQUEST_ID})
     assert off_write["isError"] is False
