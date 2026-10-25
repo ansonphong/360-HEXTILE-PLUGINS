@@ -55,7 +55,7 @@ Update the canonical package in each host and start a new host session to load r
 
 Confirm tools appear (`list_workflows`, `get_guide`, `get_local_access_status`, …). With the app down, tools return a clean error — the MCP process stays up.
 
-**Trusted Local Full Access** is default-off in 360 Hextile Settings. Enable Full Access there (this also turns MCP on) so Codex, Claude, Grok, and in-app Copilot can use supported operations and the eight local-file tools without Hextile consent prompts. Revoke is immediate; turning the MCP master OFF also closes effective authority. `get_local_access_status` works with MCP OFF and no Studio. Canonical source is this repo's `mcp/hextile_mcp.py`; Claude `.mcp.json` and the Codex installer already point at it.
+Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply. `get_local_access_status` reports `enabled` even with MCP OFF and no Studio. Canonical source is this repo’s `mcp/hextile_mcp.py`; host configuration and the Codex installer point at it.
 
 ## Install — Grok
 
@@ -177,7 +177,7 @@ Install id stays **`360-hextile@360-hextile`**. Hosts do **not** auto-update.
 | `local_file_write_commit` | `POST /api/agent/local-files/writes/{write_id}/commit` |
 | `local_file_write_status` | `GET /api/agent/local-files/writes/requests/{request_id}` |
 
-Enable **Trusted Local Full Access** in Settings, then revoke from the same control. File tools forward only to APP loopback; `local_file_write_status` can reconcile the original `request_id` after revoke or MCP OFF.
+Enable **MCP** in Settings; use **Disconnect** to block fresh work. File tools forward only to APP loopback; `local_file_write_status` can reconcile the original `request_id` after Disconnect.
 
 Instruction surface: **`skills/360-hextile/SKILL.md`** (general automation hub), **`skills/shader/SKILL.md`** (authoritative Shader file procedure), **`skills/fractal/SKILL.md`** (Fractal Workshop) and **`skills/upres/SKILL.md`**.
 Codex `AGENTS-fragment.md` is a frontmatter-stripped copy of the hub — edit SKILL only.
@@ -185,11 +185,11 @@ A temporary installer destination does not prove an installed host.
 
 ### Shader authoring in your coding host
 
-The `shader` skill edits the open Project Shader through the acknowledged `source.glsl` / `authoring.json` pair, registers a raw-byte framed digest and polls real APP Prepare/compiler receipts, with at most three repairs. Ordinary mode uses human Apply; effective Trusted Local Full Access may auto-Apply and persist a singular ready `spt_` / `cpr_` candidate. Registration alone does not prove Save; inspect the exact saved receipt, and keep unknown Save unknown. Installed MCP connectivity and native access to the same physical Project/worktree files are both required; a remote connector alone is insufficient. APP grants control disclosure/ingestion/Apply, not the host's filesystem permissions. Reasoning belongs to your host account/provider and may incur charges or quota limits.
+The `shader` skill edits the open Project Shader through the acknowledged `source.glsl` / `authoring.json` pair, registers a raw-byte framed digest and polls real APP Prepare/compiler receipts, with at most three repairs. APP automatically Applies and saves a singular ready `spt_` / `cpr_` candidate through the native writer. Registration alone does not prove Save; inspect the exact saved receipt, and keep unknown Save unknown. Installed MCP connectivity and native access to the same physical Project/worktree files are both required; a remote connector alone is insufficient. APP verifies current ownership, source and CAS; the host controls its own filesystem permissions. Reasoning belongs to your host account/provider and may incur charges or quota limits.
 
 Claude prefixes plugin skills with the plugin name: `/360-hextile:360-hextile` (hub), `/360-hextile:shader`, `/360-hextile:fractal`, `/360-hextile:upres`. Codex uses separately installed sibling skill directories (`360-hextile`, `shader`, `fractal`, `upres`): confirm them in the installed picker. Check actual Codex/Grok invocation syntax on the installed client; source layout does not prove an installed host.
 
-Open a clean Project Shader in Workshop, enable MCP Follow and whole-asset source_read/propose grants, then invoke the installed skill with your requested change. If open acknowledgement is unknown, preserve files and reconnect; never edit presumed paths. Timeout or exhausted repairs includes the last exact receipt and instructions to re-enter this same host skill. APP Retry rechecks a candidate; it cannot wake an idle coding host. Playable and input-adapter guidance is conditional on observed executable support, not merely document declarations. Neither compiler pass nor a preview certifies physical input behavior or saving.
+Open a clean Project or My Library Shader in Workshop, enable MCP, then invoke the installed skill with your requested change. If open acknowledgement is unknown, preserve files and reconnect; never edit presumed paths. Timeout or exhausted repairs includes the last exact receipt and instructions to re-enter this same host skill. APP Retry rechecks a candidate; it cannot wake an idle coding host. Playable and input-adapter guidance is conditional on observed executable support, not merely document declarations. Neither compiler pass nor a preview certifies physical input behavior or saving.
 
 ### Ordinary render file export
 
@@ -205,7 +205,7 @@ Call `preflight_file_export` with an exact `render_id`, `source_node_id`, select
 
 `list_hotkeys` reads the current profile, revision, effective bindings and availability;
 `inspect_hotkey` explains one action and optional candidate bindings, conflicts and overlaps.
-The app must be open; MCP Follow and a render document are not required.
+The app must be open; a mounted render document is not required.
 Bindings use `meta_key` for the Meta modifier and `slash` for the slash key.
 
 Start `list_hotkeys` with `{}`. Each page contains at most 20 actions plus `total`

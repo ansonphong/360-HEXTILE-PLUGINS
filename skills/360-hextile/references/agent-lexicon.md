@@ -14,7 +14,7 @@ Do not teach `hextile@360-hextile`.
 | override / merge | a second patch language |
 | pole pinch | pole smear / stretch |
 | Reframe | Aim & Export |
-| MCP follow | Copilot Auto |
+| MCP connection | Copilot Auto |
 | your AI coding agent (Claude Code + Codex + Grok) | “the Claude Code plugin” alone |
 
 ## Complementarity card
@@ -24,8 +24,8 @@ Do not teach `hextile@360-hextile`.
 - Neither silently arms Layers or commits a generated layer; Generate, land, and commit are separate approved actions.
 - Copilot cannot start a Render run. Approved live Generate Layer may start one Layers GPU job.
 - MCP cannot `goto` or operate the open Layers canvas; saved Generate Layer is a narrow exception.
-- Live apply from MCP requires follow ON (`hextile_mcp_follow`).
-- Gate A (`hextile_copilot_gate_a_passed`) stays locked. Follow is not Auto.
+- Connected MCP live apply targets the actual current document and writer.
+- Independent Copilot conversation modes remain separate from the MCP connection.
 
 ## Shared refuse strings (exact)
 
@@ -33,8 +33,8 @@ Do not teach `hextile@360-hextile`.
 REFUSE_RENDER_COPILOT
   I can't start a render. Press RENDER, or run it from your AI coding agent (MCP).
 
-REFUSE_LIVE_FOLLOW_OFF
-  Studio isn't following. Turn on MCP follow to apply this to the open file, or use run_workflow to queue a render.
+REFUSE_MCP_DISABLED
+  MCP is disconnected. Reconnect MCP before starting another operation.
 
 REFUSE_NAV_MCP
   I can't open screens. Use Copilot or click the viewer.
@@ -66,5 +66,5 @@ REFUSE_IDENTITY
 - One Render-run queue door: `POST /api/workflows/run` (human RENDER or MCP `run_workflow`). Copilot has no Render-run path; approved Generate Layer uses the separate existing Layers job owner.
 - FE RAM studio slot (preview-slot). `doc_generation` is the FNV-1a hex **string** of the identity-stripped live export.
 - Apply-live body `{config_partial, doc_generation, explanation}`. Ticket; FE merge-then-apply.
-- Empty or expired slot → 403 `studio_not_present`. Slot TTL 30s. FE heartbeat 10s. `pagehide` DELETE. Ticket TTL same clock. Follow OFF or empty republish drops leftover tickets. `startFollow` consumes leftover tickets before poll; busy follow does not consume.
+- Empty or expired slot → 403 `studio_not_present`. Slot TTL 30s. FE heartbeat 10s. `pagehide` DELETE. Ticket TTL same clock. Disconnect or closing the document retires unadmitted tickets. An admitted export finishes under its frozen original identity; Stop separately requests cancellation. Busy writers do not consume new work.
 - Install id `360-hextile@360-hextile`. Do not rewrite committed `.mcp.json`.

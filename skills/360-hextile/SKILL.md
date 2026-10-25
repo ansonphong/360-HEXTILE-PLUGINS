@@ -11,14 +11,14 @@ Install id: **`360-hextile@360-hextile`**. Marketplace `360-hextile`. Skill `360
 
 See `references/agent-lexicon.md` for locked words, the complementarity card, and `REFUSE_*` strings.
 
-For Project Shader coding, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the acknowledged native-file procedure: negotiate v2 for the complete `workspace/` manifest or retain v1 for its two-file pair; edit only granted files, register the full raw digest, read APP diagnostics, repair/re-register, and leave review/**Apply** to the human. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page, known schema, recognized `source-modules/1`, or source fixture does not prove installed shared-file access or executable support; observe APP `available`, executable capabilities and candidate `execution_ready`. Git CLI actions need a separate user instruction; MCP supplies no Git or auto-Apply tool. For **Playable Shaders** (`conventions/1`, `modulation/2`), one Enter-blast request authors the parameter, GLSL, logical gate, keyboard binding, BLAST envelope and Range mapping together. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
+For Project Shader coding, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the acknowledged native-file procedure: negotiate v2 for the complete `workspace/` manifest or retain v1 for its two-file pair; edit only declared files, register the full raw digest, read APP diagnostics, repair/re-register, and verify APP’s automatic **Apply** and exact saved receipt. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page, known schema, recognized `source-modules/1`, or source fixture does not prove installed shared-file access or executable support; observe APP `available`, executable capabilities and candidate `execution_ready`. Git CLI actions need a separate user instruction; MCP supplies no Git tool; APP owns native automatic Apply. For **Playable Shaders** (`conventions/1`, `modulation/2`), one Enter-blast request authors the parameter, GLSL, logical gate, keyboard binding, BLAST envelope and Range mapping together. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
 
-For Fractal Workshop, invoke the installed **`fractal`** skill. It owns fresh context, the human Fractal grant, closed edits, session transport, Save and Save As, and native sequence or folder publication. Shader Apply is unchanged.
+For Fractal Workshop, invoke the installed **`fractal`** skill. It owns fresh context, actual current renderer ownership, closed edits, session transport, Save and Save As, and native sequence or folder publication. Shader and Fractal keep their native validation and saved receipts.
 
-Ordinary human Apply, Fractal grant, Follow, session pick, and Copilot per-call approval still apply. **Trusted Local Full Access** is a default-off Settings switch. Effective authority is MCP enabled AND the raw trust bit. `get_local_access_status` reports `enabled` and `trusted_local_full_access` even with MCP OFF and no Studio. While effective, Codex, Claude, Grok, and in-app Copilot use supported Hextile operations, inherit the current Shader/Fractal document leases, and may read/write OS-account-accessible regular files through the eight local-file tools without Hextile consent prompts. Revoke is immediate and visible. Native validation, CAS, leases, entitlements, and receipt reconciliation remain. Enable Full Access in Settings (this also turns MCP on); revoke clears the trust bit; turning the MCP master OFF also closes effective authority.
+Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply. `get_local_access_status` reports only the MCP connection state.
 
 - Copilot never queues GPU (`REFUSE_RENDER_COPILOT`). Press RENDER, or use `run_workflow` here.
-- MCP live-apply (`apply_config_delta`) needs follow ON (`REFUSE_LIVE_FOLLOW_OFF`) unless Trusted Local Full Access is effective. Gate A stays locked. Follow is not Copilot Auto.
+- Connected MCP live-apply (`apply_config_delta`) targets the actual current document. Independent Copilot conversation modes remain separate.
 - MCP cannot `goto` or arm/operate an open Layers session (`REFUSE_NAV_MCP`, `REFUSE_LAYERS_MCP`).
   The seven Generate Layer tools below are the narrow saved-render exception; live target requires an approved in-app Copilot turn.
 - MCP cannot arm Spot Clone, choose its source/destination in the viewer, or force a commit. The three Spot Clone tools below can act on an explicit saved render; `target=live` requires an approved internal Copilot turn with an already prepared operation.
@@ -53,14 +53,14 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 
 | Tool | When to use | Mutates? |
 |------|-------------|----------|
-| `call_hextile_api` | Call the configured local native API with GET/POST/PATCH/PUT/DELETE at `/api/...`, or GET `/openapi.json`; optional query/body JSON. Named tools remain preferred. |
+| `call_hextile_api` | Call the configured local native API with GET/POST/PATCH/PUT/DELETE at `/api/...`, or GET `/openapi.json`; optional query/body JSON. Named tools remain preferred. | **yes** |
 | `get_capabilities` | Handshake before a session | no |
-| `get_live_context` | Studio snapshot (follow + doc_generation + live export) | no |
-| `apply_config_delta` | Live delta on the open file (follow ON). Never queues | **yes** |
+| `get_live_context` | Studio snapshot (current owner, doc_generation and live export) | no |
+| `apply_config_delta` | Live delta on the current open file. Never queues | **yes** |
 | `get_guide` | Schema, practices, recipes, website index | no |
 | `list_workflows` | Discover templates | no |
 | `get_workflow` | Read one template before override or clone | no |
-| `describe_image` | Describe an exact local file or render graph node, optionally at a 2:1 panorama crop pose; local vision/GPU requires approval and returns text only | **yes** |
+| `describe_image` | Describe an exact local file or render graph node, optionally at a 2:1 panorama crop pose; local vision/GPU keeps native admission and returns text only | **yes** |
 | `save_workflow` | Persist a **new** id on user/project | **yes** |
 | `delete_workflow` | Remove a user/project workflow | **yes** |
 | `validate_config` | Dry-run merge+validate (terraform plan) | no |
@@ -107,7 +107,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `preflight_unreal_export` | Advisory Unreal-project preflight (same body as the Export modal) | no |
 | `export_to_unreal_project` | Export HDR (+ optional masters) into a paired Unreal project. Requires APP Unreal-project sink and actual M1 state. 300s, one attempt | **yes** |
 | `preflight_file_export` | Check exact source revision and proposed ordinary file destinations before export | no |
-| `export_render_file` | Export an ordinary render file after preflight and approval; create-only, 300s, one attempt | **yes** |
+| `export_render_file` | Export an ordinary render file after native preflight; create-only, 300s, one attempt | **yes** |
 | `get_layer_draft` | Inspect exact saved HEAD, draft, revision, active layer source pairs and take fingerprints | no |
 | `generate_layer` | Start one Generate Layer job on a saved render with stable request_id; no automatic land/commit | **yes** |
 | `get_layer_generation` | Poll an exact layer job, including ready or released terminal state | no |
@@ -125,8 +125,8 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `restore_hotkey` | Restore one Hotkey to its factory bindings | **yes** |
 | `reset_hotkeys` | Clear Hotkey binding overrides; the single-key switch stays | **yes** |
 | `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. Source and resolved authoring bytes require include_source/grant; include_formula is separate. No Import, delete, or Apply | no |
-| `get_shader_parameters` | Read exposed mounted Shader parameter IDs, values, bounds, exact witness, authoring `writable`, and this session's `follow_ready` or block reason. MCP enabled; no source grant or Follow needed for this read | no |
-| `set_shader_parameter` | Ordinary mode needs this MCP session selected and `follow_ready`. Effective Trusted Local Full Access requires no session pick. Use `operation=status` with the original `client_request_id` after an uncertain reply, even if selection or Follow changes. `applied` acknowledges an edit, not Save | **yes** |
+| `get_shader_parameters` | Read current mounted parameter IDs, values, bounds, exact witness and native `writable` state | no |
+| `set_shader_parameter` | Connected MCP edits the actual current writer. Use `operation=status` with the original `client_request_id` after an uncertain reply, even if selection changes. `applied` acknowledges an edit, not Save | **yes** |
 | `propose_shader` | Post a legacy shader candidate or Board, preserving Playable convention/envelope bytes and declarations in every row. Complete controls use the attested workspace. No prepare, consume, Import, delete, or Board Accept | **yes** |
 | `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through Follow and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |
@@ -152,7 +152,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `control_fractal_sequence` | Stop or resume native work, or cancel, retry, or open the current export attempt | **yes** |
 | `preflight_fractal_sequence_export` | Check a separate folder publication and keep its transaction_fingerprint | no |
 | `export_fractal_sequence` | Publish only that preflighted folder intent | **yes** |
-| `get_local_access_status` | Read MCP enabled and effective Trusted Local Full Access; works with MCP OFF and no Studio | no |
+| `get_local_access_status` | Read MCP connection state; works with MCP OFF and no Studio | no |
 | `local_file_stat` | Stat one absolute regular file (`size`, `sha256`, opaque `version`) | no |
 | `local_file_read` | Read a bounded chunk (`data` ≤ 32 KiB decoded; complete JSON ≤ 65536 bytes) | no |
 | `local_file_write_begin` | Start staged create (`expected_sha256` null) or replace with the current 64-hex SHA-256 | **yes** |
@@ -215,7 +215,7 @@ Read `preflight_spot_clone(render_id,parent_id)` and require its exact HEAD and 
 
 `list_hotkeys` reads the current profile, revision, effective bindings and availability;
 `inspect_hotkey` explains one action and optional candidate bindings, conflicts and overlaps.
-The app must be open; MCP Follow and a render document are not required.
+The app must be open; a mounted render document is not required.
 Bindings use `meta_key` for the Meta modifier and `slash` for the slash key.
 
 Start `list_hotkeys` with `{}`. Each page contains at most 20 actions plus `total`
