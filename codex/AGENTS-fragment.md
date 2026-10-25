@@ -125,7 +125,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `get_shader_parameters` | Read current mounted parameter IDs, values, bounds, exact witness and native `writable` state | no |
 | `set_shader_parameter` | Connected MCP edits the actual current writer. Use `operation=status` with the original `client_request_id` after an uncertain reply, even if selection changes. `applied` acknowledges an edit, not Save | **yes** |
 | `propose_shader` | Post a legacy shader candidate or Board, preserving Playable convention/envelope bytes and declarations in every row. Complete controls use the attested workspace. No prepare, consume, Import, delete, or Board Accept | **yes** |
-| `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through Follow and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
+| `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through the connected APP and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |
 | `render_shader_sequence` | Queue that exact saved-native deferred request using its original idempotency key; compare its request hash with preflight | **yes** |
 | `get_shader_sequence` | Read bounded native progress and verified masters by the known Shader sequence ID; private paths and source stay hidden | no |
@@ -135,10 +135,10 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `open_shader_workspace` | Acknowledge exact Project Shader attachment; v1 returns two native files, negotiated v2 returns the declared source set and metadata path. Follow installed `360-hextile` | **yes** |
 | `register_shader_update` | Register the acknowledged format-specific raw digest: v1 pair or complete v2 declared set, including unused helpers; automatic APP Prepare/compile checks, never Apply | **yes** |
 | `get_shader_update` | Read the exact workspace receipt with handle, change_id and acknowledged Project witness | no |
-| `request_shader_doctor` | Start one on-demand GPU Doctor pass for the clean, previewed Builtin, My Library or Project Shader with a capture grant; keep the UUID for polling | **yes** |
+| `request_shader_doctor` | Start one on-demand GPU Doctor pass for the clean, previewed Builtin, My Library or Project Shader with its actual private captured frame; keep the UUID for polling | **yes** |
 | `get_shader_doctor` | Poll the exact Doctor request UUID and witness for bounded diagnostics without source, pixels or overlay mask | no |
 | `get_fractal_context` | Read the mounted Fractal workshop: SHA scene revision, registry targets, retained orphans, capabilities, and numeric base/effective values. Not a grant | no |
-| `apply_fractal_edits` | One closed batch of at most 32 authoring ops, including exact remove_driver `{op,target}`, under Follow and a fresh human Fractal grant | **yes** |
+| `apply_fractal_edits` | One closed batch of at most 32 authoring ops, including exact remove_driver `{op,target}`, with the actual private writer and fresh document witness | **yes** |
 | `control_fractal_timeline` | Play, pause, seek, step, or rewind the mounted session clock. Not a saved timeline write | **yes** |
 | `open_fractal_scene` | Open one saved scene id. Reopen does not enable interaction | **yes** |
 | `save_fractal_scene` | Save the adopted revision, or Save As a caller-known create-only id. Do not post again after ok false or a lost reply | **yes** |
@@ -173,7 +173,7 @@ The proxy forwards only to APP loopback and supplies `X-Hextile-Mcp-Session`. Do
 
 ### Selection guide
 
-For saved Shader animation, inspect typed targets with `get_shader_context`, propose the expression and timeline, then wait for human Apply and a confirmed Save receipt. Reread the saved revision and hashes before `preflight_shader_sequence` → `render_shader_sequence` → `get_shader_sequence`. Use exact rational endpoints, frame rate/count, explicit equirectangular or square Dome output and `publication_mode:"deferred"`. On an uncertain render reply, GET the preflight-known ID and compare `request_hash`; unknown 404 is still an unknown outcome. Once native masters are complete, obtain explicit local folder consent, then call `preflight_shader_sequence_export` → `export_shader_sequence` with the same intent and fingerprint. GET the known sequence and attempt after uncertain export or control replies; never blindly repost. `control_shader_sequence` needs the current `attempt_id` for cancel/retry. Generic `create_sequence`/`start_sequence` remain folder upres. See runnable JSON in `get_guide(name="recipes")`.
+For saved Shader animation, inspect typed targets with `get_shader_context`, propose the expression and timeline, then wait for native automatic Apply and a confirmed Save receipt. Reread the saved revision and hashes before `preflight_shader_sequence` → `render_shader_sequence` → `get_shader_sequence`. Use exact rational endpoints, frame rate/count, explicit equirectangular or square Dome output and `publication_mode:"deferred"`. On an uncertain render reply, GET the preflight-known ID and compare `request_hash`; unknown 404 is still an unknown outcome. Once native masters are complete, supply the existing destination_folder task path, then call `preflight_shader_sequence_export` → `export_shader_sequence` with the same intent and fingerprint. GET the known sequence and attempt after uncertain export or control replies; never blindly repost. `control_shader_sequence` needs the current `attempt_id` for cancel/retry. Generic `create_sequence`/`start_sequence` remain folder upres. See runnable JSON in `get_guide(name="recipes")`.
 
 1. **Handshake** → `get_capabilities` then `get_live_context` before compose.
 2. **Learn** → `get_guide` (`best-practices` then `workflow-schema`).
@@ -269,7 +269,7 @@ Never write retired source types (`pattern`, `360_lora`, …) into render-time `
 
 `generate_seed` submits to **`POST /api/360-lora/jobs`**. Keep the UUID and exact request body until the job is resolved. If its acknowledgement is uncertain, call `get_seed_job` with that UUID. A 404 while submission is outstanding is provisional: replay the same UUID and body or report unknown; never mint another ID automatically. `get_seed_job` exposes progress, original-index paths and seeds, and typed terminal errors. `completed`, `partial`, `cancelled`, `failed`, and `interrupted` are terminal; only `completed` means every requested variation succeeded. Historical `list_seed_history` / `get_seed_batch` read stored batches.
 
-`cancel_seed(job_id)` targets only that exact seed job. Undo of a live apply is studio `loadConfig`, not this tool. Follow GET-apply of a finished **run** may still paint sliders (accepted leftover).
+`cancel_seed(job_id)` targets only that exact seed job. Undo of a live apply is studio `loadConfig`, not this tool. A finished render does not itself acknowledge a live edit; use the exact native edit receipt.
 
 ## App-down / upgrade recovery
 
