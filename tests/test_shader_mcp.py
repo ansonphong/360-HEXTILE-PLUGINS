@@ -46,14 +46,14 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
     owner = {"request_id": request_id, "shader": shader, "project_context_witness": "w",
              "base": {"kind": "saved", "working_revision": 1,
                       "document_hash": digest, "source_hash": digest},
-             "studio_surface_id": "surface", "lease_id": "lease", "expected_edit_sequence": 1}
+             "studio_surface_id": "surface", "expected_edit_sequence": 1}
     preview = {**owner, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
     jsonschema.validate(preview, descriptor("shader_request_preview")["inputSchema"])
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**preview, "output": {**preview["output"], "path": "C:/pixels.png"}},
                             descriptor("shader_request_preview")["inputSchema"])
     still = {**owner, "profile": "shader-linear-rgba-exr/1",
-             "output": {"width": 2048, "height": 1024, "grant_id": "sof_" + "a" * 32, "name": "test"}}
+             "output": {"width": 2048, "height": 1024, "output_path": "D:/Temp/test.png"}}
     jsonschema.validate(still, descriptor("shader_preflight_still_export")["inputSchema"])
     jsonschema.validate({key: value for key, value in still.items() if key != "output"} |
                         {"preflight_request_id": request_id},
@@ -156,7 +156,7 @@ def test_shader_output_receipts_refuse_wrong_identity_and_private_fields(monkeyp
     owner = {"request_id": request_id, "shader": shader, "project_context_witness": "w",
              "base": {"kind": "saved", "working_revision": 1,
                       "document_hash": digest, "source_hash": digest},
-             "studio_surface_id": "surface", "lease_id": "lease", "expected_edit_sequence": 1}
+             "studio_surface_id": "surface", "expected_edit_sequence": 1}
     preview = {**owner, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
     replies = [{"request_id": "wrong-id", "state": "pending"},
                {"request_id": request_id, "state": "pending", "private_path": "D:/secret"},
@@ -240,7 +240,7 @@ def test_resource_and_library_extensions_have_closed_explicit_transport(monkeypa
     digest = "sha256:" + "a" * 64
     base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
     target = {"shader": ref, "project_context_witness": "w", "base": base, "expected_working_digest": digest}
-    source = {"kind": "selected_grant", "grant_id": "srg_" + "a" * 32, "fps_num": 24, "fps_den": 1}
+    source = {"kind": "local_path", "paths": ["D:/frames/1.png", "D:/frames/2.png"], "fps_num": 24, "fps_den": 1}
     stage = {**target, "source": source}
     jsonschema.validate(stage, descriptor("shader_stage_resource")["inputSchema"])
     with pytest.raises(jsonschema.ValidationError):
@@ -326,7 +326,7 @@ def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> No
                                        "frame-step": "shader_step_frame"}[path.rsplit("/", 1)[-1]]})
     target = {"shader": {"origin": "user", "shaderId": "aurora"},
               "project_context_witness": "witness", "studio_surface_id": "surface",
-              "lease_id": "lease", "request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e",
+              "request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e",
               "expected_edit_sequence": 3}
     assert client.set_shader_capture({**target, "action": "live_seed", "seed": 7})["state"] == "pending"
     assert calls[-1][1].endswith("/capture")
@@ -344,7 +344,7 @@ def test_credits_metadata_and_research_transport_are_closed(monkeypatch) -> None
     names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
     assert {"shader_get_credits", "shader_propose_credits", "shader_research_sources"} <= names
     ref = {"origin": "user", "shaderId": "aurora"}
-    target = {"shader": ref, "project_context_witness": "wit", "lease_id": "lease"}
+    target = {"shader": ref, "project_context_witness": "wit"}
     read = {**target, "section": "sources", "cursor": 0, "limit": 16}
     jsonschema.validate(read, next(tool for tool in SHADER_EXTENSION_TOOLS
                                    if tool["name"] == "shader_get_credits")["inputSchema"])
@@ -377,8 +377,7 @@ def test_credits_text_chunk_transport_is_closed_and_forwards_utf8_offset(monkeyp
     descriptor = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_get_credits")
     ref = {"origin": "user", "shaderId": "aurora"}
     text_ref = "ct1:sha256:" + "a" * 64 + ":notices:0:license_text"
-    args = {"shader": ref, "project_context_witness": "witness", "lease_id": "lease",
-            "section": "text", "text_ref": text_ref, "offset_utf8": 4096}
+    args = {"shader": ref, "project_context_witness": "witness", "section": "text", "text_ref": text_ref, "offset_utf8": 4096}
     jsonschema.validate(args, descriptor["inputSchema"])
     client = Client("http://127.0.0.1:9")
     seen = {}
@@ -402,7 +401,7 @@ def test_credits_text_chunk_transport_is_closed_and_forwards_utf8_offset(monkeyp
 
 def test_credits_distribution_summary_is_closed_without_raw_rights(monkeypatch) -> None:
     ref = {"origin": "builtin", "shaderId": "hx_starter"}
-    args = {"shader": ref, "project_context_witness": "wit", "lease_id": "lease"}
+    args = {"shader": ref, "project_context_witness": "wit"}
     page = {"schema": 1, "target": ref, "section": "sources", "sources": [],
             "provenance_hash": "sha256:" + "a" * 64,
             "original_source_hash": "sha256:" + "b" * 64,
@@ -505,7 +504,7 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     with pytest.raises(HextileClientError):
         client.delete_shader_asset({**body, "confirmation_scope": {"operation": "rename", "shader": ref}})
     mounted = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
-               "studio_surface_id": "surface", "lease_id": "lease", "expected_edit_sequence": 2,
+               "studio_surface_id": "surface", "expected_edit_sequence": 2,
                "target": {"origin": "builtin", "shaderId": "hx_starter"}}
     assert client.open_shader_asset(mounted)["state"] == "applied"
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/open", mounted)
@@ -547,42 +546,31 @@ def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:
 
 def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
-    ref = {"origin": "user", "shaderId": "mounted"}
-    grant = {"grant_id": "sbg_" + "a" * 32, "sha256": "sha256:" + "b" * 64, "size": 1024}
-    state = {"schema": 1, "shader": ref, "project_context_witness": "wit", "status": "saved",
-             "provenance": "mounted", "base": {}, "capability": {}, "writable": True,
-             "save_state": "clean", "bundle_grant": grant,
-             "bundle_state": {"expected_looks": [{"id": "look-one", "revision": 1,
-                "envelope_hash": "sha256:" + "c" * 64}],
-                "expected_provenance_hash": "sha256:" + "d" * 64},
-             "output_grant": {"grant_id": "sof_" + "e" * 32, "purpose": "bundle"}}
+    digest = "sha256:" + "b" * 64
+    args = {"request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea", "project_context_witness": "wit",
+            "input_path": "D:/task/input.hexshader", "collision_intent": "fork"}
+    receipt = {"schema": 1, "request_id": args["request_id"], "operation": "shader_import_bundle",
+        "scope": "creation", "state": "saved", "project_context_witness": "wit", "receipt": {
+            "shader": {"origin": "user", "shaderId": "imported"}, "working_revision": 1,
+            "document_hash": digest, "source_hash": digest, "manifest_hash": None, "bundle_sha256": digest}}
     calls = []
     def reply(method, path, body=None, **kwargs):
         calls.append((method, path, body, kwargs))
-        if method == "GET": return state
-        return {"request_id": body["request_id"], "operation": "shader_import_bundle", "state": "saved",
-                "receipt": {"bundle_sha256": grant["sha256"], "shader": {"origin": "user", "shaderId": "imported"}}}
+        return receipt
     monkeypatch.setattr(client, "request_json", reply)
-    assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})["bundle_grant"] == grant
-    assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})["output_grant"]["purpose"] == "bundle"
-    args = {"request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea", "shader": ref,
-            "project_context_witness": "wit", "grant_id": grant["grant_id"],
-            "bundle_sha256": grant["sha256"], "collision_intent": "fork"}
-    assert client.import_shader_bundle(args)["receipt"]["bundle_sha256"] == grant["sha256"]
+    assert client.import_shader_bundle(args) == receipt
     assert calls[-1][:3] == ("POST", "/api/shaders/agent-operations/import-bundle", args)
-    with pytest.raises(HextileClientError):
-        client.import_shader_bundle({**args, "path": "C:/private.hexshader"})
-    with pytest.raises(HextileClientError):
-        client.import_shader_bundle({**args, "collision_intent": "replace"})
-    monkeypatch.setattr(client, "request_json", lambda *a, **k: {**state,
-        "bundle_grant": {**grant, "path": "private"}})
-    with pytest.raises(HextileClientError):
-        client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})
-    for bad_purpose in ([], {"purpose": "bundle"}):
-        monkeypatch.setattr(client, "request_json", lambda *a, **k: {**state,
-            "output_grant": {"grant_id": "sof_" + "e" * 32, "purpose": bad_purpose}})
-        with pytest.raises(HextileClientError):
-            client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})
+    assert client.import_shader_bundle({**args, "bundle_sha256": digest}) == receipt
+    assert client.get_shader_operation({"request_id": args["request_id"], "scope": "creation",
+        "project_context_witness": "wit"}) == receipt
+    for changed in ({"input_path": "relative.hexshader"}, {"collision_intent": "replace"},
+                    {"grant_id": "obsolete"}, {"shader": {"origin": "user", "shaderId": "dummy"}},
+                    {"bundle_sha256": "sha256:" + "c" * 64}):
+        with pytest.raises(HextileClientError): client.import_shader_bundle({**args, **changed})
+    for change in ({"request_id": "another"}, {"project_context_witness": "another"},
+                   {"scope": "asset"}, {"receipt": {**receipt["receipt"], "private": True}}):
+        monkeypatch.setattr(client, "request_json", lambda *a, row={**receipt, **change}, **k: row)
+        with pytest.raises(HextileClientError): client.import_shader_bundle(args)
 
 
 def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:
@@ -819,7 +807,7 @@ def test_call_tool_allows_exact_shader_status_through_unavailable_preflight(monk
         recovered = server.call_tool("shader_get_operation", args)
         assert recovered.get("isError") is not True
         assert calls == [("GET", f"/api/shaders/agent-operations/operations/{request_id}", None,
-                          {"params": {"origin": "user", "shader_id": "aurora",
+                          {"params": {"origin": "user", "shader_id": "aurora", "scope": "asset",
                                        "project_context_witness": "wit"}})]
 
         calls.clear()
@@ -1581,7 +1569,7 @@ def test_workspace_requests_validate_with_live_app_closed_models() -> None:
     imports = [node for node in tree.body if isinstance(node, ast.ImportFrom) and node.module in {"typing", "pydantic"}]
     names = {"ClosedModel", "ShaderRef", "ExistingWorkspace", "OpenIn", "RegisterIn",
              "SourceEvidence", "SourceDigest", "SourceProfileLink", "SourceProfile",
-             "SourceProfileRef", "SourceFields", "SourceAppend", "SourceChange", "SourceProposal"}
+             "SourceProfileRef", "SourceProfileV2", "SourceAvatar", "SourceProfileLinkV2", "SourceFields", "SourceAppend", "SourceChange", "SourceProposal"}
     assignments = {"Digest", "Name", "SurfaceId"}
     definitions = [node for node in tree.body if (isinstance(node, ast.ClassDef) and node.name in names)
                    or (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in assignments for target in node.targets))]

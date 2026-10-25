@@ -58,6 +58,7 @@ INSTALL_SPEC.loader.exec_module(INSTALL_MODULE)
 
 # P5 copies this name list as a frozenset tripwire in APP backend/api/routes/agent_events.py.
 EXPECTED_TOOLS = (
+    "call_hextile_api",
     "list_hotkeys",
     "inspect_hotkey",
     "set_hotkey_bindings",
@@ -286,6 +287,71 @@ _SESSION_ID = "11111111-1111-4111-8111-111111111111"
 _REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 _WRITE_ID = "33333333-3333-4333-8333-333333333333"
 _SHA256 = "ab" * 32
+
+
+def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch):
+    """Real native routes/settings persistence; only the in-process HTTP wire is adapted."""
+    sys.path.insert(0, str(ROOT.parent / "360-HEXTILE-APP"))
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from backend import settings
+    from backend.api import trusted_local
+    from backend.api.routes import settings as settings_route
+    from urllib.parse import urlsplit
+    monkeypatch.setattr(settings.SettingsManager, "_get_settings_file_path", lambda self: tmp_path / "settings.json")
+    manager = settings.SettingsManager()
+    manager.update(mcp_enabled=True)
+    monkeypatch.setattr(settings.SettingsManager, "_instance", manager)
+    app = FastAPI()
+    app.middleware("http")(trusted_local.mcp_master_gate)
+    app.include_router(settings_route.router)
+    native = TestClient(app, base_url="http://127.0.0.1")
+    requests = []
+    class Reply(io.BytesIO):
+        status = 200
+        def getcode(self): return self.status
+    def opener(req, timeout=None):
+        requests.append(req)
+        url = urlsplit(req.full_url)
+        assert url.netloc == "127.0.0.1:8000"
+        assert req.get_header("X-hextile-agent") == "mcp"
+        response = native.request(req.method, url.path + ("?" + url.query if url.query else ""),
+            content=req.data, headers=dict(req.header_items()))
+        if response.status_code >= 400:
+            raise urllib.error.HTTPError(req.full_url, response.status_code, "native refusal", {}, io.BytesIO(response.content))
+        result = Reply(response.content); result.status = response.status_code
+        return result
+    client = Client(opener=opener)
+    server = HextileMcpServer(client=client)
+    first = client.call_hextile_api({"method": "GET", "path": "/api/settings"})
+    assert first["mcp_enabled"] is True and "gallery_api_key" not in first
+    changed = server.call_tool("call_hextile_api", {"method": "PATCH", "path": "/api/settings",
+        "body": {"show_chat_icon": False}})
+    assert changed["isError"] is False
+    assert json.loads(changed["content"][0]["text"])["show_chat_icon"] is False
+    assert json.loads((tmp_path / "settings.json").read_text())["show_chat_icon"] is False
+    schema = client.call_hextile_api({"method": "GET", "path": "/openapi.json"})
+    assert "patch" in schema["paths"]["/api/settings"]
+    before = len(requests)
+    for bad in ({"method": "OPTIONS", "path": "/api/settings"},
+                {"method": "GET", "path": "http://evil.invalid/api/settings"},
+                {"method": "GET", "path": "//evil.invalid/api/settings"},
+                {"method": "GET", "path": "/api/../settings"},
+                {"method": "POST", "path": "/openapi.json"},
+                {"method": "GET", "path": "/api/settings", "headers": {"X-Hextile-Agent": "human"}},
+                {"method": "GET", "path": "/api/settings", "query": []}):
+        with pytest.raises(HextileClientError): client.call_hextile_api(bad)
+    assert len(requests) == before
+    assert client.call_hextile_api({"method": "PATCH", "path": "/api/settings", "body": {"mcp_enabled": False}})["mcp_enabled"] is False
+    for method, path in (("GET", "/api/settings"), ("PATCH", "/api/settings"), ("GET", "/openapi.json")):
+        before = len(requests)
+        with pytest.raises(HextileClientError) as off:
+            client.call_hextile_api({"method": method, "path": path, "body": {"mcp_enabled": True}})
+        assert off.value.status_code == 403 and len(requests) == before + 1
+    # No HTTP-status envelope, header override or mutation retry was introduced.
+    tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
+    assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
+    assert len(TOOLS) == 107 and len(SHADER_EXTENSION_TOOLS) == 47
 
 
 def test_trusted_local_file_contract() -> None:
@@ -1397,7 +1463,9 @@ def test_get_guide_reads_real_markdown() -> None:
 
 
 def test_mcp_get_guide_and_save_builtin() -> None:
-    server = HextileMcpServer()
+    local = Client(opener=lambda *a, **k: pytest.fail("local guide needs no HTTP"))
+    local.post_activity = mock.Mock()
+    server = HextileMcpServer(client=local)
     ok = server.call_tool("get_guide", {"name": "recipes"})
     assert ok["isError"] is False
     assert "list_360_loras" in ok["content"][0]["text"]

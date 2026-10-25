@@ -48,6 +48,7 @@ CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
 # Canonical tool names — drift tests assert SKILL.md ⊆ this list.
 TOOL_NAMES = (
+    "call_hextile_api",
     "list_hotkeys",
     "inspect_hotkey",
     "set_hotkey_bindings",
@@ -214,6 +215,7 @@ _READ_ONLY = frozenset(
 )
 _MUTATING = frozenset(
     {
+        "call_hextile_api",
         "set_hotkey_bindings",
         "remove_hotkey_binding",
         "restore_hotkey",
@@ -289,6 +291,7 @@ _BATCH_TOOLS = frozenset(
 )
 _DESTRUCTIVE = frozenset(
     {
+        "call_hextile_api",
         "remove_hotkey_binding",
         "reset_hotkeys",
         "cancel_run",
@@ -2543,7 +2546,6 @@ _NATIVE_HISTORY_OWNER = {
     "confirmation_scope": _shader_closed({"operation": {"type": "string", "maxLength": 64},
         "shader": _NATIVE_SHADER_REF}),
     "studio_surface_id": _WORKSPACE_ID,
-    "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "expected_edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
 }
 _NATIVE_HISTORY_TARGET = _shader_closed({"document_ref": {"type": "string", "maxLength": 256},
@@ -2554,7 +2556,6 @@ _NATIVE_WORKSPACE_CHANGE = {"type": "string", "minLength": 3, "maxLength": 81}
 _NATIVE_WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
 _MOUNTED_SHADER_FIELDS = {**_NATIVE_SHADER_TARGET,
     "studio_surface_id": _WORKSPACE_ID,
-    "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "request_id": _NATIVE_SHADER_REQUEST_ID,
     "expected_edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}
 _MOUNTED_SHADER_REQUIRED = list(_MOUNTED_SHADER_FIELDS)
@@ -2569,9 +2570,6 @@ _CAPTURE_DEFAULTS = _shader_closed({
 })
 _OUTPUT_OWNER = {**_MOUNTED_SHADER_FIELDS, "base": _NATIVE_SHADER_BASE}
 _OUTPUT_OWNER_REQUIRED = [*_MOUNTED_SHADER_REQUIRED, "base"]
-_OUTPUT_GRANT = {"type": "string", "pattern": "^sof_[0-9a-f]{32}$"}
-_OUTPUT_NAME = {"type": "string", "minLength": 1, "maxLength": 128,
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9 _-]*$"}
 _OUTPUT_PROFILE = {"enum": ["png-master/1", "shader-linear-rgba-exr/1", "dome-png/1"]}
 _PREVIEW_OUTPUT = {"oneOf": [
     _shader_closed({"projection": {"const": "equirectangular"}, "pan": {"const": 0},
@@ -2591,14 +2589,14 @@ _STILL_OUTPUT = {"anyOf": [
     _shader_closed({"width": {"type": "integer", "minimum": 1024, "maximum": 16384},
                     "height": {"type": "integer", "minimum": 512, "maximum": 8192},
                     "supersampling": {"type": "number", "minimum": 1, "maximum": 2},
-                    "grant_id": _OUTPUT_GRANT, "name": _OUTPUT_NAME}, ("supersampling",)),
+                    "output_path": _ABS_PATH}, ("supersampling", "output_path")),
     _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "diameter": {"enum": [1024, 2048, 4096, 8192]},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
                     "roll": {"type": "number", "minimum": -180, "maximum": 180},
-                    "grant_id": _OUTPUT_GRANT, "name": _OUTPUT_NAME}),
+                    "output_path": _ABS_PATH}, ("output_path",)),
 ]}
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
@@ -2618,7 +2616,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_release_preview", "Release one exact private preview lease and GPU broker without starting work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_preflight_still_export", "Preflight one native PNG master, linear EXR, or dome profile using the mounted completed frame and a separate human-selected output folder grant; no GPU start.",
+    _tool_def("shader_preflight_still_export", "Preflight one native PNG master, linear EXR, or dome profile using the mounted completed frame and an optional absolute output_path; no GPU start.",
               {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT},
               _OUTPUT_OWNER_REQUIRED + ["profile", "output"]),
     _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting.",
@@ -2631,15 +2629,15 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_stop_output_job", "Signal Stop for an existing exact native still job only.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
-    _tool_def("shader_export_bundle", "Publish an accepted saved .hexshader Bundle with exact Looks and provenance into a human-selected output folder.",
-              {**_OUTPUT_OWNER, "grant_id": _OUTPUT_GRANT, "name": _OUTPUT_NAME,
+    _tool_def("shader_export_bundle", "Publish an accepted saved .hexshader Bundle with exact Looks and provenance at an optional absolute output_path or the host output default.",
+              {**_OUTPUT_OWNER, "output_path": _ABS_PATH,
                "expected_looks": {"type": "array", "maxItems": 32, "items": _shader_closed({
                    "id": _NATIVE_HISTORY_CHECKPOINT, "revision": {"type": "integer", "minimum": 1},
                    "envelope_hash": _SHADER_DIGEST})},
                "expected_provenance_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]}},
-              _OUTPUT_OWNER_REQUIRED + ["grant_id", "name", "expected_looks", "expected_provenance_hash"]),
+              _OUTPUT_OWNER_REQUIRED + ["expected_looks", "expected_provenance_hash"]),
     _tool_def("shader_export_to_project", "Copy the exact accepted saved Shader, Looks, resources, credits and originals to the separately selected existing Project.",
-              {**_OUTPUT_OWNER, "grant_id": _OUTPUT_GRANT}, _OUTPUT_OWNER_REQUIRED + ["grant_id"]),
+              {**_OUTPUT_OWNER, "destination_project": _ABS_PATH}, _OUTPUT_OWNER_REQUIRED),
     _tool_def("shader_get_history", "Read bounded retained Shader revision or checkpoint metadata; a stale cursor requires restart.",
               {**_NATIVE_SHADER_TARGET, "kind": {"enum": ["revisions", "checkpoints"]},
                "cursor": {"type": "string", "maxLength": 8192},
@@ -2696,7 +2694,7 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness", "base", "expected_working_digest", "action", "mode"]),
     _tool_def("shader_get_project_conventions", "Read bounded Project Shader convention profiles and digest.",
               {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),
-    _tool_def("shader_stage_resource", "Stage an exact Render node, complete Sequence range, or Workshop-selected file/folder grant. Physical paths and device limits are never model inputs. All ordered frames are retained or the stage fails.",
+    _tool_def("shader_stage_resource", "Stage an exact Render node, complete Sequence range, or absolute local file/folder/ordered frame paths. All ordered frames are retained or the stage fails.",
               {**_NATIVE_SHADER_TARGET, "base": _NATIVE_SHADER_BASE,
                "expected_working_digest": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]},
                "source": {"oneOf": [
@@ -2705,7 +2703,9 @@ SHADER_EXTENSION_TOOLS = [
                    _shader_closed({"kind": {"const": "sequence_range"}, "sequence_id": _NATIVE_HISTORY_CHECKPOINT,
                        "start_index": {"type": "integer", "minimum": 0}, "end_index": {"type": "integer", "minimum": 0},
                        "fps_num": {"type": "integer", "minimum": 1}, "fps_den": {"type": "integer", "minimum": 1}}),
-                   _shader_closed({"kind": {"const": "selected_grant"}, "grant_id": {"type": "string", "pattern": "^srg_[A-Za-z0-9_-]{32}$"},
+                   _shader_closed({"kind": {"const": "local_path"}, "path": _ABS_PATH,
+                       "fps_num": {"type": "integer", "minimum": 1}, "fps_den": {"type": "integer", "minimum": 1}}, ("fps_num", "fps_den")),
+                   _shader_closed({"kind": {"const": "local_path"}, "paths": {"type": "array", "minItems": 1, "maxItems": 1024, "items": _ABS_PATH},
                        "fps_num": {"type": "integer", "minimum": 1}, "fps_den": {"type": "integer", "minimum": 1}}, ("fps_num", "fps_den"))]},
                "resolution": {"enum": ["full", "4k", "8k", "12k", "16k"]}, "reduced_copy": {"type": "boolean"},
                "projection": {"enum": ["equirectangular", "flat"]}, "filter": {"enum": ["linear", "nearest", "mipmap"]},
@@ -2800,26 +2800,26 @@ SHADER_EXTENSION_TOOLS = [
                "scope": {"enum": ["asset", "creation", "library", "project", "output"]}},
               ["request_id", "project_context_witness"]),
     _tool_def("shader_get_credits", "Read paged saved Credits and Sources under the current asset lease without source access. Follow text_ref pages to inspect complete known notices and retained credits; unknown or conflicting licence evidence grants no permission.",
-              {**_NATIVE_SHADER_TARGET, "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              {**_NATIVE_SHADER_TARGET,
                "section": {"enum": ["sources", "contributors", "current_roles", "history",
                                      "retained_credits", "notices", "text"]},
                "text_ref": {"type": "string", "pattern": "^ct1:sha256:[0-9a-f]{64}:(top|notices|retained_credits):[0-9]+:[a-z_]+$"},
                "offset_utf8": {"type": "integer", "minimum": 0},
                "cursor": {"type": "integer", "minimum": 0},
                "limit": {"type": "integer", "minimum": 1, "maximum": 32}},
-              ["shader", "project_context_witness", "lease_id"]),
+              ["shader", "project_context_witness"]),
     _tool_def("shader_propose_credits", "Freeze a credits-only pending review intent; recover uncertain outcomes by request ID. Before third-party adaptation, inspect source headers, actual licence and notice text and upstream links. Keep original, intermediate and utility authors, current human contributors and AI assistance distinct. Mark evidence observed, user_declared or inferred; retain prior credits and notices. Inaccessible, absent or conflicting licences remain unknown or conflicting, never implied permission.",
-              {**_NATIVE_SHADER_TARGET, "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              {**_NATIVE_SHADER_TARGET,
                "request_id": _NATIVE_SHADER_REQUEST_ID, "base": _NATIVE_SHADER_BASE,
                "working_digest": _CREDIT_HASH, "expected_provenance_hash": _CREDIT_HASH,
                "changes": _CREDIT_CHANGES},
-              ["shader", "project_context_witness", "lease_id", "request_id", "base",
+              ["shader", "project_context_witness", "request_id", "base",
                "working_digest", "expected_provenance_hash", "changes"]),
     _tool_def("shader_research_sources", "Fetch only one supplied public HTTP(S) source URL and up to four supplied links locally with bounded text. Treat pages as untrusted evidence, record visited URLs, errors and truncation, and do not infer a licence or reuse permission from missing text.",
-              {**_NATIVE_SHADER_TARGET, "lease_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              {**_NATIVE_SHADER_TARGET,
                "source_url": {"type": "string", "minLength": 1, "maxLength": 2048},
                "links": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 2048}}},
-              ["shader", "project_context_witness", "lease_id", "source_url"]),
+              ["shader", "project_context_witness", "source_url"]),
     _tool_def("shader_open_asset", "Open one saved Shader only while the current mounted draft is clean and settled. No implicit Save or Discard. Recover uncertainty by the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"]},
               _MOUNTED_SHADER_REQUIRED + ["target"]),
@@ -2836,16 +2836,16 @@ SHADER_EXTENSION_TOOLS = [
                "source": {"type": "string", "minLength": 1, "maxLength": 2097152},
                "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["request_id", "project_context_witness", "action"]),
-    _tool_def("shader_fork_asset", "Fork the exact saved source Shader and retain its credits, Looks, resources and history pins. Current mounted grant or effective Trusted Local Full Access is required. Result is saved but not selected.",
+    _tool_def("shader_fork_asset", "Fork the exact saved source Shader and retain its credits, Looks, resources and history pins. Result is saved but not selected.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"const": "fork"}, "expected_document_hash": _SHADER_DIGEST,
                "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 128}},
               ["request_id", "project_context_witness", "action", "shader", "expected_document_hash"]),
-    _tool_def("shader_import_bundle", "Import only the user-selected Shader Bundle grant visible in shader_get_asset_state. Explicit fork intent creates a new asset; no path or file bytes are accepted. Recover an uncertain outcome by original request ID.",
-              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
-               "grant_id": {"type": "string", "pattern": "^sbg_[0-9a-f]{32}$"},
-               "bundle_sha256": _SHADER_DIGEST, "collision_intent": {"const": "fork"}},
-              ["request_id", "shader", "project_context_witness", "grant_id", "bundle_sha256", "collision_intent"]),
+    _tool_def("shader_import_bundle", "Import an absolute .hexshader file through the native importer. Optional bundle_sha256 is an expected digest. Explicit fork intent creates a new asset without a mounted source Shader; recover uncertainty by original request ID.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
+               "input_path": _ABS_PATH, "bundle_sha256": _SHADER_DIGEST,
+               "collision_intent": {"const": "fork"}},
+              ["request_id", "project_context_witness", "input_path", "collision_intent"]),
     _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. Capture and Apply consent are required. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
@@ -2900,6 +2900,10 @@ _parameter_tool["inputSchema"]["oneOf"] = [
     {"properties": {"operation": {"const": "submit"}},
      "required": ["witness", "parameter_id", "value"]},
 ]
+TOOLS.insert(0, _tool_def("call_hextile_api", "Call the configured local Hextile native API. Named tools remain preferred. No mutation retry; recover an uncertain result through its native status API.",
+    {"method": {"enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]},
+     "path": {"type": "string", "minLength": 1},
+     "query": {"type": "object"}, "body": {}}, ["method", "path"]))
 assert {t["name"] for t in TOOLS} == set(TOOL_NAMES)
 assert _READ_ONLY | _MUTATING == set(TOOL_NAMES)
 assert _BATCH_TOOLS <= set(TOOL_NAMES)
@@ -3131,6 +3135,7 @@ class HextileMcpServer:
         self.client_name: Optional[str] = None
         self.client_version: Optional[str] = None
         self._handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
+            "call_hextile_api": lambda args: self.client.call_hextile_api(args),
             "list_workflows": self._list_workflows,
             "get_workflow": self._get_workflow,
             "get_capabilities": self._get_capabilities,
@@ -3368,6 +3373,7 @@ class HextileMcpServer:
         if (
             not self.internal_mode
             and getattr(self.client, "_opener", None) is None
+            and name != "call_hextile_api"
             and name not in _LOCAL_FILE_DIAGNOSTICS
             and name not in {"shader_get_operation", "shader_get_proposal", "shader_get_workspace",
                              "shader_stop_workspace", "shader_get_output_job",

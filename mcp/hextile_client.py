@@ -57,12 +57,12 @@ MAX_WORKSPACE_GENERATION = 2**53 - 1
 
 _OUTPUT_PROFILES = {"png-master/1", "shader-linear-rgba-exr/1", "dome-png/1"}
 _OUTPUT_OWNER = {"request_id", "shader", "project_context_witness", "base",
-                 "studio_surface_id", "lease_id", "expected_edit_sequence"}
+                 "studio_surface_id", "expected_edit_sequence"}
 
 
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                            *, mutation: bool = False) -> dict:
-    """Close the native output boundary without copying private destination data."""
+    """Close the native output boundary, retaining its actual task destination."""
     def invalid() -> HextileClientError:
         return HextileClientError("Invalid bounded Shader output receipt",
             kind="shader_output_outcome_unknown" if mutation else "other",
@@ -75,6 +75,10 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
         if result.get("request_id") != args["request_id"]:
             raise invalid()
         keys = set(result)
+        for field in ("output_path", "destination_project"):
+            if field in result and (type(result[field]) is not str or not Path(result[field]).is_absolute()):
+                raise invalid()
+
         if operation in {"preview", "preflight"}:
             full = {"schema", "request_id", "operation", "state", "shader",
                     "project_context_witness"}
@@ -123,7 +127,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
             if keys != {"request_id", "released"} or result["released"] is not True:
                 raise invalid()
         elif operation in {"still", "get_job", "stop_job"}:
-            allowed = {"request_id", "profile", "job", "publication", "state", "output_name"}
+            allowed = {"request_id", "profile", "job", "publication", "state", "output_name", "output_path", "reason"}
             if (not {"request_id", "profile", "job"} <= keys or keys - allowed
                     or operation == "still" and "state" not in result
                     or result["profile"] != args["profile"]
@@ -187,14 +191,14 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     or not math.isfinite(job["progress"]) or not 0 <= job["progress"] <= 1):
                 raise invalid()
         elif operation == "bundle":
-            if (keys != {"request_id", "state", "output_name", "resource_count", "resource_bytes"}
+            if (keys != {"request_id", "state", "output_name", "output_path", "resource_count", "resource_bytes"}
                     or result["state"] != "saved" or type(result["output_name"]) is not str
-                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,127}\.hexshader", result["output_name"]) is None
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,239}\.hexshader", result["output_name"]) is None
                     or type(result["resource_count"]) is not int or result["resource_count"] < 0
                     or type(result["resource_bytes"]) is not int or result["resource_bytes"] < 0):
                 raise invalid()
         elif operation == "project":
-            if (keys != {"request_id", "state", "shader_id", "target_name"}
+            if (keys != {"request_id", "state", "shader_id", "target_name", "destination_project"}
                     or result["state"] not in {"accepted", "deleted", "uncertain"}
                     or type(result["shader_id"]) is not str
                     or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result["shader_id"]) is None
@@ -208,28 +212,30 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
         raise invalid() from exc
 
 
-def _valid_shader_paste_status(result: Any, args: Mapping[str, Any], *, complete: bool) -> bool:
+def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, complete: bool) -> bool:
     if type(result) is not dict:
         return False
     common = {"schema", "request_id", "operation", "scope", "state", "project_context_witness"}
     try:
         if (not common <= set(result) or set(result) - common - {"receipt", "error"}
                 or result["schema"] != 1 or result["request_id"] != args["request_id"]
-                or result["operation"] != "shader_create_asset" or result["scope"] != "creation"
+                or result["operation"] not in {"shader_create_asset", "shader_import_bundle"} or result["scope"] != "creation"
                 or result["project_context_witness"] != args["project_context_witness"]
                 or type(result["state"]) is not str
                 or result["state"] not in {"pending", "unknown", "refused", "expired", "saved"}
                 or complete and result["state"] != "saved"
                 or len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 32768):
             return False
-        if "error" in result and (result["state"] != "refused" or result["error"] !=
-                                  {"message": "Native Paste refused"}):
+        if "error" in result and (result["state"] != "refused" or type(result["error"]) is not dict
+                or set(result["error"]) - {"message", "code"}):
             return False
         if result["state"] != "saved":
             return "receipt" not in result
         receipt = result.get("receipt")
-        return (type(receipt) is dict and set(receipt) == {"shader", "working_revision",
-                "document_hash", "source_hash", "manifest_hash"}
+        return (type(receipt) is dict and set(receipt) == ({"shader", "working_revision",
+                "document_hash", "source_hash", "manifest_hash"} | ({"bundle_sha256"} if result["operation"] == "shader_import_bundle" else set()))
+                and (result["operation"] != "shader_import_bundle" or type(receipt["bundle_sha256"]) is str
+                     and _WORKSPACE_DIGEST.fullmatch(receipt["bundle_sha256"]) is not None)
                 and type(receipt["shader"]) is dict
                 and set(receipt["shader"]) == {"origin", "shaderId"}
                 and receipt["shader"]["origin"] in {"user", "project"}
@@ -255,8 +261,8 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
         "release_preview": (common, set()),
         "get_job": (common | {"profile"}, set()),
         "stop_job": (common | {"profile"}, set()),
-        "bundle": (_OUTPUT_OWNER | {"grant_id", "name", "expected_looks", "expected_provenance_hash"}, set()),
-        "project": (_OUTPUT_OWNER | {"grant_id"}, set()),
+        "bundle": (_OUTPUT_OWNER | {"expected_looks", "expected_provenance_hash"}, {"output_path"}),
+        "project": (_OUTPUT_OWNER, {"destination_project"}),
     }
     required, optional = fields[operation]
     if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
@@ -276,7 +282,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
                 or base["kind"] != "saved" or type(base["working_revision"]) is not int or base["working_revision"] < 1
                 or any(type(base[key]) is not str or not _WORKSPACE_DIGEST.fullmatch(base[key]) for key in
                        ("document_hash", "source_hash"))
-                or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id", "lease_id"))
+                or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id",))
                 or type(args["expected_edit_sequence"]) is not int or args["expected_edit_sequence"] < 0):
             raise HextileClientError("Invalid saved output owner", status_code=422, kind="other")
     if operation in {"preflight", "still", "get_job", "stop_job"} and (
@@ -295,16 +301,17 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
             valid = (type(projection) is str and projection in {"equirectangular", "fulldome", "fulldome_angular"}
                      and required <= output.keys() and set(output) <= fields)
         else:
-            shape = {"png-master/1": ({"width", "height", "grant_id", "name"}, {"supersampling"}),
-                     "shader-linear-rgba-exr/1": ({"width", "height", "grant_id", "name"}, set()),
+            shape = {"png-master/1": ({"width", "height"}, {"supersampling", "output_path"}),
+                     "shader-linear-rgba-exr/1": ({"width", "height"}, {"output_path"}),
                      "dome-png/1": ({"projection", "diameter", "fov_deg", "pan", "tilt", "roll",
-                                    "grant_id", "name"}, set())}[args["profile"]]
+                                    }, {"output_path"})}[args["profile"]]
             valid = shape[0] <= output.keys() and set(output) <= shape[0] | shape[1]
         if not valid:
             raise HextileClientError("Unsupported closed Shader output settings", status_code=422, kind="other")
-    if operation in {"bundle", "project"}:
-        if type(args["grant_id"]) is not str or re.fullmatch(r"sof_[0-9a-f]{32}", args["grant_id"]) is None:
-            raise HextileClientError("Selected output folder grant required", status_code=422, kind="other")
+    for field in ("output_path", "destination_project"):
+        value = args.get("output", {}).get(field) if operation == "preflight" else args.get(field)
+        if value is not None and (type(value) is not str or not Path(value).is_absolute()):
+            raise HextileClientError("Expected absolute task destination", status_code=422, kind="other")
     if operation == "get_preview" and "image" in args and type(args["image"]) is not bool:
         raise HextileClientError("Image opt-in must be boolean", status_code=422, kind="other")
 
@@ -373,8 +380,7 @@ def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set
 
 def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "base", "expected_working_digest"}
-    owner = {"library_intent", "confirmation_scope", "studio_surface_id", "lease_id",
-             "expected_edit_sequence"}
+    owner = {"library_intent", "confirmation_scope", "studio_surface_id", "expected_edit_sequence"}
     fields = {
         "shader_save_look": ({"title"}, {"include_overrides", "look_id", "expected_look_envelope_hash"}),
         "shader_apply_look": ({"look_id", "expected_look_envelope_hash"}, set()),
@@ -418,8 +424,8 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
                 or any(key in args for key in ("studio_surface_id", "lease_id", "expected_edit_sequence"))):
             raise HextileClientError("Invalid saved history confirmation", status_code=422, kind="other")
     elif ("library_intent" in args or "confirmation_scope" in args
-          or not {"studio_surface_id", "lease_id", "expected_edit_sequence"} <= args.keys()
-          or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id", "lease_id"))
+          or not {"studio_surface_id", "expected_edit_sequence"} <= args.keys()
+          or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id",))
           or type(args["expected_edit_sequence"]) is not int or args["expected_edit_sequence"] < 0):
         raise HextileClientError("Invalid mounted history owner", status_code=422, kind="other")
     for key in ("title", "expected_name"):
@@ -461,8 +467,8 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
         "state": {"schema", "shader", "project_context_witness", "status", "provenance", "base",
                   "capability", "working_digest", "owner_generation", "title", "tags",
                   "document_schema", "draft_state", "writable", "save_state", "reasons",
-                  "saved_values", "unaccepted_values", "mounted_values", "bundle_grant", "resource_grant",
-                  "bundle_state", "output_grant", "human_only"},
+                  "saved_values", "unaccepted_values", "mounted_values",
+                  "bundle_state", "human_only"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor"},
@@ -496,27 +502,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                                           "developer_builtin_authoring", "physical_input"}
                                       or any(type(reason) is not str or len(reason) > 256
                                              for reason in data["human_only"].values())))
-                                  or ("bundle_grant" in data and (type(data["bundle_grant"]) is not dict
-                                      or set(data["bundle_grant"]) != {"grant_id", "sha256", "size"}
-                                      or type(data["bundle_grant"]["grant_id"]) is not str
-                                      or re.fullmatch(r"sbg_[0-9a-f]{32}", data["bundle_grant"]["grant_id"]) is None
-                                      or type(data["bundle_grant"]["sha256"]) is not str
-                                      or _WORKSPACE_DIGEST.fullmatch(data["bundle_grant"]["sha256"]) is None
-                                      or type(data["bundle_grant"]["size"]) is not int
-                                      or not 0 < data["bundle_grant"]["size"] <= 2 * 1024**3))
-                                  or ("resource_grant" in data and (type(data["resource_grant"]) is not dict
-                                      or set(data["resource_grant"]) != {"grant_id", "frame_count", "expires_in"}
-                                      or type(data["resource_grant"]["grant_id"]) is not str
-                                      or re.fullmatch(r"srg_[A-Za-z0-9_-]{32}", data["resource_grant"]["grant_id"]) is None
-                                      or type(data["resource_grant"]["frame_count"]) is not int
-                                      or not 1 <= data["resource_grant"]["frame_count"] <= 1024
-                                          or type(data["resource_grant"]["expires_in"]) is not int))
-                                      or ("output_grant" in data and (type(data["output_grant"]) is not dict
-                                          or set(data["output_grant"]) != {"grant_id", "purpose"}
-                                          or type(data["output_grant"]["grant_id"]) is not str
-                                          or re.fullmatch(r"sof_[0-9a-f]{32}", data["output_grant"]["grant_id"]) is None
-                                          or type(data["output_grant"]["purpose"]) is not str
-                                          or data["output_grant"]["purpose"] not in {"png", "exr", "dome", "bundle", "project"}))
+
                                       or ("bundle_state" in data and (type(data["bundle_state"]) is not dict
                                           or set(data["bundle_state"]) != {"expected_looks", "expected_provenance_hash"}
                                           or type(data["bundle_state"]["expected_looks"]) is not list
@@ -993,6 +979,25 @@ class Client:
             yield
         finally:
             _REQUEST_HEADERS.reset(token)
+
+    def call_hextile_api(self, args: Mapping[str, Any]) -> Any:
+        """One validated native JSON request, with the client's configured caller identity."""
+        if (not isinstance(args, Mapping) or not {"method", "path"} <= args.keys()
+                or set(args) - {"method", "path", "query", "body"}):
+            raise HextileClientError("Expected method/path and optional query/body", kind="other", status_code=422)
+        method, path = args["method"], args["path"]
+        if (type(method) is not str or method not in {"GET", "POST", "PATCH", "PUT", "DELETE"}
+                or type(path) is not str or not (path.startswith("/api/") or method == "GET" and path == "/openapi.json")
+                or "\\" in path or any(ord(ch) < 33 for ch in path)
+                or urllib.parse.urlsplit(path).path != path
+                or any(part in {".", ".."} for part in path.split("/"))
+                or "query" in args and type(args["query"]) is not dict):
+            raise HextileClientError("Expected a relative native API path and supported method", kind="other", status_code=422)
+        try:
+            json.dumps(args.get("body"), allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise HextileClientError("Expected a JSON body", kind="other", status_code=422) from exc
+        return self.request_json(method, path, args.get("body"), params=args.get("query"))
 
     # ── low-level ───────────────────────────────────────────────────────
 
@@ -2355,15 +2360,18 @@ class Client:
         source = args["source"]
         fields = {"render_node": {"render_id", "node_id", "artifact_witness"},
                   "sequence_range": {"sequence_id", "start_index", "end_index", "fps_num", "fps_den"},
-                  "selected_grant": {"grant_id"}}
+                  "local_path": set()}
         if (not isinstance(source, Mapping) or source.get("kind") not in fields
                 or fields[source["kind"]] - source.keys()
                 or set(source) - fields[source["kind"]] - {"kind"}
-                - ({"fps_num", "fps_den"} if source["kind"] == "selected_grant" else set())):
+                - ({"path", "paths", "fps_num", "fps_den"} if source["kind"] == "local_path" else set())):
             raise HextileClientError("Invalid closed Shader resource source", status_code=422, kind="other")
-        if (source["kind"] == "selected_grant" and
-                (type(source["grant_id"]) is not str or re.fullmatch(r"srg_[A-Za-z0-9_-]{32}", source["grant_id"]) is None)):
-            raise HextileClientError("Selected input grant required", status_code=422, kind="other")
+        if source["kind"] == "local_path":
+            paths = [source["path"]] if "path" in source else source.get("paths")
+            if (("path" in source) == ("paths" in source) or type(paths) is not list or not 1 <= len(paths) <= 1024
+                    or any(type(path) is not str or not Path(path).is_absolute() for path in paths)
+                    or any(type(source[k]) is not int or source[k] < 1 for k in ("fps_num", "fps_den") if k in source)):
+                raise HextileClientError("Expected absolute local task paths and positive FPS", status_code=422, kind="other")
         if (source["kind"] == "sequence_range" and
                 (type(source["start_index"]) is not int or type(source["end_index"]) is not int
                  or source["end_index"] < source["start_index"])):
@@ -2412,7 +2420,7 @@ class Client:
     def set_shader_resource(self, args: Mapping[str, Any]) -> dict:
         required = {"shader", "project_context_witness", "request_id", "base", "expected_working_digest", "action", "slot_id"}
         optional = {"staged_token", "filter", "edge_u", "edge_v", "time_mode", "end_mode", "hold_index",
-                    "library_intent", "confirmation_scope", "studio_surface_id", "lease_id", "expected_edit_sequence"}
+                    "library_intent", "confirmation_scope", "studio_surface_id", "expected_edit_sequence"}
         if args.get("action") not in {"attach", "replace", "locate", "remove", "settings"}:
             raise HextileClientError("Unknown resource action", status_code=422, kind="other")
         if (args["action"] in {"attach", "replace", "locate"}) != ("staged_token" in args):
@@ -2498,8 +2506,7 @@ class Client:
         return receipt
 
     def _mounted_shader_action(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
-        common = {"shader", "project_context_witness", "studio_surface_id", "lease_id",
-                  "request_id", "expected_edit_sequence"}
+        common = {"shader", "project_context_witness", "studio_surface_id", "request_id", "expected_edit_sequence"}
         extras = ({"action", "seed", "capture_defaults"} if operation == "shader_set_capture" else
                   {"action", "bpm", "speed"} if operation == "shader_control_clock" else
                   {"target"} if operation == "shader_open_asset" else
@@ -2517,7 +2524,7 @@ class Client:
                 or ref["origin"] not in {"builtin", "user", "project"}
                 or type(ref["shaderId"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ref["shaderId"])
                 or any(type(args[key]) is not str or not 1 <= len(args[key]) <= 256
-                       for key in ("project_context_witness", "studio_surface_id", "lease_id"))
+                       for key in ("project_context_witness", "studio_surface_id"))
                 or type(args["expected_edit_sequence"]) is not int or not 0 <= args["expected_edit_sequence"] <= 2**53 - 1):
             raise HextileClientError("Invalid mounted Shader owner", kind="other", status_code=422)
         if operation == "shader_set_capture":
@@ -2656,7 +2663,7 @@ class Client:
                 kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
                 **({"scope": "creation"} if action == "paste" else {"shader": source})})
         if action == "paste":
-            if not _valid_shader_paste_status(result, args, complete=True):
+            if not _valid_shader_creation_status(result, args, complete=True):
                 raise HextileClientError("Shader Paste acknowledgement unknown; read original creation status.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
                     "scope": "creation"})
@@ -2670,16 +2677,20 @@ class Client:
         return self._create_shader_asset(args, "fork")
 
     def import_shader_bundle(self, args: Mapping[str, Any]) -> dict:
-        if not isinstance(args, Mapping) or set(args) != {"request_id", "shader", "project_context_witness",
-                                                        "grant_id", "bundle_sha256", "collision_intent"}:
-            raise HextileClientError("Expected closed Shader Bundle grant", kind="other", status_code=422)
-        _native_shader_args("status", {key: args[key] for key in
-            ("shader", "project_context_witness", "request_id")})
-        if (type(args["grant_id"]) is not str or re.fullmatch(r"sbg_[0-9a-f]{32}", args["grant_id"]) is None
-                or type(args["bundle_sha256"]) is not str
-                or _WORKSPACE_DIGEST.fullmatch(args["bundle_sha256"]) is None
-                or args["collision_intent"] != "fork"):
-            raise HextileClientError("Invalid Shader Bundle grant", kind="other", status_code=422)
+        required = {"request_id", "project_context_witness", "input_path", "collision_intent"}
+        if (not isinstance(args, Mapping) or required - args.keys() or set(args) - required - {"bundle_sha256"}
+                or args["collision_intent"] != "fork" or type(args["input_path"]) is not str
+                or not Path(args["input_path"]).is_absolute() or Path(args["input_path"]).suffix.lower() != ".hexshader"
+                or type(args["project_context_witness"]) is not str or not args["project_context_witness"]
+                or "bundle_sha256" in args and (type(args["bundle_sha256"]) is not str
+                    or _WORKSPACE_DIGEST.fullmatch(args["bundle_sha256"]) is None)):
+            raise HextileClientError("Expected closed Shader Bundle task input", kind="other", status_code=422)
+        try:
+            valid_id = str(uuid.UUID(args["request_id"])) == args["request_id"] and uuid.UUID(args["request_id"]).version == 4
+        except (ValueError, TypeError, AttributeError):
+            valid_id = False
+        if not valid_id:
+            raise HextileClientError("Expected canonical request_id", kind="other", status_code=422)
         try:
             result = self.request_json("POST", "/api/shaders/agent-operations/import-bundle", dict(args))
         except HextileClientError as exc:
@@ -2687,14 +2698,11 @@ class Client:
                 raise HextileClientError("Shader Bundle import outcome unknown; read shader_get_operation by original request ID.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
             raise
-        if type(result) is not dict or result.get("request_id") != args["request_id"] or result.get(
-                "operation") != "shader_import_bundle" or result.get("state") not in {
-                    "saved", "pending", "unknown", "refused", "expired"}:
+        if (not _valid_shader_creation_status(result, args, complete=False)
+                or result["operation"] != "shader_import_bundle"
+                or result["state"] == "saved" and "bundle_sha256" in args
+                    and result["receipt"]["bundle_sha256"] != args["bundle_sha256"]):
             raise HextileClientError("Shader Bundle import acknowledgement unknown; read shader_get_operation.",
-                kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]})
-        if result["state"] == "saved" and (type(result.get("receipt")) is not dict
-                or result["receipt"].get("bundle_sha256") != args["bundle_sha256"]):
-            raise HextileClientError("Shader Bundle import receipt changed; read shader_get_operation.",
                 kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]})
         return result
 
@@ -2720,7 +2728,7 @@ class Client:
             params={**({"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"]}
                        if "shader" in args else {}), "scope": scope,
                     "project_context_witness": args["project_context_witness"]})
-        if scope == "creation" and not _valid_shader_paste_status(result, args, complete=False):
+        if scope == "creation" and not _valid_shader_creation_status(result, args, complete=False):
             raise HextileClientError("Invalid Shader creation status", kind="other")
         if scope == "output":
             expected = {"schema", "request_id", "operation", "state", "shader",
@@ -2731,14 +2739,14 @@ class Client:
             except (TypeError, ValueError, OverflowError):
                 bounded = False
             if (type(result) is not dict or not expected <= set(result)
-                    or set(result) - expected - {"receipt"}
+                    or set(result) - expected - {"receipt", "reason", "output_path", "destination_project"}
                     or result["schema"] != 1 or result["request_id"] != args["request_id"]
                     or result["scope"] != "output" or result["shader"] != args["shader"]
                     or result["project_context_witness"] != args["project_context_witness"]
                     or type(result["operation"]) is not str
                     or result["operation"] not in {"shader_export_bundle", "shader_export_to_project"}
                     or type(result["state"]) is not str
-                    or result["state"] not in {"unknown", "saved", "applied"}
+                    or result["state"] not in {"unknown", "saved", "applied", "refused"}
                     or not bounded):
                 raise HextileClientError("Invalid Shader output status", kind="other")
             if "receipt" in result:
@@ -2748,13 +2756,12 @@ class Client:
 
     def get_shader_credits(self, args: Mapping[str, Any]) -> dict:
         if not isinstance(args, Mapping) or set(args) - {
-                "shader", "project_context_witness", "lease_id", "section", "cursor", "limit",
+                "shader", "project_context_witness", "section", "cursor", "limit",
                 "text_ref", "offset_utf8"}:
             raise HextileClientError("Expected closed Shader credits page", status_code=422, kind="other")
         _native_read_args({key: args[key] for key in ("shader", "project_context_witness", "lease_id") if key in args},
-                          {"shader", "project_context_witness", "lease_id"})
-        if (type(args["lease_id"]) is not str or not 1 <= len(args["lease_id"]) <= 128
-                or args.get("section", "sources") not in {"sources", "contributors", "current_roles", "history",
+                          {"shader", "project_context_witness"})
+        if (args.get("section", "sources") not in {"sources", "contributors", "current_roles", "history",
                                                           "retained_credits", "notices", "text"}
                 or ("text_ref" in args and (args.get("section") != "text" or type(args["text_ref"]) is not str
                      or re.fullmatch(r"ct1:sha256:[0-9a-f]{64}:(top|notices|retained_credits):[0-9]+:[a-z_]+", args["text_ref"]) is None))
@@ -2765,7 +2772,7 @@ class Client:
                 or ("limit" in args and (type(args["limit"]) is not int or not 1 <= args["limit"] <= 32))):
             raise HextileClientError("Invalid Shader credits page", status_code=422, kind="other")
         params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
-                  "project_context_witness": args["project_context_witness"], "lease_id": args["lease_id"]}
+                  "project_context_witness": args["project_context_witness"]}
         params.update({key: args[key] for key in ("section", "cursor", "limit", "text_ref", "offset_utf8") if key in args})
         result = self.request_json("GET", "/api/shaders/agent-operations/credits", params=params)
         allowed = {"schema", "target", "provenance_hash", "author", "attribution", "license",
@@ -2816,14 +2823,13 @@ class Client:
         return result
 
     def propose_shader_credits(self, args: Mapping[str, Any]) -> dict:
-        required = {"shader", "project_context_witness", "lease_id", "request_id", "base",
+        required = {"shader", "project_context_witness", "request_id", "base",
                     "working_digest", "expected_provenance_hash", "changes"}
         if not isinstance(args, Mapping) or set(args) != required:
             raise HextileClientError("Expected closed Shader credits proposal", status_code=422, kind="other")
         _native_shader_args("status", {key: args[key] for key in ("shader", "project_context_witness", "request_id")})
         base = args["base"]
-        if (type(args["lease_id"]) is not str or not 1 <= len(args["lease_id"]) <= 128
-                or type(base) is not dict or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
+        if (type(base) is not dict or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
                 or base["kind"] != "saved" or type(base["working_revision"]) is not int
                 or base["working_revision"] < 1 or any(type(base[key]) is not str or
                     _WORKSPACE_DIGEST.fullmatch(base[key]) is None for key in ("document_hash", "source_hash"))
@@ -2852,10 +2858,9 @@ class Client:
         return result
 
     def research_shader_sources(self, args: Mapping[str, Any]) -> dict:
-        _native_read_args(args, {"shader", "project_context_witness", "lease_id", "source_url"}, {"links"})
+        _native_read_args(args, {"shader", "project_context_witness", "source_url"}, {"links"})
         links = args.get("links", [])
-        if (type(args["lease_id"]) is not str or not 1 <= len(args["lease_id"]) <= 128
-                or type(args["source_url"]) is not str or not 1 <= len(args["source_url"].encode("utf-8")) <= 2048
+        if (type(args["source_url"]) is not str or not 1 <= len(args["source_url"].encode("utf-8")) <= 2048
                 or type(links) is not list or len(links) > 4
                 or any(type(link) is not str or len(link.encode("utf-8")) > 2048 for link in links)):
             raise HextileClientError("Invalid source research URLs", status_code=422, kind="other")

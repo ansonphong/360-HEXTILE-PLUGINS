@@ -53,6 +53,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 
 | Tool | When to use | Mutates? |
 |------|-------------|----------|
+| `call_hextile_api` | Call the configured local native API with GET/POST/PATCH/PUT/DELETE at `/api/...`, or GET `/openapi.json`; optional query/body JSON. Named tools remain preferred. |
 | `get_capabilities` | Handshake before a session | no |
 | `get_live_context` | Studio snapshot (follow + doc_generation + live export) | no |
 | `apply_config_delta` | Live delta on the open file (follow ON). Never queues | **yes** |
