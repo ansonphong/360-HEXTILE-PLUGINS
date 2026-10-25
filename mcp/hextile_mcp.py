@@ -3366,8 +3366,13 @@ class HextileMcpServer:
         progress_token: Any = None,
         operation_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        sequence_recovery = name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
+            name in {"control_fractal_sequence", "control_shader_sequence"}
+            and isinstance(arguments, dict) and arguments.get("action") in ("stop", "cancel_export")
+        )
         if (
             not self.internal_mode
+            and not sequence_recovery
             and getattr(self.client, "_opener", None) is None
             and name != "call_hextile_api"
             and name not in _LOCAL_FILE_DIAGNOSTICS
