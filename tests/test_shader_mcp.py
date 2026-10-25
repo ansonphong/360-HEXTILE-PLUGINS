@@ -2058,4 +2058,3 @@ def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls()
                      "human Fractal grant", "session selected and follow_ready", "Follow and whole-source"):
         assert obsolete not in catalog_text
     assert all("lease_id" not in row["inputSchema"].get("properties", {}) for row in TOOLS + SHADER_EXTENSION_TOOLS)
-

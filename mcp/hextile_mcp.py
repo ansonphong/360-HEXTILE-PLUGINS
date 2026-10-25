@@ -2896,7 +2896,7 @@ _parameter_tool["inputSchema"]["oneOf"] = [
     {"properties": {"operation": {"const": "submit"}},
      "required": ["witness", "parameter_id", "value"]},
 ]
-TOOLS.insert(0, _tool_def("call_hextile_api", "Call the configured local Hextile native API. Named tools remain preferred. No mutation retry; recover an uncertain result through its native status API.",
+TOOLS.insert(0, _tool_def("call_hextile_api", "Call the configured local Hextile native API with relative /api/... paths, or GET /openapi.json. Named tools remain preferred. No mutation retry; recover an uncertain result through its native status API.",
     {"method": {"enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]},
      "path": {"type": "string", "minLength": 1},
      "query": {"type": "object"}, "body": {}}, ["method", "path"]))
