@@ -20,7 +20,7 @@ from contextvars import ContextVar
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Optional
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
@@ -60,6 +60,12 @@ _OUTPUT_OWNER = {"request_id", "shader", "project_context_witness", "base",
                  "studio_surface_id", "expected_edit_sequence"}
 
 
+def _absolute_task_path(value: Any) -> bool:
+    """Native task syntax is independent of the MCP host filesystem."""
+    return type(value) is str and (PureWindowsPath(value).is_absolute()
+                                  or PurePosixPath(value).is_absolute())
+
+
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                            *, mutation: bool = False) -> dict:
     """Close the native output boundary, retaining its actual task destination."""
@@ -76,7 +82,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
             raise invalid()
         keys = set(result)
         for field in ("output_path", "destination_project"):
-            if field in result and (type(result[field]) is not str or not Path(result[field]).is_absolute()):
+            if field in result and not _absolute_task_path(result[field]):
                 raise invalid()
 
         if operation in {"preview", "preflight"}:
@@ -310,7 +316,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Unsupported closed Shader output settings", status_code=422, kind="other")
     for field in ("output_path", "destination_project"):
         value = args.get("output", {}).get(field) if operation == "preflight" else args.get(field)
-        if value is not None and (type(value) is not str or not Path(value).is_absolute()):
+        if value is not None and not _absolute_task_path(value):
             raise HextileClientError("Expected absolute task destination", status_code=422, kind="other")
     if operation == "get_preview" and "image" in args and type(args["image"]) is not bool:
         raise HextileClientError("Image opt-in must be boolean", status_code=422, kind="other")
@@ -2362,7 +2368,7 @@ class Client:
         if source["kind"] == "local_path":
             paths = [source["path"]] if "path" in source else source.get("paths")
             if (("path" in source) == ("paths" in source) or type(paths) is not list or not 1 <= len(paths) <= 1024
-                    or any(type(path) is not str or not Path(path).is_absolute() for path in paths)
+                    or any(not _absolute_task_path(path) for path in paths)
                     or any(type(source[k]) is not int or source[k] < 1 for k in ("fps_num", "fps_den") if k in source)):
                 raise HextileClientError("Expected absolute local task paths and positive FPS", status_code=422, kind="other")
         if (source["kind"] == "sequence_range" and
@@ -2673,7 +2679,7 @@ class Client:
         required = {"request_id", "project_context_witness", "input_path", "collision_intent"}
         if (not isinstance(args, Mapping) or required - args.keys() or set(args) - required - {"bundle_sha256"}
                 or args["collision_intent"] != "fork" or type(args["input_path"]) is not str
-                or not Path(args["input_path"]).is_absolute() or Path(args["input_path"]).suffix.lower() != ".hexshader"
+                or not _absolute_task_path(args["input_path"]) or Path(args["input_path"]).suffix.lower() != ".hexshader"
                 or type(args["project_context_witness"]) is not str or not args["project_context_witness"]
                 or "bundle_sha256" in args and (type(args["bundle_sha256"]) is not str
                     or _WORKSPACE_DIGEST.fullmatch(args["bundle_sha256"]) is None)):

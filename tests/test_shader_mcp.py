@@ -15,7 +15,7 @@ from copy import deepcopy
 
 import jsonschema
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from unittest import mock
 
@@ -33,6 +33,8 @@ def _schema(name: str) -> dict[str, Any]:
 
 
 def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatch) -> None:
+    # The MCP host may be Linux while the APP owns Windows-native paths.
+    monkeypatch.setattr("hextile_client.Path", PurePosixPath)
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     descriptor = lambda name: next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == name)
     names = {item["name"] for item in SHADER_EXTENSION_TOOLS}
@@ -91,6 +93,26 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
         client.preflight_shader_still({**still, "output": {**still["output"], "path": "C:/pixels.exr"}})
     with pytest.raises(HextileClientError):
         client.preflight_shader_still({**still, "profile": ["png-master/1"]})
+    for destination in (r"C:\out\frame.hexshader", "C:/out/frame.hexshader",
+                        r"\\server\share\frame.hexshader", "/data/frame.hexshader"):
+        bundle = {**owner, "output_path": destination, "expected_looks": [], "expected_provenance_hash": None}
+        saved = {"request_id": request_id, "state": "saved", "output_name": "frame.hexshader",
+                 "output_path": destination, "resource_count": 0, "resource_bytes": 0}
+        monkeypatch.setattr(client, "request_json", lambda *a, row=saved, **k: row)
+        assert client.export_shader_bundle(bundle) == saved
+        project = {**owner, "destination_project": destination.rsplit("/", 1)[0] if "/" in destination else destination.rsplit("\\", 1)[0]}
+        copied = {"request_id": request_id, "state": "accepted", "shader_id": "copied", "target_name": "Project",
+                  "destination_project": project["destination_project"]}
+        monkeypatch.setattr(client, "request_json", lambda *a, row=copied, **k: row)
+        assert client.export_shader_to_project(project) == copied
+        monkeypatch.setattr(client, "request_json", lambda *a, row={**saved, "output_path": "relative.hexshader"}, **k: row)
+        with pytest.raises(HextileClientError): client.export_shader_bundle(bundle)
+        monkeypatch.setattr(client, "request_json", lambda *a, row={**copied, "destination_project": "relative"}, **k: row)
+        with pytest.raises(HextileClientError): client.export_shader_to_project(project)
+    for relative in ("relative/file.hexshader", r"C:file.hexshader", r"\file.hexshader"):
+        with pytest.raises(HextileClientError): client.export_shader_bundle({**bundle, "output_path": relative})
+        with pytest.raises(HextileClientError): client.export_shader_to_project({**project, "destination_project": relative})
+        with pytest.raises(HextileClientError): client.preflight_shader_still({**still, "output": {**still["output"], "output_path": relative}})
     image_args = {"shader": shader, "project_context_witness": "w", "request_id": request_id, "image": True}
     monkeypatch.setattr(client, "request_shader_preview_image", lambda *_a: b"\x89PNG\r\n\x1a\nFAKE")
     result = HextileMcpServer(client=client).call_tool("shader_get_preview", image_args)
@@ -231,6 +253,8 @@ def test_shader_output_original_status_refuses_private_result(monkeypatch) -> No
 
 
 def test_resource_and_library_extensions_have_closed_explicit_transport(monkeypatch) -> None:
+    # The MCP host may be Linux while the APP owns Windows-native paths.
+    monkeypatch.setattr("hextile_client.Path", PurePosixPath)
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     names = {item["name"] for item in SHADER_EXTENSION_TOOLS}
     assert {"shader_stage_resource", "shader_set_resource", "shader_get_library_organization",
@@ -263,6 +287,11 @@ def test_resource_and_library_extensions_have_closed_explicit_transport(monkeypa
     monkeypatch.setattr(client, "request_json", reply)
     assert len(client.stage_shader_resource(stage)["frames"]) == 2
     assert calls[-1][1].endswith("/resources/stage")
+    for native in (r"C:\frames\one.png", "C:/frames/one.png", r"\\server\share\one.png", "/frames/one.png"):
+        assert client.stage_shader_resource({**stage, "source": {"kind": "local_path", "path": native}})["frame_count"] == 2
+        assert calls[-1][2]["source"]["path"] == native
+    for relative in ("frames/one.png", r"C:one.png", r"\one.png"):
+        with pytest.raises(HextileClientError): client.stage_shader_resource({**stage, "source": {"kind": "local_path", "path": relative}})
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
     mutation = {**target, "request_id": request_id, "action": "attach", "slot_id": "input1",
                 "staged_token": "stage", "library_intent": "saved",
@@ -545,6 +574,8 @@ def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:
 
 
 def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) -> None:
+    # The MCP host may be Linux while the APP owns Windows-native paths.
+    monkeypatch.setattr("hextile_client.Path", PurePosixPath)
     client = Client("http://127.0.0.1:9")
     digest = "sha256:" + "b" * 64
     args = {"request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea", "project_context_witness": "wit",
@@ -561,6 +592,11 @@ def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) 
     assert client.import_shader_bundle(args) == receipt
     assert calls[-1][:3] == ("POST", "/api/shaders/agent-operations/import-bundle", args)
     assert client.import_shader_bundle({**args, "bundle_sha256": digest}) == receipt
+    for native in (r"C:\task\input.hexshader", "C:/task/input.hexshader", r"\\server\share\input.hexshader", "/data/input.hexshader"):
+        assert client.import_shader_bundle({**args, "input_path": native}) == receipt
+        assert calls[-1][2]["input_path"] == native
+    for relative in ("input.hexshader", r"C:input.hexshader", r"\input.hexshader"):
+        with pytest.raises(HextileClientError): client.import_shader_bundle({**args, "input_path": relative})
     assert client.get_shader_operation({"request_id": args["request_id"], "scope": "creation",
         "project_context_witness": "wit"}) == receipt
     for changed in ({"input_path": "relative.hexshader"}, {"collision_intent": "replace"},
