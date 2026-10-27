@@ -128,7 +128,7 @@ run_workflow(same)
 get_status(run_id)
 ```
 
-Builtin default is 4×. Omit `upscale` unless the user asked for 2×. `cancel_run` before a second heavy GPU job.
+Builtin default is 4×. Omit `upscale` unless the user asked for 2×. Request `cancel_run` only when replacement is authorized, then observe the original job and GPU-holder drain before a second heavy job; a cancellation acknowledgement is not settlement.
 
 ## Recipe F — Upres folder or video
 
