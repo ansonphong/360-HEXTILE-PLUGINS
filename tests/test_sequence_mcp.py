@@ -616,3 +616,8 @@ def test_native_render_new_semantics_require_advertised_contract() -> None:
         client.render_shader_sequence(body)
     assert error.value.status_code == 501
     assert seen == [f"{BASE}/api/workflows/capabilities"]
+    capture = {"producer": "mounted_shader_writer", "requires_finished_frame": True,
+               "caller_supplied_packets": False, "allow_unpreviewed_revision": True}
+    native = {"contract": "native-render/1", "sequences": {}, "stills": {},
+              "still_capture": capture}
+    assert _client({}, {"native_render": native}).get_capabilities()["native_render"]["still_capture"] == capture

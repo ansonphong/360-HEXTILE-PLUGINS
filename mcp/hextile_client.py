@@ -67,6 +67,24 @@ def _absolute_task_path(value: Any) -> bool:
                                   or PurePosixPath(value).is_absolute())
 
 
+def _safe_output_leaf(name: Any, suffixes: set[str]) -> bool:
+    """The native writer's portable leaf rule, with a profile-specific suffix."""
+    if (type(name) is not str or not 1 <= len(name) <= 255
+            or name[-1] in {".", " "}
+            or any(ord(char) < 32 or char in '<>:"/\\|?*' for char in name)
+            or PureWindowsPath(name).is_reserved()
+            or re.match(r"^(?:COM|LPT)[1-9¹²³](?:\.|$)", name, re.I)):
+        return False
+    return PureWindowsPath(name).suffix.lower() in suffixes
+
+
+def _safe_task_output_path(value: Any, suffixes: set[str]) -> bool:
+    if not _absolute_task_path(value) or len(value) > 4096:
+        return False
+    native = PureWindowsPath(value) if PureWindowsPath(value).is_absolute() else PurePosixPath(value)
+    return _safe_output_leaf(native.name, suffixes)
+
+
 def _native_pose(output: Mapping[str, Any]) -> bool:
     return all(type(output[key]) in (int, float) and math.isfinite(output[key])
                and lo <= output[key] <= hi for key, lo, hi in
@@ -76,8 +94,10 @@ def _native_pose(output: Mapping[str, Any]) -> bool:
 
 def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
     if (not {"projection", "encoding", "output_path"} <= set(output)
-            or not _absolute_task_path(output["output_path"])
             or output["encoding"] not in {"png", "jpg"}):
+        return False
+    if not _safe_task_output_path(output["output_path"],
+                                  {".png"} if output["encoding"] == "png" else {".jpg", ".jpeg"}):
         return False
     if output["projection"] == "equirectangular":
         return (set(output) == {"projection", "encoding", "output_path", "width", "height"}
@@ -104,7 +124,7 @@ def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
     return (projection in {"fulldome", "fulldome_angular"}
             and output["width"] == output["height"]
             and output["width"] in {1024, 2048, 4096, 8192}
-            and _absolute_task_path(output.get("output_path"))
+            and _safe_task_output_path(output.get("output_path"), {".exr"})
             and _native_pose(output))
 
 
@@ -131,12 +151,15 @@ def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
                 or "fov_deg" not in output
                 or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file"}):
             return False
-    extension = ("png", "jpg") if raster else ("png",)
-    return (_native_pose(output)
-            and ("file" not in output or type(output["file"]) is str
-                 and re.fullmatch(r"(?:domes/)?[A-Za-z0-9][A-Za-z0-9_.-]{0,179}\."
-                                  + "(?:" + "|".join(extension) + r")", output["file"]) is not None
-                 and ("/" not in output["file"] if raster else output["file"].startswith("domes/"))))
+    if not _native_pose(output):
+        return False
+    if "file" not in output:
+        return True
+    file = output["file"]
+    if raster:
+        suffixes = {".png"} if output["encoding"] == "png" else {".jpg", ".jpeg"}
+        return _safe_output_leaf(file, suffixes)
+    return (type(file) is str and re.fullmatch(r"domes/[A-Za-z0-9_-]{1,64}\.png", file) is not None)
 
 
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
@@ -217,8 +240,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     or "publication" in result and result["publication"] not in {
                          "unknown", "complete", "failed", "queued", "processing", "completed",
                          "cancelled", "stop_requested", "stopped", "Interrupted"}
-                    or "output_name" in result and (type(result["output_name"]) is not str
-                         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,160}", result["output_name"]) is None)):
+                    or "output_name" in result and type(result["output_name"]) is not str):
                 raise invalid()
             job = result["job"]
             if type(job) is not dict:
@@ -258,6 +280,14 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
             if (type(job_id) is not str or re.fullmatch(r"[0-9a-f]{32}", job_id) is None
                     or type(job["progress"]) not in (int, float)
                     or not math.isfinite(job["progress"]) or not 0 <= job["progress"] <= 1):
+                raise invalid()
+            suffixes = ({".exr"} if profile == "shader-linear-rgba-exr/1" else
+                        {".png"} if profile in {"png-master/1", "dome-png/1"} else
+                        {".png"} if type(job.get("output")) is dict and job["output"].get("encoding") == "png"
+                        else {".jpg", ".jpeg"} if type(job.get("output")) is dict and job["output"].get("encoding") == "jpg"
+                        else {".png", ".jpg", ".jpeg"})
+            if ("output_name" in result and not _safe_output_leaf(result["output_name"], suffixes)
+                    or "output_path" in result and not _safe_task_output_path(result["output_path"], suffixes)):
                 raise invalid()
         elif operation == "bundle":
             if (keys != {"request_id", "state", "output_name", "output_path", "resource_count", "resource_bytes"}
@@ -385,6 +415,13 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
         value = args.get("output", {}).get(field) if operation == "preflight" else args.get(field)
         if value is not None and not _absolute_task_path(value):
             raise HextileClientError("Expected absolute task destination", status_code=422, kind="other")
+        if operation == "preflight" and field == "output_path" and value is not None:
+            profile = args["profile"]
+            suffixes = ({".exr"} if profile == "shader-linear-rgba-exr/1" else
+                        {".png"} if profile in {"png-master/1", "dome-png/1"} else
+                        {".png"} if args["output"]["encoding"] == "png" else {".jpg", ".jpeg"})
+            if not _safe_task_output_path(value, suffixes):
+                raise HextileClientError("Invalid native output filename", status_code=422, kind="other")
     if operation == "get_preview" and "image" in args and type(args["image"]) is not bool:
         raise HextileClientError("Image opt-in must be boolean", status_code=422, kind="other")
     if "allow_unpreviewed_revision" in args and type(args["allow_unpreviewed_revision"]) is not bool:
