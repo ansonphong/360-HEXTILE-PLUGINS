@@ -17,7 +17,7 @@ For Fractal Workshop, invoke the installed **`fractal`** skill. It owns fresh co
 
 Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply. `get_local_access_status` reports only the MCP connection state.
 
-- Copilot cannot start a Render run (`REFUSE_RENDER_COPILOT`). Press RENDER, or use `run_workflow` here. Approved Generate Layer can start its separate Layers GPU job.
+- Studio chat does not start an ordinary Render run (`REFUSE_RENDER_COPILOT`). Press RENDER or use discovered `run_workflow`; available in-app Automation can run it after exact approval. Generate Layer uses a separate guarded Layers GPU job.
 - Connected MCP live-apply (`apply_config_delta`) targets the actual current document. Independent Copilot conversation modes remain separate.
 - MCP cannot `goto` or arm/operate an open Layers session (`REFUSE_NAV_MCP`, `REFUSE_LAYERS_MCP`).
   The seven Generate Layer tools below are the narrow saved-render exception; live target requires an approved in-app Copilot turn.
