@@ -14,7 +14,7 @@ For Fractal Workshop, invoke the installed **`fractal`** skill. It owns fresh co
 
 Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply. `get_local_access_status` reports only the MCP connection state.
 
-- Copilot never queues GPU (`REFUSE_RENDER_COPILOT`). Press RENDER, or use `run_workflow` here.
+- Copilot cannot start a Render run (`REFUSE_RENDER_COPILOT`). Press RENDER, or use `run_workflow` here. Approved Generate Layer can start its separate Layers GPU job.
 - Connected MCP live-apply (`apply_config_delta`) targets the actual current document. Independent Copilot conversation modes remain separate.
 - MCP cannot `goto` or arm/operate an open Layers session (`REFUSE_NAV_MCP`, `REFUSE_LAYERS_MCP`).
   The seven Generate Layer tools below are the narrow saved-render exception; live target requires an approved in-app Copilot turn.
@@ -75,7 +75,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `get_logs` | Fetch failed-run logs | no |
 | `list_runs` | Find jobs if you lost `run_id` | no |
 | `search_library_prompts` | Search saved render/sequence prompt text; page exact IDs and snippets with `cursor` | no |
-| `cancel_run` | Kill a long GPU run | **yes** |
+| `cancel_run` | Request cancellation of a Render run | **yes** |
 | `retry_run` | Retry a crashed/failed run; `vram_recovery=true` explicitly permits guarded idle-holder eviction for that exact render | **yes** |
 | `list_360_loras` | Discover `path` + `base_model` for seeds | no |
 | `generate_seed` | Submit a 360-LoRA job with a caller-supplied UUID | **yes** |
@@ -121,7 +121,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `remove_hotkey_binding` | Remove one assigned Hotkey chord | **yes** |
 | `restore_hotkey` | Restore one Hotkey to its factory bindings | **yes** |
 | `reset_hotkeys` | Clear Hotkey binding overrides; the single-key switch stays | **yes** |
-| `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. Source and resolved authoring bytes require include_source/grant; include_formula is separate. No Import, delete, or Apply | no |
+| `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. include_source selects source/resolved authoring bytes; include_formula separately selects formulas. MCP enablement authorizes access; native identity and bounds still apply. No Import, delete, or Apply | no |
 | `get_shader_parameters` | Read current mounted parameter IDs, values, bounds, exact witness and native `writable` state | no |
 | `set_shader_parameter` | Connected MCP edits the actual current writer. Use `operation=status` with the original `client_request_id` after an uncertain reply, even if selection changes. `applied` acknowledges an edit, not Save | **yes** |
 | `propose_shader` | Post a legacy shader candidate or Board, preserving Playable convention/envelope bytes and declarations in every row. Complete controls use the attested workspace. No prepare, consume, Import, delete, or Board Accept | **yes** |
@@ -278,7 +278,7 @@ Never write retired source types (`pattern`, `360_lora`, …) into render-time `
 | Error contains “isn't running” / “Launch 360 Hextile” | Backend not up | Launch 360 Hextile, then retry |
 | “Upgrade 360 Hextile (needs workflows/run)” | App too old | Update the app to a build with workflow run |
 | HTTP 422 with validation detail | Bad overrides / missing input | Fix overrides; re-validate |
-| HTTP 402 | License gate | Activate license in Settings |
+| HTTP 402 | License gate | Open Help > License… and follow the access result |
 | HTTP 409 on save | Id already exists | New id, or delete only if the user asked |
 
 The MCP process **stays up** when the app is down. Retry tools after launch — do not restart the agent session unless the user asks.

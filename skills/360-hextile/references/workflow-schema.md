@@ -12,14 +12,14 @@ Validated by APP `HextileConfig`. The MCP never merges or validates as authority
 |-------|------|
 | `schema_version` | Usually `prompt-data-model-v2` |
 | `pipeline` | Model family id, e.g. `sd21`, `sdxl`, `flux_schnell`, `realesrgan` |
-| `hextile` | Template + tile sizes (`template` like `Hextile_20_2K`) |
+| `hextile` | Template + tile sizes (`template` like `Dodecahedron`) |
 | `input` | `source` is **`file` or `render` only**. `path` must be non-empty for a **live** run |
 | `diffusion` | `model`, `seed` (`-1` random), `strength`, `guidance_scale`, `num_inference_steps` |
 | `prompt` | At least `prompt.global`. Tile / directional prompts optional |
 | `output` | Width/height, `file_format`, optional `path` |
 | `passes` | Optional multipass list (max 10). Arrays **replace wholesale** on merge |
-| `upscaling` | Optional. `scale_factor` is `2` or `4` |
-| `tiles`, `sequence`, `coverage`, `post_processing` | Optional |
+| `upscale` | Optional. `scale_factor` is `2` or `4` |
+| `tiles`, `sequence`, `coverage`, `post_process` | Optional |
 
 Retired render-time `input.source` values (`pattern`, `360_lora`, `solid_color`, `marble`, `blockade`) coerce to `file`. Do not write them.
 

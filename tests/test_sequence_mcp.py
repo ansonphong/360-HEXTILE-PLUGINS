@@ -44,8 +44,8 @@ SEQUENCE_TOOLS = (
 FULL_CONFIG: dict[str, Any] = {
     "pipeline": "realesrgan",
     "hextile": {
-        "template": "Hextile_20_2K",
-        "rendertiles": "all",
+        "template": "Dodecahedron",
+        "render_tiles": "all",
         "tile_input_width": 512,
         "tile_output_width": 512,
     },
@@ -64,7 +64,7 @@ FULL_CONFIG: dict[str, Any] = {
         "width": 2048,
         "height": 1024,
     },
-    "upscaling": {
+    "upscale": {
         "model": "realesrgan-x4plus",
         "scale_factor": 4,
         "tile_size": 0,
@@ -79,10 +79,10 @@ FULL_CONFIG: dict[str, Any] = {
     "prompt": {
         "global": "identity-check",
         "negative": "blurry",
-        "directional": {"mode": "none", "points": []},
+        "directional": {"enabled": False},
     },
-    "post_processing": [],
-    "sequence": {"enabled": True},
+    "post_process": {"enabled": False, "hooks": []},
+    "sequence": {"enabled": False},
 }
 
 BASE = "http://hextile.test"
@@ -155,10 +155,10 @@ def test_create_sequence_posts_full_config_lossless() -> None:
     assert body["name"] == "upres-folder"
     assert body["config"] == FULL_CONFIG
     assert set(body["config"]) == set(FULL_CONFIG)
-    assert body["config"]["hextile"]["template"] == "Hextile_20_2K"
+    assert body["config"]["hextile"]["template"] == "Dodecahedron"
     assert body["config"]["diffusion"]["model"] == "realesrgan-x4plus"
     assert body["config"]["input"] == FULL_CONFIG["input"]
-    assert body["config"]["upscaling"] == FULL_CONFIG["upscaling"]
+    assert body["config"]["upscale"] == FULL_CONFIG["upscale"]
 
 
 def test_start_sequence_quotes_id() -> None:

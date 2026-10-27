@@ -122,13 +122,13 @@ Terminal statuses: `completed`, `failed`, `cancelled`, `crashed`. Stop uses `can
 get_capabilities
 validate_config(workflow_id=upres-still, origin=builtin, overrides={
   "input": {"path": "<absolute image path>", "source": "file"},
-  "upscaling": {"scale_factor": 2 or 4}
+  "upscale": {"scale_factor": 2 or 4}
 })
 run_workflow(same)
 get_status(run_id)
 ```
 
-Builtin default is 4×. Omit `upscaling` unless the user asked for 2×. `cancel_run` before a second heavy GPU job.
+Builtin default is 4×. Omit `upscale` unless the user asked for 2×. `cancel_run` before a second heavy GPU job.
 
 ## Recipe F — Upres folder or video
 
@@ -142,8 +142,8 @@ get_workflow(origin=builtin, id=upres-still)
 # If pipeline is top-level, that object is the document.
 # If nested document.pipeline exists, use that nested object.
 # Patch input.mode=sequence, input.path=<folder>, input.source=file,
-# optional upscaling.scale_factor 2 or 4.
-# Never POST a partial {pipeline, input, upscaling} stub — 422.
+# optional upscale.scale_factor 2 or 4.
+# Never POST a partial {pipeline, input, upscale} stub — 422.
 create_sequence({folder_path, config: patched document})
 start_sequence
 get_sequence   # poll while queued or processing

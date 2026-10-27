@@ -1428,7 +1428,7 @@ def test_get_guide_reads_real_markdown() -> None:
     assert "accepted snapshot only" in guides["best-practices"]
     assert "source_files" in guides["recipes"]
     assert "register a new canonical change ID" in guides["recipes"]
-    assert "only the human Applies" in guides["recipes"]
+    assert "APP automatically Applies" in guides["recipes"]
     assert "metadata/config" in guides["workflow-schema"]
     assert "No GLSL bodies belong in durable JSON" in guides["workflow-schema"]
     assert "source-modules/1" in guides["workflow-schema"]
@@ -1444,7 +1444,8 @@ def test_get_guide_reads_real_markdown() -> None:
     assert "input.source" in body or "`file` or `render`" in body
     site = load_guide("website-index")
     assert "360hextile.com/docs/hextile/" in site["markdown"]
-    assert "/docs/automation" in site["markdown"]  # says there is NO such page
+    assert "get_guide" in site["markdown"]
+    assert "https://360hextile.com/docs/user-guide/storage-and-backup" in site["markdown"]
     client = Client(opener=lambda *_a, **_k: pytest.fail("guides must be local"))
     client.post_activity = mock.Mock()  # APP telemetry is independent of local guide reads.
     server = HextileMcpServer(client=client)
