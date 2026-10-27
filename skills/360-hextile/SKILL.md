@@ -124,7 +124,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `remove_hotkey_binding` | Remove one assigned Hotkey chord | **yes** |
 | `restore_hotkey` | Restore one Hotkey to its factory bindings | **yes** |
 | `reset_hotkeys` | Clear Hotkey binding overrides; the single-key switch stays | **yes** |
-| `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. Source and resolved authoring bytes require include_source/grant; include_formula is separate. No Import, delete, or Apply | no |
+| `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. include_source selects source/resolved authoring bytes; include_formula separately selects formulas. MCP enablement authorizes access; native identity and bounds still apply. No Import, delete, or Apply | no |
 | `get_shader_parameters` | Read current mounted parameter IDs, values, bounds, exact witness and native `writable` state | no |
 | `set_shader_parameter` | Connected MCP edits the actual current writer. Use `operation=status` with the original `client_request_id` after an uncertain reply, even if selection changes. `applied` acknowledges an edit, not Save | **yes** |
 | `propose_shader` | Post a legacy shader candidate or Board, preserving Playable convention/envelope bytes and declarations in every row. Complete controls use the attested workspace. No prepare, consume, Import, delete, or Board Accept | **yes** |
