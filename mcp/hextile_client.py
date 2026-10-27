@@ -1705,7 +1705,8 @@ class Client:
         """GET /api/workflows/capabilities."""
         return self.get_json("/api/workflows/capabilities")
 
-    def _require_native_render(self, *, still_profile: str | None = None) -> None:
+    def _require_native_render(self, *, still_profile: str | None = None,
+                               fractal_still_capture: bool = False) -> None:
         """New native semantics require an explicitly advertised peer contract."""
         try:
             capabilities = self.get_capabilities()
@@ -1718,7 +1719,10 @@ class Client:
         if (type(native) is not dict or native.get("contract") != "native-render/1"
                 or type(native.get("sequences")) is not dict
                 or type(native.get("stills")) is not dict
-                or still_profile is not None and still_profile not in native["stills"]):
+                or still_profile is not None and still_profile not in native["stills"]
+                or fractal_still_capture and native.get("fractal_still_capture") != {
+                    "protocol": "fractal_capture/1", "producer": "mounted_finished_preview",
+                    "static_frame": True, "animated_sample": True}):
             raise HextileClientError("Native render contract unavailable on this APP peer",
                                      kind="other", status_code=501)
 
@@ -4249,7 +4253,7 @@ class Client:
         elif kind == "fractal_capture":
             if set(args) != {"client_request_id", "witness"}:
                 raise HextileClientError("Fractal capture takes only its original request and witness", kind="other", status_code=422)
-            self._require_native_render()
+            self._require_native_render(fractal_still_capture=True)
         else:
             allowed = {"client_request_id", "witness", "mode", "target_scene_id"}
             if not isinstance(args, Mapping) or not allowed <= set(args) <= allowed | {"name", "scene_revision"}:

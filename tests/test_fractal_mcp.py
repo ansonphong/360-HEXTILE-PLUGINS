@@ -784,7 +784,10 @@ def test_fractal_capture_known_mint_and_lost_ack_recover_original_request() -> N
     def opener(req: Any, timeout=None):
         seen.append(req)
         if req.full_url.endswith("/capabilities"):
-            return _Response({"native_render": {"contract": "native-render/1", "sequences": {}, "stills": {}}})
+            return _Response({"native_render": {"contract": "native-render/1", "sequences": {}, "stills": {},
+                       "fractal_still_capture": {"protocol": "fractal_capture/1",
+                           "producer": "mounted_finished_preview", "static_frame": True,
+                           "animated_sample": True}}})
         if req.get_method() == "POST":
             raise urllib.error.URLError(TimeoutError())
         return _Response({"status": "applied", "kind": "fractal_capture", "result": result})
@@ -806,6 +809,24 @@ def test_fractal_capture_known_mint_and_lost_ack_recover_original_request() -> N
         Client(opener=expired).get_fractal_request("capture_once")
     assert expired_receipt.value.kind == "fractal_outcome_unknown"
     assert expired_receipt.value.receipt == {"client_request_id": "capture_once", "status": "unknown"}
+
+
+def test_fractal_capture_requires_specific_peer_feature_before_post() -> None:
+    args = {"client_request_id": "capture_once", "witness": _witness()}
+    seen: list[Any] = []
+
+    def opener(req: Any, timeout=None):
+        seen.append(req)
+        assert req.get_method() == "GET" and req.full_url.endswith("/capabilities")
+        return _Response({"native_render": {"contract": "native-render/1", "sequences": {}, "stills": {},
+                          "fractal_still_capture": {"protocol": "fractal_capture/1",
+                              "producer": "mounted_finished_preview", "static_frame": True,
+                              "animated_sample": False}}})
+
+    with pytest.raises(HextileClientError) as refused:
+        Client(opener=opener).capture_fractal_still(args)
+    assert refused.value.status_code == 501
+    assert len(seen) == 1
 
 
 def test_fractal_static_capture_recovery_keeps_frame_proof_and_rejects_mixed_receipts() -> None:
