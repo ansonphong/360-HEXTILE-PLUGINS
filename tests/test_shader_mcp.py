@@ -191,6 +191,22 @@ def test_raster_still_and_dome_exr_preflight_use_native_contract(monkeypatch) ->
         "state": "completed"})
     assert client.get_shader_output_job({"shader": owner["shader"], "project_context_witness": "w",
                                          "request_id": request_id, "profile": "dome-png/1"})["job"]["output"]["file"] == "domes/job_old.png"
+    exr_args = {"shader": owner["shader"], "project_context_witness": "w",
+                "request_id": request_id, "profile": "shader-linear-rgba-exr/1"}
+    for leaf in ("dôme.final.EXR", "final.exr"):
+        exr_job = {"job_id": "b" * 32, "state": "completed", "progress": 1.0,
+                   "profile": "shader-linear-rgba-exr/1", "output": leaf}
+        monkeypatch.setattr(client, "request_json", lambda *_a, row=exr_job, **_kw: {
+            "request_id": request_id, "profile": "shader-linear-rgba-exr/1",
+            "job": row, "state": "completed"})
+        assert client.get_shader_output_job(exr_args)["job"]["output"] == leaf
+        assert client.stop_shader_output_job(exr_args)["job"]["output"] == leaf
+    for leaf in ("CON.exr", "nested/final.exr", "final.exr ", "final.png"):
+        monkeypatch.setattr(client, "request_json", lambda *_a, value=leaf, **_kw: {
+            "request_id": request_id, "profile": "shader-linear-rgba-exr/1",
+            "job": {**exr_job, "output": value}, "state": "completed"})
+        with pytest.raises(HextileClientError):
+            client.get_shader_output_job(exr_args)
 
 
 def test_shader_preview_binary_transport_requires_explicit_image_opt_in() -> None:

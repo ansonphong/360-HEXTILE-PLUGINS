@@ -265,8 +265,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
             elif profile == "shader-linear-rgba-exr/1":
                 if (set(job) != {"job_id", "state", "progress", "profile", "output"}
                         or job["profile"] != profile or job["output"] is not None
-                        and (type(job["output"]) is not str
-                             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,151}\.exr", job["output"]) is None)):
+                        and not _safe_output_leaf(job["output"], {".exr"})):
                     raise invalid()
                 job_id = job["job_id"]
             else:
