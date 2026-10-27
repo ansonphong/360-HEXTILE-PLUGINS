@@ -149,7 +149,7 @@ start_sequence
 get_sequence   # poll while queued or processing
 ```
 
-`create_sequence.config` is a full `HextileConfig` cloned from `upres-still`. Stop and report `paused` and `incomplete` (`incomplete` is resumable in the app; v1 has no resume MCP tool). Terminal: `completed`, `completed_with_errors`, `failed`, `cancelled`. Cancel with `stop_sequence`. Use `list_sequences` if the id is lost.
+`create_sequence.config` is a full `HextileConfig` cloned from `upres-still`. Stop and report `paused` and `incomplete` (`incomplete` is resumable in the app; v1 has no resume MCP tool). Terminal: `completed`, `completed_with_errors`, `failed`, `cancelled`. Request cancellation with `stop_sequence`; the top-level sequence can report `cancelled` before the active frame drains. Observe frame/holder settlement before starting replacement GPU work. Use `list_sequences` if the id is lost.
 
 ## Recipe G — Generate Layer into an exact saved render
 

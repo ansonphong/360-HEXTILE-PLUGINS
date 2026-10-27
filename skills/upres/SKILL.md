@@ -28,7 +28,7 @@ Default scale **4**. Model **`realesrgan-x4plus`**. Use scale **2** only when th
 ## GPU safety
 
 1. `get_capabilities` at session start.
-2. `list_runs` and/or `list_sequences` before queueing. If a run is `running` or a sequence is `processing`, call `cancel_run` or `stop_sequence` **only if the user asked to replace that job**. Otherwise refuse the second GPU job.
+2. `list_runs` and/or `list_sequences` before queueing. If a run is `running` or a sequence is `processing`, call `cancel_run` or `stop_sequence` **only if the user asked to replace that job**. Otherwise refuse the second GPU job. After a stop request, observe active-frame/job and GPU-holder settlement before submitting replacement work; a sequence may report `cancelled` before its active frame drains.
 3. Never `get_status(seq_*)`. Never `get_sequence(render_id)`. A frame `render_id` is an ordinary render.
 4. Never poll forever.
 5. HTTP **402**: pass the APP licence/access detail. Standard includes basic folder/video frame processing and Real-ESRGAN; advanced temporal workflows have separate gates. Do not infer a Pro requirement from a basic sequence ID.
@@ -66,7 +66,7 @@ Clone, patch, POST:
 4. POST the patched object as `create_sequence.config` with `folder_path` (optional `name`).
 5. `start_sequence` then `get_sequence`.
 
-Poll `get_sequence` while status is `queued` or `processing`. Stop and report on `paused` and `incomplete` (`incomplete` is resumable in the app; v1 has no resume MCP tool). Terminal: `completed`, `completed_with_errors`, `failed`, `cancelled`. Abort with `stop_sequence`.
+Poll `get_sequence` while status is `queued` or `processing`. Stop and report on `paused` and `incomplete` (`incomplete` is resumable in the app; v1 has no resume MCP tool). Terminal: `completed`, `completed_with_errors`, `failed`, `cancelled`. Request cancellation with `stop_sequence`; top-level `cancelled` alone does not prove active-frame/GPU drain.
 
 ## Refuse
 

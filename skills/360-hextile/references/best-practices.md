@@ -45,15 +45,15 @@ Send **`workflow_id` + `overrides`**, or a full `document` you cloned from `get_
 - `get_model_readiness` reports installation and selected-bundle fit against total card VRAM, not currently free headroom or a guaranteed render. Optional overrides explore a prospective profile only. Read `get_gpu_diagnostics` for current pressure and `get_model_download_queue` for active/queued admissions. Keep the default catalog's selected primary, complete bundle membership, and stable `selection_fingerprint` together when explaining an install.
 - Before `install_model`, `repair_model`, or `cancel_model_download`, disclose exact registry IDs and obtain the external host's existing mutation confirmation. `bundle=true` needs the default-catalog fingerprint and the app rejects changed selection at enqueue; `bundle=false` queues just one identity. Repair targets a registry model and lets the app diagnose files; never supply a path or URL. Cancel needs the observed queued/active `queue_entry_id`, rejects a replaced or settled admission, and may return while the native writer is still cancelling. An `approved` tool argument is not authority. On an uncertain acknowledgement, read the queue before any repeat. Older app responses without fingerprint/token capability do not authorize a guarded action.
 - An ordinary `retry_run(run_id)` sends no recovery body. Only after explicit user request and host mutation approval for the exact `run_id` and `vram_recovery=true` should the guarded retry be used; it may evict idle in-app holders for that render. An `approved` tool argument is not approval. Do not propose process killing or unload-all.
-- Cancel with `cancel_run` before starting a second heavy GPU job if one is `running`. `stop_sequence` before a second sequence if one is `processing`.
+- Request `cancel_run` or `stop_sequence` only when replacing that exact job is authorized. Observe the active frame/job and GPU-holder drain before another heavy job; a sequence can report top-level `cancelled` while its active frame is still stopping. Unknown/busy state is not settled.
 - Keep the exact seed request and UUID through an uncertain acknowledgement. GET that UUID; if 404 is provisional, replay the same request and UUID or report unknown. `cancel_seed(job_id)` targets only that job.
 - GPU upres of many frames is a sequence via the `upres` skill, not a loop of `run_workflow` over a frame folder.
 - Do not delete builtin. Do not `delete_workflow` unless the user asked.
-- License HTTP 402 → tell the user to activate in Settings.
+- License HTTP 402 → tell the user to activate through Help > License.
 
 ## Website
 
-Fetch URLs from `get_guide` `website-index` when you need product-domain depth (templates, pipelines, LoRA, prompts). Those pages exist on 360hextile.com today.
+Fetch URLs from `get_guide` `website-index` when you need product-domain depth (templates, pipelines, LoRA, prompts). The index follows canonical repository routes. A repository commit does not prove deployment or an installed host refresh; verify remote availability when needed.
 
 ## Shader authoring — Playable Shaders
 

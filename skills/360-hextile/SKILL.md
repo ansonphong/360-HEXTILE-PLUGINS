@@ -91,7 +91,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `start_sequence` | Queue GPU for an existing sequence | **yes** |
 | `get_sequence` | Poll `sequence_id` progress / output (not `get_status`) | no |
 | `list_sequences` | Find sequences if you lost `sequence_id` | no |
-| `stop_sequence` | Kill a running sequence | **yes** |
+| `stop_sequence` | Request active-frame cancellation and cancel queued/pending frames; observe frame/holder drain before another heavy job | **yes** |
 | `preflight_batch` | Strict Batch preflight over a frozen workflow + folder/files | **yes** |
 | `get_batch_preflight` | Poll preflight until ready/failed/expired; get spec_hash | no |
 | `start_batch` | Queue a Batch job from a ready preflight (not run_workflow) | **yes** |
