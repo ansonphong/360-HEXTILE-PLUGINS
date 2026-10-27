@@ -47,15 +47,61 @@ For pending work, poll `get_fractal_request` with the original request ID. Exact
 
 ## Saved native sequences and folder publication
 
-Use `preflight_fractal_sequence` on an actually saved scene revision, not a transient sample. Submit the same closed deferred body to `render_fractal_sequence`: saved scene/revision, stable `idempotency_key`, name, reduced rational `frame_rate` (1–120 FPS), reduced nonnegative exact start/end (0 ≤ start < end ≤ 86400), matching ceil((end-start)*FPS) frame count (1–10000), seed, quality, dimensions, output and `publication_mode:"deferred"`.
+Require `get_capabilities.native_render.contract:"native-render/1"`. Preflight
+and submit the same saved scene/revision and original idempotency key through
+`preflight_fractal_sequence` → `render_fractal_sequence`. Native requests use
+reduced rational FPS1–120, exact `[start,end)` within0–86400seconds, matching
+ceil(duration×FPS) count1–10000, seed, quality, dimensions and output. Keep
+`publication_mode:"deferred"`; Fractal has no sequence supersampling option.
+Equirectangular output is even-height2:1,128×64 through16384×8192. Dome supports
+square1024/2048/4096/8192, both native projections, FOV10–360 and bounded pose.
+Use actual advertised quality presets and captured native `project_path` when
+supplied; never normalize the APP's locator on the MCP host.
 
-Equirectangular output requires exact 2:1, even height 64–8192 and width 128–16384 (minimum 128×64), with zero pan/tilt/roll. Dome `fulldome` and `fulldome_angular` retain square diameters 1024/2048/4096/8192, FOV 10–360 and bounded frozen pose. Preflight returns all four source/output dimensions and render identity; respect geometry, `resource_unavailable`, saved revision, asset and presentation-target refusals. Preflight does not start a GPU job or publish a folder.
+Optional `destination_intent` records the chosen PNG/JPG folder before native
+work. It is retained later-publication intent, not direct JPG rendering or an
+early successful export. Native PNG completion alone does not prove that the
+requested destination is saved. Separate existing publication remains available:
+`preflight_fractal_sequence_export` → `export_fractal_sequence`, preserving exact
+folder/format/quality and transaction fingerprint/attempt ID/revision.
 
-APP derives the known sequence ID as `"seq_" + sha256(UTF8("fractal-sequence/1\0" + scene_id + "\0" + idempotency_key)).hexdigest()[:32]`. Keep this before POST. Lost render replies carry this ID and expected request hash; GET `get_fractal_sequence` and compare `request_hash`. A missing known ID remains unknown. Never change the key or blindly resubmit/mint. Completed means verified native masters, not a chosen folder or a Render per tick.
+Use `inspect_fractal_sequence_output` with `{request,destination}` for existing
+output. This reads native identity metadata, not frame bytes. For matching
+unfinished work, `control_fractal_sequence(action="continue")` carries the same
+request/destination and returned inspection fingerprint. Accepted native work
+owns cancellable verification/replay/rendering/publication. Native-complete work
+retries only publication; both-complete output starts no GPU job. Unsafe or
+unsupported output returns its actual refusal and preserves existing files.
 
-Native work uses the exact task output intent. APP's existing GPU admission, operational sequence entitlement, frozen assets and publication owners remain authoritative. Mounted renderer ownership is separate from saved-native job identity and cannot waive these guards. `control_fractal_sequence` stop/resume targets the exact sequence; read status after any uncertain control reply. Stop is a request until the owner settles.
+Poll `get_fractal_sequence` about every1–2seconds, backing off on unchanged state.
+Saved count may exceed the contiguous cursor. Checking totals, animation replay,
+timing and last-reported restart counts are separate facts. Stop supplies the
+observed run ID and is pending until ownership drains; stale409 needs a fresh
+read, never an unscoped Stop fallback. Export controls also target the observed
+attempt. Lost replies and known-ID404 remain unknown until the original request/
+run/attempt is reconciled; do not silently mint another key or replay mutations.
 
-For an existing task destination folder, call `preflight_fractal_sequence_export` with the known sequence, destination, PNG or JPG (JPG requires quality 1–100; PNG omits it). Preserve its top-level `transaction_fingerprint`. Submit only that same intent and fingerprint to `export_fractal_sequence`. Poll `get_fractal_sequence` for its exact `attempt_id`, `attempt_revision`, `folder_export` and publication history. After a lost export reply, GET those identities; never blindly POST again. Cancel/retry/open-folder controls require the observed current attempt ID and revision. Opening a folder is an explicit mutating action. Retain the native result and original attempt identity; task paths do not bypass native output validation.
+## Current-preview still capture
+
+`capture_fractal_still` uses the current finished360preview and its complete
+native witness, with one caller-owned `client_request_id`. It does not switch
+Fly mode, wait for a replacement sample, upscale the preview or start a one-frame
+sequence. Stale source/Project/owner/context, unready required images and active
+conflicting work refuse before mint. Keep the actual native frame provenance:
+animated timing/sample evidence is distinct from a static completion stamp.
+
+A known capture returns the real Render/node IDs and actual dimensions, at most
+2048×1024. Export that exact source through `preflight_file_export` →
+`export_render_file`, with the UI's supported generic Dome sizes, PNG/JPG/HDR/EXR,
+pose/FOV, JPG quality and metadata options. HDR/EXR conversion of preview pixels
+is not native scene-linear Fractal rendering. Render minting and destination
+publication are separate outcomes.
+
+Recover a lost capture reply with `get_fractal_request` for its original ID.
+Unknown promotion retains its original frozen frame evidence through the existing
+receipt lifetime; missing/expired410 remains unknown and never authorizes an
+automatic recapture, replacement ID or latest-Render guess. A known mint remains
+known after owner changes; failed export does not erase that source identity.
 
 ## Discovery evidence
 

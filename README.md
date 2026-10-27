@@ -191,6 +191,40 @@ Claude prefixes plugin skills with the plugin name: `/360-hextile:360-hextile` (
 
 Open a clean Project or My Library Shader in Workshop, enable MCP, then invoke the installed skill with your requested change. If open acknowledgement is unknown, preserve files and reconnect; never edit presumed paths. Timeout or exhausted repairs includes the last exact receipt and instructions to re-enter this same host skill. APP Retry rechecks a candidate; it cannot wake an idle coding host. Playable and input-adapter guidance is conditional on observed executable support, not merely document declarations. Neither compiler pass nor a preview certifies physical input behavior or saving.
 
+### Native Shader and Fractal output
+
+Read `get_capabilities` and require `native_render.contract:"native-render/1"`
+before new render semantics. Its bounded native limits describe supported sizes,
+projections, quality and supersampling; native admission still checks the saved
+source, Project, destination and owner. An older APP must report upgrade required,
+never silently remove a setting or change direct output into a managed copy.
+
+Shader sequences accept a chosen `folder_export` PNG/JPG destination and optional
+hundredth supersampling1.00–2.00, including1.25. The native writer saves that format
+in that folder. Explicit deferred masters and later export remain available.
+Fractal sequences retain their native PNG masters and existing publication path;
+optional `destination_intent` freezes the chosen later PNG/JPG publication.
+
+Preflight and submit the same immutable request/key. Inspect existing output with
+`inspect_shader_sequence_output` or `inspect_fractal_sequence_output`; matching
+unfinished work can use the existing control tool's `continue` action with the
+same request and inspection fingerprint. Poll native run/revision, ownership,
+checking/replay/rendering/saving, committed count and contiguous cursor separately.
+Stop targets the observed run; a stale409 needs a fresh read. Unknown replies keep
+the original IDs and remain unknown until reconciled. No automatic new-key retry.
+
+Still tools add `shader-raster-still/1` for direct PNG/JPG in equirectangular or
+either Dome projection. Linear EXR also accepts native Dome geometry. Existing
+`png-master/1` keeps its managed Render/import semantics. Still capture uses the
+actual mounted Shader writer and completed frame; no caller-supplied capture or
+preview packet. `capture_fractal_still` uses the current finished360preview, then
+ordinary file export publishes that exact Render/node. A known capture is not a
+successful destination export; an unknown mint is never automatically repeated.
+
+These are canonical/source contracts. Installed catalogs and actual native output
+need their own qualified activation; source or vendor synchronization alone does
+not establish installed-host support. See the Shader/Fractal skills for controls.
+
 ### Ordinary render file export
 
 Call `preflight_file_export` with an exact `render_id`, `source_node_id`, selected existing `folder_path`, Windows-safe basename `output_name`, `projection`, and `encoding`. It performs no writes and returns the source revision, exact output paths, blockers, and output fingerprint. Review those paths and obtain approval for the exact options before calling `export_render_file` with the same arguments plus the returned `source_revision` and `output_fingerprint`.

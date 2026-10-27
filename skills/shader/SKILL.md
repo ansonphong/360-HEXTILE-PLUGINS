@@ -11,7 +11,14 @@ Use the live `shader_contract` revision 1 and its `apply_policy`/`blockers` for 
 
 For scalar parameter animation, discover schema-2 `propose_shader` edits from `tools/list` and the current `get_shader_context` typed targets. `set_parameter_expression` uses `hx-scalar/1`, a stable `shader.params.*` target, exact alias-to-stable-ID `refs` (empty for `T*2`), and the effective Apply policy; `remove_parameter_expression` returns to the base value. `set_parameter_mode` selects fixed, expression or modulator; `set_timeline` saves rational start/end and loop only after confirmed Apply and Save. Check executable `parameter-expressions/1`, `shader-timeline/1` and any required `modulation/3` independently; preserve unknown required extensions. `control_shader_timeline` changes only the actual mounted session clock. Copy the bounded `current_surface` Shader/base/surface/owner generations exactly, use a caller-known `client_request_id`, and recover an uncertain reply through `operation=status` with that ID. Do not replay with a fresh ID. Source and formula inclusion remain separate bounded content choices.
 
-For a native sequence, wait for confirmed Apply **and Save** under the effective policy, then reread the saved Shader identity, working revision, document/source hashes and Project witness. Discover `preflight_shader_sequence`, `render_shader_sequence`, `get_shader_sequence`, `control_shader_sequence`, `preflight_shader_sequence_export` and `export_shader_sequence` through `tools/list`; submit the same explicit deferred request with exact rational start/end, frame rate/count and native output. Preflight yields the deterministic sequence ID and request hash before GPU work. After an uncertain render reply, GET that ID and compare the hash; 404 leaves the outcome unknown and never authorizes a blind resubmission. A completed record represents verified native masters. With an existing destination_folder task path, preflight PNG/JPG publication, then submit the same intent with its returned fingerprint; GET the known sequence and attempt ID after an uncertain reply. Stop/resume native work and cancel/retry the exact current export attempt through `control_shader_sequence`, then GET after an uncertain control reply. Generic `create_sequence`/`start_sequence` are for folder upres. Mounted clock control binds the actual current owner; this saved-native read/queue path uses the saved identity. Standard or Pro operational access is checked by APP for work-producing actions; Lite/unlicensed work is refused there.
+For native output, keep confirmed Apply and Save under the effective policy and
+reread the saved identity/hashes/Project witness. Require the running APP's
+`native_render.contract:"native-render/1"` from `get_capabilities`, then discover
+the actual named render/control tools. Their native input/settings/status
+contracts are described below; metadata never grants admission. Generic
+`create_sequence`/`start_sequence` remain folder upres. APP owns operational
+Standard/Pro access, resources, ownership and publication; unsupported work
+returns its actual native refusal.
 
 ## Credits and sources
 
@@ -148,3 +155,51 @@ Keep the exact candidate, controls/modulators/values/source and check status tog
 Variation boards remain status-only until a candidate is chosen. Native validation, exact ownership, CAS, witness and saved receipts remain required.
 
 Report saved only after an exact server-observed `save="saved"` receipt with accepted revision/hash. An unknown save remains unknown until reconciled; never replay a save mutation. APP advances the handle's accepted base after acknowledged Apply; **v1 alone** retains the sidecar's original immutable `base`, while v2 `authoring.json` has no saved-base field. Git commit is a separate user-authorized action and cannot be inferred from Apply.
+
+
+## Native rendering and exact destination output
+
+New Shader sequences use the chosen PNG/JPG `folder_export` directly, with JPG
+quality1–100 and optional hundredth supersampling1.00–2.00. Final dimensions stay
+fixed; internal work grows with supersampling. Native temporal/resource/history
+limits can refuse combinations; never drop a setting or seed feedback from JPG
+pixels. Keep exact rational interval/FPS/count and all saved source/resource
+identity fields. Explicit deferred masters and later copy/conversion remain
+separate supported operations.
+
+Preflight and submit the identical body/key. `inspect_shader_sequence_output`
+inspects one selected destination using metadata; matching unfinished work uses
+`control_shader_sequence(action="continue")` with its original request and
+inspection fingerprint. A retained publication-only job stays read-only about
+native masters even on later Resume: missing/changed bytes refuse rather than
+starting a native renderer. Both-complete output starts no work.
+
+Poll native status about every1–2seconds; back off on unchanged revisions or
+connection errors. Keep saved count separate from contiguous cursor, checking
+totals and replay. Restart counts are last reported until explicit verification.
+Use observed `run_id` for Stop and current attempt ID/revision for publication
+controls. Stop settles only after its owner drains. A stale409 needs fresh status;
+timeout/404 is unknown, never proof a job did not start or permission for a new key.
+
+Still flow: use the real mounted Shader writer/completed-frame producer with
+`shader_preflight_still_export` → `shader_export_still`, then original-request
+`shader_get_output_job` / `shader_stop_output_job`. New `shader-raster-still/1`
+chooses `output.encoding:"png"|"jpg"` and exact absolute `output_path` on the APP
+machine. Equirectangular widths1024/2048/4096 have half-height. Both Dome variants
+use native diameters1024/2048/4096/8192 plus FOV/pose. Native raster JPG quality is
+fixed95; raster stills have no supersampling/arbitrary-size option. Safe native
+Unicode/multidot filenames and JPG/JPEG suffixes are preserved.
+
+`shader-linear-rgba-exr/1` keeps scene-linear float/alpha output and adds native
+square Dome width/height/projection/FOV/pose with explicit target. Existing
+equirectangular EXR and frozen-default-path compatibility remain. `png-master/1`
+keeps its existing managed Import/Render and supported supersampling/sizes; its
+completion is distinct from later destination publication. Optional native
+`allow_unpreviewed_revision` confirmation never forges a preview or bypasses the
+mounted capture producer's currentness/readiness. Callers never supply private
+snapshot pixels, leases or capture packets to these tools.
+
+After a lost still reply, keep original request/preflight UUID/profile and read
+that exact job. Do not capture a replacement frame or choose another filename to
+hide the unknown outcome. Source/native capability checks and create-only
+publication remain authoritative.

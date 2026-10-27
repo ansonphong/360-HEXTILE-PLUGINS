@@ -130,9 +130,10 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `propose_shader` | Post a legacy shader candidate or Board, preserving Playable convention/envelope bytes and declarations in every row. Complete controls use the attested workspace. No prepare, consume, Import, delete, or Board Accept | **yes** |
 | `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through the connected APP and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |
-| `render_shader_sequence` | Queue that exact saved-native deferred request using its original idempotency key; compare its request hash with preflight | **yes** |
-| `get_shader_sequence` | Read bounded native progress and verified masters by the known Shader sequence ID; private paths and source stay hidden | no |
-| `control_shader_sequence` | Stop/resume native work or cancel/retry the exact current folder attempt; GET after uncertain control replies | **yes** |
+| `inspect_shader_sequence_output` | Inspect one chosen destination using native metadata; retain its identity and fingerprint before explicit Continue | no |
+| `render_shader_sequence` | Submit the exact saved-native direct PNG/JPG or explicit deferred request once; retain the preflight ID/hash and original key | **yes** |
+| `get_shader_sequence` | Read native ownership, run/revision, phases, saved count, cursor, timing and accepted settings; restart counts are last reported until checked | no |
+| `control_shader_sequence` | Continue an inspected request, Stop the observed run, resume an admitted job, or control the exact publication attempt; reconcile unknown replies | **yes** |
 | `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG or JPG; retain the fingerprint and attempt ID | no |
 | `export_shader_sequence` | Publish only that exact preflighted folder intent; GET the known ID/attempt after an uncertain reply | **yes** |
 | `open_shader_workspace` | Acknowledge exact Project Shader attachment; v1 returns two native files, negotiated v2 returns the declared source set and metadata path. Follow installed `360-hextile` | **yes** |
@@ -146,7 +147,9 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `open_fractal_scene` | Open one saved scene id. Reopen does not enable interaction | **yes** |
 | `save_fractal_scene` | Save the adopted revision, or Save As a caller-known create-only id. Do not post again after ok false or a lost reply | **yes** |
 | `get_fractal_request` | Read one caller-known Fractal action. 410 is unknown, not refusal | no |
+| `capture_fractal_still` | Capture the exact finished native 360 preview into one known Render/node; export that source separately and retain unknown mint outcomes | **yes** |
 | `preflight_fractal_sequence` | Check a saved revision, rational rate, exact range, and 2:1 or Dome geometry before any queue | no |
+| `inspect_fractal_sequence_output` | Inspect one chosen destination and retained native Fractal intent without checking frame bytes | no |
 | `render_fractal_sequence` | Queue that same deferred native request. A lost reply does not mint a new id | **yes** |
 | `get_fractal_sequence` | Read one known sequence id, including after a lost render or export reply | no |
 | `control_fractal_sequence` | Stop or resume native work, or cancel, retry, or open the current export attempt | **yes** |
@@ -176,7 +179,23 @@ The proxy forwards only to APP loopback and supplies `X-Hextile-Mcp-Session`. Do
 
 ### Selection guide
 
-For saved Shader animation, inspect typed targets with `get_shader_context`, propose the expression and timeline, then wait for native automatic Apply and a confirmed Save receipt. Reread the saved revision and hashes before `preflight_shader_sequence` → `render_shader_sequence` → `get_shader_sequence`. Use exact rational endpoints, frame rate/count, explicit equirectangular or square Dome output and `publication_mode:"deferred"`. On an uncertain render reply, GET the preflight-known ID and compare `request_hash`; unknown 404 is still an unknown outcome. Once native masters are complete, supply the existing destination_folder task path, then call `preflight_shader_sequence_export` → `export_shader_sequence` with the same intent and fingerprint. GET the known sequence and attempt after uncertain export or control replies; never blindly repost. `control_shader_sequence` needs the current `attempt_id` for cancel/retry. Generic `create_sequence`/`start_sequence` remain folder upres. See runnable JSON in `get_guide(name="recipes")`.
+For saved Shader animation, keep confirmed Apply and Save under the effective
+policy, then reread the saved identity/hashes and Project witness. Require
+`get_capabilities.native_render.contract:"native-render/1"`. Preflight and submit
+the same exact request/key using `preflight_shader_sequence` →
+`render_shader_sequence`, then poll `get_shader_sequence`. Direct PNG/JPG carries
+the explicit `folder_export` destination, format and JPG quality; optional
+hundredth supersampling1.00–2.00 keeps final dimensions. Explicit deferred masters
+and their separate export tools remain available. Inspect a chosen folder with
+`inspect_shader_sequence_output`; matching unfinished work uses
+`control_shader_sequence(action="continue")` with the complete original request
+and inspection fingerprint. Stop carries the observed run ID; export controls
+also carry the observed attempt ID/revision. A stale409 requires fresh status.
+After an uncertain reply, reconcile the original known ID/key/hash/run, never a
+new mutation. A known-ID404 remains unknown. Report committed saved count and
+contiguous cursor separately; checking/replay and last-reported restart counts
+are not newly rendered frames. Generic `create_sequence`/`start_sequence` remain
+folder upres. See the direct and explicit-deferred examples in `get_guide(name="recipes")`.
 
 1. **Handshake** → `get_capabilities` then `get_live_context` before compose.
 2. **Learn** → `get_guide` (`best-practices` then `workflow-schema`).

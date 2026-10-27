@@ -69,7 +69,22 @@ The installed **`shader`** skill is the authoritative Shader procedure: discover
 
 For scalar expression or timeline edits, check the current document's required capabilities against APP executable capabilities before proposing. An unknown required capability is a stop and report condition; never remove it to make a proposal pass.
 
-`hx-scalar/1` evaluates `T` and `D` in seconds and angle targets in radians. Bind each `MOD_*` or `P_*` token through an exact discovered stable ID in `refs`; `T*2` needs `refs:{}`. Cycles, unknown aliases, nonfinite values and stale bases refuse; removing an expression restores the base. Legacy modulation/1 and /2 stay on old jobs, while new admitted modulation/3, parameter-expressions/1 and shader-timeline/1 stay intact on later edits. Apply follows the effective policy; require a confirmed Save receipt and fresh saved revision/hash before native sequence preflight. Submit `publication_mode:"deferred"`, exact rational endpoints/frame agreement and explicit equirectangular or native square Dome output; retain the preflight ID and request hash for GET reconciliation after an uncertain render reply. GET exposes bounded progress and verified native masters without source, formula or private paths. For folder publication, use the exact existing task destination, preflight it, and submit its exact fingerprint. Recover uncertain export/control replies through GET of the known sequence and attempt; never blindly replay a POST.
+`hx-scalar/1` evaluates `T` and `D` in seconds and angle targets in radians.
+Bind every used alias through its exact stable ID; `T*2` has `refs:{}`. Cycles,
+unknown aliases, nonfinite values and stale bases refuse; removing an expression
+restores the base. Preserve admitted legacy modulation and all existing required
+capabilities on later edits. Follow the effective Apply policy and require a
+confirmed Save before native preflight. With `native-render/1`, direct Shader
+sequences carry the selected PNG/JPG folder and optional hundredth supersampling;
+explicit deferred masters keep their separate publication tools. Fractal keeps
+native PNG masters and optional retained PNG/JPG destination intent. Inspect the
+chosen destination before Continue, retain its exact fingerprint/request, and
+report native checking/replay/rendering/publication plus committed count and
+cursor independently. Stop targets the observed run, and publication controls
+retain attempt ID/revision. Lost render/Continue/export/control replies reconcile
+the original IDs and immutable receipt; never automatically issue a new key or
+mutation to resolve uncertainty. Missing fields/connection remain unavailable,
+not fabricated zero progress, cancellation or successful output.
 
 One Project-root Git repository may track many complete `shaders/<stable-id>/workspace/` trees and `360-project.index.json`. Track authored config, GLSL, Looks, provenance, every referenced PNG/frame, optional original and cover image. The minimal ignore template at https://360hextile.com/static/templates/shaders/gitignore.txt applies only after **all covered Shaders** have complete verified portable copies; mixed legacy Projects need explicit per-asset rules. The attributes example at https://360hextile.com/static/templates/shaders/gitattributes.txt uses `-text` for `workspace/**` and the marker to preserve bytes. Optional LFS needs materialized objects before clone admission. Native Git diff/commit/checkout/push requires the user's instruction; MCP has no Git tool. Clone opens unaccepted drafts, keeps stable IDs and requires Fork on collision. Text Undo, reviewed structural discard, checkpoint Revert (new revision), and Git restore are distinct; Git restoration needs new register/Prepare/review/Apply under the effective policy. `.hexshader` export reads the accepted snapshot only, including unused modules, Looks, provenance and every referenced ordered frame, never dirty files or Git HEAD; original inclusion remains truthful and rights-gated. See https://360hextile.com/docs/create/shader for the human journey.
 

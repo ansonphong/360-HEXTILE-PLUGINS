@@ -41,13 +41,42 @@ For **session playback only**, submit `control_shader_timeline` with `{"operatio
 
 ## Saved Shader native sequence
 
+### Selected-folder Shader PNG/JPG
+
+After confirmed native Apply and Save, read the fresh source hashes/revision and
+Project witness. Require `get_capabilities.native_render.contract:"native-render/1"`
+and a native-replayable source. Replace every sample identity below with that
+same acknowledged saved source and choose an existing folder on the APP machine.
+This example is24FPS over[0,2),48frames, final2048×1024, JPG90 and1.25spatial
+supersampling. Use the byte-identical intent for preflight and submit.
+
+```json
+{"shader_ref":{"origin":"project","id":"aurora"},"project_context_witness":"project-witness","working_revision":2,"document_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_hash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","resource_manifest_hash":null,"selected_resource_frames":[],"idempotency_key":"aurora-direct-001","name":"Aurora direct","frame_rate":{"num":24,"den":1},"frame_count":48,"start_time":{"num":"0","den":"1"},"end_time":{"num":"2","den":"1"},"width":2048,"height":1024,"seed":7,"supersampling":1.25,"output":{"projection":"equirectangular","pan":0,"tilt":0,"roll":0},"folder_export":{"destination_folder":"D:\\Renders\\Aurora","format":"JPG","quality_if_jpg":90}}
+```
+
+`preflight_shader_sequence` returns the known ID/request hash before admission;
+`render_shader_sequence` uses that exact body/key. Poll `get_shader_sequence` for
+actual owner/run/revision/checking/replay/rendering/writing and saved completion.
+No intermediate PNG image sequence or automatic final copy is requested by this
+direct flow. For PNG use formatPNG and null/omitted JPG quality. Temporal/input/
+resource or supersampling refusals remain native; never silently downgrade.
+
+For existing output, `inspect_shader_sequence_output({request:<same intent>})`
+reports new/unfinished/completed/unavailable/conflict without checking pixels.
+Only a matching unfinished result can Continue with the exact request plus its
+inspection fingerprint. Keep the accepted continuation receipt after a lost
+reply and reconcile that original run; previous terminal status alone cannot
+prove the new Continue was rejected. Stop uses the current observed run ID.
+
+### Explicit deferred Shader masters and publication
+
 After the expression/timeline proposal, APP checks, automatically Applies and saves the singular ready candidate through the native writer. A proposal ticket or uncertain Save is insufficient: reconcile the exact ticket and confirmed saved revision, or refuse. Reread `get_shader_context` for the **new saved** `shader`, `project_context_witness`, `working_revision`, `document_hash` and `source_hash`. Use those actual returned values in place of the sample identities below. The same exact JSON request goes to `preflight_shader_sequence` and `render_shader_sequence`; keep the caller-chosen `idempotency_key` unchanged. The example is 24 FPS over [0,2) seconds, so `frame_count` is 48. Do not add `folder_export` or infer a destination or live Dome pose.
 
 ```json
 {"shader_ref":{"origin":"project","id":"aurora"},"project_context_witness":"project-witness","working_revision":2,"document_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_hash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","idempotency_key":"aurora-native-001","name":"Aurora native","frame_rate":{"num":24,"den":1},"frame_count":48,"start_time":{"num":"0","den":"1"},"end_time":{"num":"2","den":"1"},"width":2048,"height":1024,"seed":7,"output":{"projection":"equirectangular","pan":0,"tilt":0,"roll":0},"publication_mode":"deferred"}
 ```
 
-Preflight returns `sequence_id`, `status` (`ready` or `existing`), `request_hash` and, for an existing record, `recipe_hash`. Only after that receipt, send the same request to `render_shader_sequence`; it returns the same ID/hash with queued or existing status. Poll `get_shader_sequence({"sequence_id":"<preflight ID>"})` for native progress and terminal verified masters. If the render reply is lost, GET that **known** ID and compare `request_hash`; a 404 is outcome unknown, not permission to mint a key or blindly repost. The GET projection omits source, formula and private paths, including on older automatic records. An explicitly chosen native square Dome instead uses `width=height=diameter` and `output={"projection":"fulldome","diameter":2048,"fov_deg":180,"pan":0,"tilt":0,"roll":0}`; `fulldome_angular` is the other native projection, and FOV is 10–360 degrees. APP checks operational Standard or Pro access to queue; Lite/unlicensed work refuses. Generic `create_sequence`/`start_sequence` remain folder upres.
+Preflight returns `sequence_id`, `status` (`ready` or `existing`), `request_hash` and, for an existing record, `recipe_hash`. Only after that receipt, send the same request to `render_shader_sequence`; it returns the same ID/hash with queued or existing status. Poll `get_shader_sequence({"sequence_id":"<preflight ID>"})` for native progress and its reported terminal outcome. Restart counts remain last reported until explicit verification. If the render reply is lost, GET that **known** ID and compare `request_hash`; a 404 is outcome unknown, not permission to mint a key or blindly repost. The GET projection omits source, formula and private paths, including on older automatic records. An explicitly chosen native square Dome instead uses `width=height=diameter` and `output={"projection":"fulldome","diameter":2048,"fov_deg":180,"pan":0,"tilt":0,"roll":0}`; `fulldome_angular` is the other native projection, and FOV is 10–360 degrees. APP checks operational Standard or Pro access to queue; Lite/unlicensed work refuses. Generic `create_sequence`/`start_sequence` remain folder upres.
 
 Once GET reports `status:"completed"` and `published_cursor==frame_count`, use the exact existing destination_folder task path. The caller supplies the folder path to the local MCP tool; no UI picker or retained private path is exposed by GET. Send the following intent to `preflight_shader_sequence_export` (replace the sample sequence ID and folder with the chosen values). For JPG, use `"format":"JPG","quality_if_jpg":90`; PNG omits quality.
 

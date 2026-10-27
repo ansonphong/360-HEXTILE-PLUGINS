@@ -36,6 +36,42 @@ Retired render-time `input.source` values (`pattern`, `360_lora`, `solid_color`,
 
 `quick-scout` (fast 2K / `sd21`), `progressive-build`, `structure-first`, `bloom-from-noise`, `grand-remaster`, `painters-pass`.
 
+## Native render requests
+
+Native Shader/Fractal rendering uses the named native tools, separate from a
+Workflow document. Require `get_capabilities.native_render.contract` equal to
+`native-render/1`; missing support requires upgrade rather than dropped fields.
+The capability projection gives actual native bounds and supported combinations.
+
+Shader sequence input includes the saved identity/hashes/Project witness, exact
+rational interval/FPS/count, dimensions, seed, output and optional hundredth
+`supersampling`1.00–2.00. Direct output carries
+`folder_export:{destination_folder,format:"PNG"|"JPG",quality_if_jpg}`; JPG requires
+quality1–100 and PNG uses null/omission. Explicit `publication_mode:"deferred"`
+omits that folder and retains separate native-master publication tools. Fractal
+remains deferred, with saved scene/revision, native quality preset and optional
+`destination_intent`; it has no sequence supersampling field.
+
+Inspection takes `{request}` for Shader and `{request,destination}` for Fractal.
+The existing control tool's `continue` action adds `inspection_fingerprint` and
+the same immutable request. The fingerprint is an optimistic check, never source
+or write authority. Keep original request/job/run/attempt IDs on uncertain replies.
+
+For Shader still preflight, `shader-raster-still/1` output chooses projection,
+`encoding:"png"|"jpg"`, exact `output_path` and native geometry. Equirectangular
+widths1024/2048/4096 have half-height; Dome uses native diameter/FOV/pose. Raster
+JPEG quality is fixed95, with no still supersampling or arbitrary raster sizes.
+`shader-linear-rgba-exr/1` uses width/height and optional native Dome projection/
+pose; it remains scene-linear float/alpha. `png-master/1` keeps its existing
+supported sizes/supersampling/import behavior. Still preflight's optional boolean
+`allow_unpreviewed_revision` is an explicit native confirmation, never a fabricated
+preview or a bypass of the mounted capture producer's readiness/currentness.
+
+Native status is a bounded snapshot: committed saved count may exceed contiguous
+cursor; checking/replay is separate work; timing is observed, not a proxy ETA.
+Last-reported restart counts are unverified until accepted Continue checks them.
+Stop carries the observed run ID and settles only after its owner drains.
+
 ## Separate Shader workspace format
 
 Mounted Shader parameter controls are live session values, not Workflow fields, workspace source edits, or proof of a Saved document. `get_shader_parameters` returns the current source-free descriptor, exact witness and native `writable` state. With MCP enabled, `set_shader_parameter` submits one exact-witness value using `operation:"submit"` and a caller-known `client_request_id`; APP validates the current bounds, writable state and writer before one undoable edit. `applied` acknowledges that edit only. Verify Save separately through the exact clean saved revision/hash. If the result is uncertain, use `operation:"status"` with the original request ID, including after selection changes. An absent or expired receipt remains unknown; read fresh metadata and obtain human direction before any new ID. Never retry automatically. Source/formula include options select content independently; structural edits use the acknowledged workspace and native Apply/Save receipts.
