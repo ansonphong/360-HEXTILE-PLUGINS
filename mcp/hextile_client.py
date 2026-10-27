@@ -55,7 +55,8 @@ _WORKSPACE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _WORKSPACE_SUFFIX = re.compile(r"[1-9][0-9]{0,15}\Z")
 MAX_WORKSPACE_GENERATION = 2**53 - 1
 
-_OUTPUT_PROFILES = {"png-master/1", "shader-linear-rgba-exr/1", "dome-png/1"}
+_OUTPUT_PROFILES = {"png-master/1", "shader-linear-rgba-exr/1", "dome-png/1",
+                    "shader-raster-still/1"}
 _OUTPUT_OWNER = {"request_id", "shader", "project_context_witness", "base",
                  "studio_surface_id", "expected_edit_sequence"}
 
@@ -64,6 +65,78 @@ def _absolute_task_path(value: Any) -> bool:
     """Native task syntax is independent of the MCP host filesystem."""
     return type(value) is str and (PureWindowsPath(value).is_absolute()
                                   or PurePosixPath(value).is_absolute())
+
+
+def _native_pose(output: Mapping[str, Any]) -> bool:
+    return all(type(output[key]) in (int, float) and math.isfinite(output[key])
+               and lo <= output[key] <= hi for key, lo, hi in
+               (("fov_deg", 10, 360), ("pan", -180, 180), ("tilt", -90, 90), ("roll", -180, 180))
+               if key in output)
+
+
+def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
+    if (not {"projection", "encoding", "output_path"} <= set(output)
+            or not _absolute_task_path(output["output_path"])
+            or output["encoding"] not in {"png", "jpg"}):
+        return False
+    if output["projection"] == "equirectangular":
+        return (set(output) == {"projection", "encoding", "output_path", "width", "height"}
+                and type(output["width"]) is int and output["width"] in {1024, 2048, 4096}
+                and type(output["height"]) is int and output["height"] * 2 == output["width"])
+    return (output["projection"] in {"fulldome", "fulldome_angular"}
+            and set(output) <= {"projection", "encoding", "output_path", "diameter",
+                                "fov_deg", "pan", "tilt", "roll"}
+            and type(output.get("diameter")) is int
+            and output["diameter"] in {1024, 2048, 4096, 8192}
+            and _native_pose(output))
+
+
+def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
+    if (not {"width", "height"} <= set(output)
+            or set(output) - {"width", "height", "projection", "fov_deg", "pan", "tilt", "roll", "output_path"}
+            or type(output["width"]) is not int or type(output["height"]) is not int):
+        return False
+    projection = output.get("projection", "equirectangular")
+    if projection == "equirectangular":
+        return (2 <= output["width"] <= 4096
+                and output["width"] == output["height"] * 2
+                and not {"fov_deg", "pan", "tilt", "roll"} & set(output))
+    return (projection in {"fulldome", "fulldome_angular"}
+            and output["width"] == output["height"]
+            and output["width"] in {1024, 2048, 4096, 8192}
+            and _absolute_task_path(output.get("output_path"))
+            and _native_pose(output))
+
+
+def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
+    if type(output) is not dict or output.get("projection") not in {
+            "equirectangular", "fulldome", "fulldome_angular"}:
+        return False
+    if raster:
+        if output.get("encoding") not in {"png", "jpg"}:
+            return False
+        if output["projection"] == "equirectangular":
+            if (not {"width", "height"} <= set(output)
+                    or set(output) - {"projection", "encoding", "width", "height", "file"}
+                    or type(output["width"]) is not int or output["width"] not in {1024, 2048, 4096}
+                    or type(output["height"]) is not int or output["height"] * 2 != output["width"]):
+                return False
+        elif (type(output.get("diameter")) is not int
+                or output["diameter"] not in {1024, 2048, 4096, 8192}
+                or set(output) - {"projection", "encoding", "diameter", "fov_deg", "pan", "tilt", "roll", "file"}):
+            return False
+    else:
+        if (output["projection"] == "equirectangular" or type(output.get("diameter")) is not int
+                or output["diameter"] not in {1024, 2048, 4096, 8192}
+                or "fov_deg" not in output
+                or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file"}):
+            return False
+    extension = ("png", "jpg") if raster else ("png",)
+    return (_native_pose(output)
+            and ("file" not in output or type(output["file"]) is str
+                 and re.fullmatch(r"(?:domes/)?[A-Za-z0-9][A-Za-z0-9_.-]{0,179}\."
+                                  + "(?:" + "|".join(extension) + r")", output["file"]) is not None
+                 and ("/" not in output["file"] if raster else output["file"].startswith("domes/"))))
 
 
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
@@ -179,17 +252,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                         or job["idempotency_key"] != args["request_id"]):
                     raise invalid()
                 output = job["output"]
-                if output is not None and (type(output) is not dict
-                        or not {"projection", "diameter", "fov_deg"} <= set(output)
-                        or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file"}
-                        or output["projection"] not in {"fulldome", "fulldome_angular"}
-                        or type(output["diameter"]) is not int
-                        or output["diameter"] not in {1024, 2048, 4096, 8192}
-                        or any(type(output[key]) not in (int, float) or not math.isfinite(output[key])
-                               for key in ("fov_deg", "pan", "tilt", "roll") if key in output)
-                        or not 10 <= output["fov_deg"] <= 360
-                        or "file" in output and (type(output["file"]) is not str
-                            or re.fullmatch(r"domes/[A-Za-z0-9_-]{1,64}\.png", output["file"]) is None)):
+                if output is not None and not _valid_dome_job_output(output, raster=profile == "shader-raster-still/1"):
                     raise invalid()
                 job_id = job["job_id"]
             if (type(job_id) is not str or re.fullmatch(r"[0-9a-f]{32}", job_id) is None
@@ -261,7 +324,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
         "preview": (_OUTPUT_OWNER | {"output"}, set()),
-        "preflight": (_OUTPUT_OWNER | {"profile", "output"}, set()),
+        "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision"}),
         "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, set()),
         "get_preview": (common, {"image"}),
         "release_preview": (common, set()),
@@ -307,11 +370,15 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
             valid = (type(projection) is str and projection in {"equirectangular", "fulldome", "fulldome_angular"}
                      and required <= output.keys() and set(output) <= fields)
         else:
-            shape = {"png-master/1": ({"width", "height"}, {"supersampling", "output_path"}),
-                     "shader-linear-rgba-exr/1": ({"width", "height"}, {"output_path"}),
-                     "dome-png/1": ({"projection", "diameter", "fov_deg", "pan", "tilt", "roll",
-                                    }, {"output_path"})}[args["profile"]]
-            valid = shape[0] <= output.keys() and set(output) <= shape[0] | shape[1]
+            if args["profile"] == "shader-raster-still/1":
+                valid = _valid_raster_still_output(output)
+            elif args["profile"] == "shader-linear-rgba-exr/1":
+                valid = _valid_linear_exr_output(output)
+            else:
+                shape = {"png-master/1": ({"width", "height"}, {"supersampling", "output_path"}),
+                         "dome-png/1": ({"projection", "diameter", "fov_deg", "pan", "tilt", "roll"},
+                                        {"output_path"})}[args["profile"]]
+                valid = shape[0] <= output.keys() and set(output) <= shape[0] | shape[1]
         if not valid:
             raise HextileClientError("Unsupported closed Shader output settings", status_code=422, kind="other")
     for field in ("output_path", "destination_project"):
@@ -320,6 +387,8 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Expected absolute task destination", status_code=422, kind="other")
     if operation == "get_preview" and "image" in args and type(args["image"]) is not bool:
         raise HextileClientError("Image opt-in must be boolean", status_code=422, kind="other")
+    if "allow_unpreviewed_revision" in args and type(args["allow_unpreviewed_revision"]) is not bool:
+        raise HextileClientError("Native unpreviewed revision confirmation must be boolean", status_code=422, kind="other")
 
 
 def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
@@ -805,9 +874,206 @@ class HextileClientError(RuntimeError):
 _SHADER_SEQUENCE_REQUIRED = {
     "shader_ref", "project_context_witness", "working_revision", "document_hash",
     "source_hash", "idempotency_key", "name", "frame_rate", "frame_count",
-    "start_time", "end_time", "width", "height", "seed", "output", "publication_mode",
+    "start_time", "end_time", "width", "height", "seed", "output",
 }
-_SHADER_SEQUENCE_OPTIONAL = {"resource_manifest_hash", "selected_resource_frames"}
+_SHADER_SEQUENCE_OPTIONAL = {"resource_manifest_hash", "selected_resource_frames",
+                             "supersampling", "folder_export", "publication_mode"}
+
+
+def _native_folder_intent(value: Any) -> bool:
+    if type(value) is not dict or not {"destination_folder", "format"} <= set(value) <= {
+            "destination_folder", "format", "quality_if_jpg"}:
+        return False
+    folder, encoding, quality = value["destination_folder"], value["format"], value.get("quality_if_jpg")
+    return (type(folder) is str and 1 <= len(folder) <= 4096 and _absolute_task_path(folder)
+            and "\x00" not in folder
+            and encoding in {"PNG", "JPG"}
+            and ((encoding == "JPG" and type(quality) is int and 1 <= quality <= 100)
+                 or (encoding == "PNG" and quality is None)))
+
+
+def _same_native_intent(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    return (left["destination_folder"] == right["destination_folder"]
+            and left["format"] == right["format"]
+            and left.get("quality_if_jpg") == right.get("quality_if_jpg"))
+
+
+def _native_observation(value: Any) -> dict[str, Any] | None:
+    if type(value) is not dict or len(value) > 16:
+        return None
+    out: dict[str, Any] = {}
+    for key, pattern in (("run_id", r"[0-9a-f]{32}"),
+                         ("phase", r"[a-z][a-z_]{0,31}"),
+                         ("attempt_id", r"attempt_[0-9a-f]{32}"),
+                         ("observed_at", r"[0-9T:+.Z-]{10,48}")):
+        item = value.get(key)
+        if type(item) is str and re.fullmatch(pattern, item):
+            out[key] = item
+    for key in ("revision", "verified_cursor", "sample_count", "active_elapsed_ms",
+                "phase_elapsed_ms", "checked_count", "check_total"):
+        item = value.get(key)
+        if type(item) is int and item >= 0:
+            out[key] = item
+    index = value.get("active_frame_index")
+    if index is None and "active_frame_index" in value:
+        out["active_frame_index"] = None
+    elif type(index) is int and index >= 0:
+        out["active_frame_index"] = index
+    fraction = value.get("frame_fraction")
+    if fraction is None and "frame_fraction" in value:
+        out["frame_fraction"] = None
+    elif type(fraction) in (int, float) and math.isfinite(fraction) and 0 <= fraction <= 1:
+        out["frame_fraction"] = fraction
+    durations = value.get("durations_ms")
+    if type(durations) is list and len(durations) <= 8 and all(type(item) is int and item >= 0 for item in durations):
+        out["durations_ms"] = list(durations)
+    return out if "run_id" in out and "revision" in out and "phase" in out else None
+
+
+def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Bounded native evidence common to both producers; missing old-peer fields stay absent."""
+    out: dict[str, Any] = {}
+    if type(data.get("producer")) is str and data["producer"] in {"shader", "fractal"}:
+        out["producer"] = data["producer"]
+    if type(data.get("name")) is str and len(data["name"]) <= 128:
+        out["name"] = data["name"]
+    source = data.get("shader_source") if data.get("producer") == "shader" else data.get("fractal_source")
+    if type(source) is dict:
+        safe_source: dict[str, Any] = {}
+        if data.get("producer") == "shader":
+            for key in ("origin", "id"):
+                if type(source.get(key)) is str and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", source[key]):
+                    safe_source[key] = source[key]
+            if type(source.get("working_revision")) is int and source["working_revision"] >= 1:
+                safe_source["working_revision"] = source["working_revision"]
+            for key in ("document_hash", "source_hash", "resource_manifest_hash", "render_identity"):
+                if type(source.get(key)) is str and _WORKSPACE_DIGEST.fullmatch(source[key]):
+                    safe_source[key] = source[key]
+        else:
+            if type(source.get("scene_id")) is str and re.fullmatch(r"scn_[0-9a-f]{8}", source["scene_id"]):
+                safe_source["scene_id"] = source["scene_id"]
+            for key in ("scene_revision", "document_hash", "render_identity"):
+                if type(source.get(key)) is str and _WORKSPACE_DIGEST.fullmatch(source[key]):
+                    safe_source[key] = source[key]
+        if safe_source:
+            out["source"] = safe_source
+    if type(data.get("error")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", data["error"]):
+        out["error"] = data["error"]
+    if type(data.get("ownership_live")) is bool:
+        out["ownership_live"] = data["ownership_live"]
+    for key in ("render_files_available", "storage_available"):
+        if type(data.get(key)) is bool:
+            out[key] = data[key]
+    observation = _native_observation(data.get("render_observation"))
+    if observation is not None:
+        out["render_observation"] = observation
+    receipt = data.get("continuation_receipt")
+    if type(receipt) is dict and len(receipt) <= 8:
+        projected = {}
+        for key in ("key", "request_hash", "inspection_fingerprint", "run_id", "mode"):
+            value = receipt.get(key)
+            pattern = (r"sha256:[0-9a-f]{64}" if key in {"request_hash", "inspection_fingerprint"}
+                       else r"[0-9a-f]{32}" if key == "run_id"
+                       else r"[a-z_]{1,32}" if key == "mode"
+                       else r"[^\x00-\x1f]{1,128}")
+            if type(value) is str and re.fullmatch(pattern, value):
+                projected[key] = value
+        if {"key", "request_hash", "inspection_fingerprint", "run_id"} <= set(projected):
+            out["continuation_receipt"] = projected
+    storage = data.get("storage")
+    if type(storage) is dict and storage.get("layout") in {"direct", "legacy", "deferred"}:
+        safe = {"layout": storage["layout"]}
+        if storage.get("ownership") in {"generated", "borrowed"}:
+            safe["ownership"] = storage["ownership"]
+        encoding = storage.get("encoding")
+        if type(encoding) is dict and encoding.get("format") in {"PNG", "JPG"}:
+            safe["encoding"] = {"format": encoding["format"], "quality_if_jpg": encoding.get("quality_if_jpg")}
+        out["storage"] = safe
+    settings = data.get("accepted_settings")
+    if type(settings) is dict and len(settings) <= 20:
+        safe_settings: dict[str, Any] = {}
+        for key in ("name", "quality"):
+            if type(settings.get(key)) is str and len(settings[key]) <= 128:
+                safe_settings[key] = settings[key]
+        for key in ("frame_count", "width", "height", "seed", "source_width", "source_height",
+                    "output_width", "output_height"):
+            if type(settings.get(key)) is int and settings[key] >= 0:
+                safe_settings[key] = settings[key]
+        if type(settings.get("supersampling")) in (int, float) and math.isfinite(settings["supersampling"]):
+            safe_settings["supersampling"] = settings["supersampling"]
+        rate = settings.get("frame_rate")
+        if type(rate) is dict and set(rate) == {"num", "den"} and all(type(rate[key]) is int and rate[key] > 0 for key in rate):
+            safe_settings["frame_rate"] = dict(rate)
+        for key in ("start_time", "end_time"):
+            value = settings.get(key)
+            if type(value) is dict and set(value) == {"num", "den"} and all(
+                    type(value[part]) is str and re.fullmatch(r"[0-9]{1,32}", value[part]) for part in value):
+                safe_settings[key] = dict(value)
+        output = settings.get("output")
+        if type(output) is dict and output.get("projection") in {"equirectangular", "fulldome", "fulldome_angular"}:
+            projected = {"projection": output["projection"]}
+            for key in ("diameter", "fov_deg", "pan", "tilt", "roll"):
+                value = output.get(key)
+                if type(value) in (int, float) and math.isfinite(value):
+                    projected[key] = value
+            safe_settings["output"] = projected
+        destination = settings.get("destination_intent")
+        if _native_folder_intent(destination):
+            safe_settings["destination_intent"] = {"format": destination["format"],
+                                                    "quality_if_jpg": destination.get("quality_if_jpg")}
+        out["accepted_settings"] = safe_settings
+    return out
+
+
+def _native_inspection_result(data: Any, producer: str) -> dict[str, Any]:
+    if type(data) is not dict or data.get("status") not in {
+            "new", "unfinished", "completed", "unavailable", "conflict"}:
+        raise HextileClientError("Invalid native destination inspection", kind="other")
+    result: dict[str, Any] = {"status": data["status"]}
+    if type(data.get("code")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", data["code"]):
+        result["code"] = data["code"]
+    if data["status"] in {"new", "unavailable", "conflict"}:
+        return result
+    required = ("sequence_id", "producer", "render_identity", "recipe_hash", "destination_folder",
+                "format", "frames_completed", "frame_count", "native_status", "publication_state",
+                "inspection_fingerprint")
+    if (not all(key in data for key in required) or data["producer"] != producer
+            or type(data["sequence_id"]) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", data["sequence_id"]) is None
+            or any(type(data[key]) is not str or _WORKSPACE_DIGEST.fullmatch(data[key]) is None
+                   for key in ("render_identity", "recipe_hash", "inspection_fingerprint"))
+            or not _absolute_task_path(data["destination_folder"])
+            or len(data["destination_folder"]) > 4096
+            or data["format"] not in {"PNG", "JPG"}
+            or any(type(data[key]) is not int or data[key] < 0 for key in ("frames_completed", "frame_count"))
+            or data["frames_completed"] > data["frame_count"]
+            or data["publication_state"] not in {"direct", "admitted", "not_admitted", "legacy"}
+            or type(data["native_status"]) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", data["native_status"]) is None):
+        raise HextileClientError("Invalid native destination inspection", kind="other")
+    quality = data.get("quality_if_jpg")
+    if (data["format"] == "JPG" and (type(quality) is not int or not 1 <= quality <= 100)
+            or data["format"] == "PNG" and quality is not None):
+        raise HextileClientError("Invalid native destination encoding", kind="other")
+    result.update({key: data[key] for key in required if key != "destination_folder"})
+    result["quality_if_jpg"] = quality
+    for key, pattern in (("attempt_id", r"attempt_[0-9a-f]{32}"),):
+        if data.get(key) is None and key in data:
+            result[key] = None
+        elif type(data.get(key)) is str and re.fullmatch(pattern, data[key]):
+            result[key] = data[key]
+        elif key in data:
+            raise HextileClientError("Invalid native destination attempt", kind="other")
+    if data.get("attempt_revision") is None and "attempt_revision" in data:
+        result["attempt_revision"] = None
+    elif type(data.get("attempt_revision")) is int and data["attempt_revision"] >= 0:
+        result["attempt_revision"] = data["attempt_revision"]
+    elif "attempt_revision" in data:
+        raise HextileClientError("Invalid native destination attempt revision", kind="other")
+    if type(data.get("ownership_live")) is bool:
+        result["ownership_live"] = data["ownership_live"]
+    elif "ownership_live" in data:
+        raise HextileClientError("Invalid native destination ownership", kind="other")
+    # The caller keeps its immutable selected locator; never echo APP absolute paths.
+    return result
 
 
 def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
@@ -836,8 +1102,18 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
         return result
 
     if (not isinstance(body, Mapping) or not _SHADER_SEQUENCE_REQUIRED <= set(body)
-            or set(body) - _SHADER_SEQUENCE_REQUIRED - _SHADER_SEQUENCE_OPTIONAL
-            or body.get("publication_mode") != "deferred"):
+            or set(body) - _SHADER_SEQUENCE_REQUIRED - _SHADER_SEQUENCE_OPTIONAL):
+        refuse()
+    mode = body.get("publication_mode")
+    folder = body.get("folder_export")
+    if (mode not in (None, "deferred")
+            or (mode == "deferred") != (folder is None)
+            or (folder is not None and not _native_folder_intent(folder))):
+        refuse()
+    scale = body.get("supersampling", 1.0)
+    if (type(scale) not in (int, float) or not math.isfinite(scale)
+            or not 100 <= round(scale * 100) <= 200
+            or abs(scale * 100 - round(scale * 100)) > 1e-8):
         refuse()
     ref = body["shader_ref"]
     if (type(ref) is not dict or set(ref) != {"origin", "id"}
@@ -1392,6 +1668,23 @@ class Client:
         """GET /api/workflows/capabilities."""
         return self.get_json("/api/workflows/capabilities")
 
+    def _require_native_render(self, *, still_profile: str | None = None) -> None:
+        """New native semantics require an explicitly advertised peer contract."""
+        try:
+            capabilities = self.get_capabilities()
+        except HextileClientError as exc:
+            if exc.status_code == 404:
+                raise HextileClientError("Native render contract unavailable on this APP peer",
+                                         kind="other", status_code=501) from exc
+            raise
+        native = capabilities.get("native_render") if type(capabilities) is dict else None
+        if (type(native) is not dict or native.get("contract") != "native-render/1"
+                or type(native.get("sequences")) is not dict
+                or type(native.get("stills")) is not dict
+                or still_profile is not None and still_profile not in native["stills"]):
+            raise HextileClientError("Native render contract unavailable on this APP peer",
+                                     kind="other", status_code=501)
+
     def describe_image(self, body: Mapping[str, Any]) -> Any:
         """Ask APP to caption one exact local source; never open image bytes here."""
         return self.post_json(
@@ -1883,6 +2176,8 @@ class Client:
 
     def _shader_sequence_post(self, body: Mapping[str, Any], *, preflight: bool) -> dict[str, Any]:
         validate_shader_sequence_request(body)
+        if body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1:
+            self._require_native_render()
         path = "/api/shaders/sequences/preflight" if preflight else "/api/shaders/sequences"
         try:
             data = self.post_json(path, dict(body),
@@ -1896,6 +2191,22 @@ class Client:
 
     def preflight_shader_sequence(self, body: Mapping[str, Any]) -> dict[str, Any]:
         return self._shader_sequence_post(body, preflight=True)
+
+    def inspect_shader_sequence_output(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(args, Mapping) or set(args) != {"request"}:
+            raise HextileClientError("Expected a closed Shader destination inspection", kind="other", status_code=422)
+        request = args["request"]
+        validate_shader_sequence_request(request)
+        if request.get("folder_export") is None:
+            raise HextileClientError("Inspection needs a selected Shader destination", kind="other", status_code=422)
+        self._require_native_render()
+        try:
+            data = self.post_json("/api/shaders/sequences/inspect", {"request": dict(request)},
+                                  headers={"X-Hextile-Project-Witness": request["project_context_witness"]},
+                                  timeout=LONG_OPERATION_TIMEOUT_S)
+            return _native_inspection_result(data, "shader")
+        except HextileClientError as exc:
+            raise self._shader_sequence_error(exc) from exc
 
     def render_shader_sequence(self, body: Mapping[str, Any]) -> dict[str, Any]:
         return self._shader_sequence_post(body, preflight=False)
@@ -1968,12 +2279,18 @@ class Client:
                     projected[key] = source[key]
             if source.get("format") in ("PNG", "JPG"):
                 projected["format"] = source["format"]
+            if type(source.get("destination_available")) is bool:
+                projected["destination_available"] = source["destination_available"]
+            observation = _native_observation(source.get("observation"))
+            if observation is not None:
+                projected["observation"] = observation
             return projected
         if "folder_export" in data:
             result["folder_export"] = attempt(data["folder_export"])
         if isinstance(data.get("publication_attempts"), list):
             result["publication_attempts"] = [attempt(item) for item in data["publication_attempts"][:8]
                                               if isinstance(item, Mapping)]
+        result.update(_native_sequence_fields(data))
         return result
 
     @staticmethod
@@ -2060,50 +2377,77 @@ class Client:
                 kind="shader_sequence_outcome_unknown", receipt={"status": "unknown"}) from exc
 
     def control_shader_sequence(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        if (not isinstance(args, Mapping) or not {"sequence_id", "action"} <= args.keys()
-                or args.keys() - {"sequence_id", "action", "attempt_id"}):
+        if not isinstance(args, Mapping) or not {"sequence_id", "action"} <= set(args):
             raise HextileClientError("Expected closed Shader sequence control", kind="other", status_code=422)
         sid, action = args["sequence_id"], args["action"]
-        attempt = args.get("attempt_id")
-        if (type(sid) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", sid) is None
-                or type(action) is not str or action not in {"stop", "resume", "cancel_export", "retry_export"}
-                or (action in {"cancel_export", "retry_export"}) != (type(attempt) is str and re.fullmatch(r"attempt_[0-9a-f]{32}", attempt) is not None)
-                or (action in {"stop", "resume"} and "attempt_id" in args)):
+        if type(sid) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", sid) is None or type(action) is not str:
             raise HextileClientError("Invalid Shader sequence control target", kind="other", status_code=422)
-        suffix = {"stop": "stop", "resume": "resume", "cancel_export": "export/cancel",
-                  "retry_export": "export/retry"}[action]
+        headers = None
+        if action == "stop" and set(args) == {"sequence_id", "action", "run_id"}:
+            if type(args["run_id"]) is not str or re.fullmatch(r"[0-9a-f]{32}", args["run_id"]) is None:
+                raise HextileClientError("Stop requires the observed native run_id", kind="other", status_code=422)
+            suffix, body = "stop", {"run_id": args["run_id"]}
+        elif action == "resume" and set(args) == {"sequence_id", "action"}:
+            suffix, body = "resume", None
+        elif action == "continue" and set(args) == {"sequence_id", "action", "request", "inspection_fingerprint"}:
+            request = args["request"]
+            validate_shader_sequence_request(request)
+            if (request.get("folder_export") is None or type(args["inspection_fingerprint"]) is not str
+                    or _WORKSPACE_DIGEST.fullmatch(args["inspection_fingerprint"]) is None):
+                raise HextileClientError("Continue requires the inspected Shader destination", kind="other", status_code=422)
+            self._require_native_render()
+            suffix, body = "continue", {"request": dict(request), "inspection_fingerprint": args["inspection_fingerprint"]}
+            headers = {"X-Hextile-Project-Witness": request["project_context_witness"]}
+        elif action in {"cancel_export", "retry_export"} and set(args) == {"sequence_id", "action", "attempt_id"}:
+            attempt = args["attempt_id"]
+            if type(attempt) is not str or re.fullmatch(r"attempt_[0-9a-f]{32}", attempt) is None:
+                raise HextileClientError("Invalid Shader export attempt", kind="other", status_code=422)
+            suffix, body = {"cancel_export": "export/cancel", "retry_export": "export/retry"}[action], {"attempt_id": attempt}
+        else:
+            raise HextileClientError("Invalid closed Shader sequence control", kind="other", status_code=422)
         try:
-            data = self.post_json(f"/api/shaders/sequences/{sid}/{suffix}",
-                                  {"attempt_id": attempt} if attempt is not None else None)
+            data = self.post_json(f"/api/shaders/sequences/{sid}/{suffix}", body, headers=headers,
+                                  timeout=LONG_OPERATION_TIMEOUT_S if action == "continue" else None)
             if not isinstance(data, Mapping) or data.get("sequence_id") != sid:
                 raise HextileClientError("Invalid Shader sequence control acknowledgement", kind="other", status_code=202)
             statuses = {"queued", "processing", "completed", "completed_with_errors", "failed",
-                        "cancelled", "paused", "incomplete", "stopped"} if attempt is None else {
+                        "cancelled", "paused", "incomplete", "stopped"} if action not in {"cancel_export", "retry_export"} else {
                         "queued", "running", "completed", "failed", "cancelled", "interrupted"}
             if type(data.get("status")) is not str or data["status"] not in statuses:
                 raise HextileClientError("Invalid Shader sequence control acknowledgement", kind="other", status_code=202)
-            if attempt is not None:
+            if action in {"cancel_export", "retry_export"}:
                 folder = data.get("folder_export")
-                if (not isinstance(folder, Mapping) or folder.get("attempt_id") != attempt
+                if (not isinstance(folder, Mapping) or folder.get("attempt_id") != args["attempt_id"]
                         or folder.get("status") != data["status"]):
                     raise HextileClientError("Invalid Shader export control acknowledgement", kind="other", status_code=202)
-            result = {"sequence_id": sid, "action": action}
-            result["status"] = data["status"]
-            if attempt is not None:
-                result["attempt_id"] = attempt
+            result = {"sequence_id": sid, "action": action, "status": data["status"]}
+            if action in {"cancel_export", "retry_export"}:
+                result["attempt_id"] = args["attempt_id"]
+            if action == "stop":
+                result["run_id"] = args["run_id"]
+            if action == "continue":
+                run_id = data.get("run_id")
+                if run_id is not None and (type(run_id) is not str or re.fullmatch(r"[0-9a-f]{32}", run_id) is None):
+                    raise HextileClientError("Invalid Shader Continue run receipt", kind="other", status_code=202)
+                result["run_id"] = run_id
             return result
         except HextileClientError as exc:
             if (exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500
                     or exc.kind == "other" and 200 <= exc.status_code < 300):
                 raise HextileClientError(
-                    "Shader control POST outcome unknown. GET the known sequence_id and exact attempt_id before another action.",
+                    "Shader control POST outcome unknown. GET the known sequence_id and original run/attempt/inspection receipt before another action.",
                     status_code=exc.status_code, kind="shader_sequence_outcome_unknown",
-                    receipt={"status": "unknown"}) from exc
+                    receipt={"status": "unknown", "sequence_id": sid,
+                             **({"inspection_fingerprint": args["inspection_fingerprint"],
+                                 "idempotency_key": args["request"]["idempotency_key"]} if action == "continue" else {})}) from exc
+            if exc.status_code == 409 and self._fractal_code(exc) == "sequence_run_changed":
+                raise HextileClientError("Native Shader run changed. GET fresh status; never retry Stop without its observed run_id.",
+                                         status_code=409, kind="http", receipt={"sequence_id": sid, "code": "sequence_run_changed"}) from exc
             raise self._shader_sequence_error(exc) from exc
         except Exception as exc:
             raise HextileClientError(
-                "Shader control POST outcome unknown. GET the known sequence_id and exact attempt_id before another action.",
-                kind="shader_sequence_outcome_unknown", receipt={"status": "unknown"}) from exc
+                "Shader control POST outcome unknown. GET the known sequence_id and original intent before another action.",
+                kind="shader_sequence_outcome_unknown", receipt={"status": "unknown", "sequence_id": sid}) from exc
 
     @staticmethod
     def _shader_timeline_receipt(data: Any, request_id: str, *, submit: bool) -> dict[str, Any]:
@@ -3748,7 +4092,7 @@ class Client:
         "use_current_view_as_start": (),
         "resume_driver": ("target",),
     }
-    _FRACTAL_KINDS = {"fractal_edit", "fractal_transport", "fractal_open", "fractal_save"}
+    _FRACTAL_KINDS = {"fractal_edit", "fractal_transport", "fractal_open", "fractal_save", "fractal_capture"}
     _FRACTAL_AGENT = {"X-Hextile-Agent": "mcp"}
 
     @staticmethod
@@ -3802,9 +4146,9 @@ class Client:
         for key in ("draft_generation", "source_generation", "viewer_generation", "renderer_generation"):
             if type(value[key]) is not int or value[key] < 0:
                 raise HextileClientError("Invalid Fractal witness", kind="other", status_code=422)
-        if "scene_id" in value and (type(value["scene_id"]) is not str or re.fullmatch(r"scn_[0-9a-f]{8}", value["scene_id"]) is None):
+        if "scene_id" in value and value["scene_id"] is not None and (type(value["scene_id"]) is not str or re.fullmatch(r"scn_[0-9a-f]{8}", value["scene_id"]) is None):
             raise HextileClientError("Invalid Fractal scene id", kind="other", status_code=422)
-        if "scene_revision" in value and cls._fractal_sha(value["scene_revision"]) is None:
+        if "scene_revision" in value and value["scene_revision"] is not None and cls._fractal_sha(value["scene_revision"]) is None:
             raise HextileClientError("Invalid Fractal scene revision", kind="other", status_code=422)
         return value
 
@@ -3865,6 +4209,10 @@ class Client:
             if set(args) != {"client_request_id", "witness", "scene_id"} or re.fullmatch(r"scn_[0-9a-f]{8}", str(args.get("scene_id"))) is None:
                 raise HextileClientError("Fractal open arguments are not closed", kind="other", status_code=422)
             body["scene_id"] = args["scene_id"]
+        elif kind == "fractal_capture":
+            if set(args) != {"client_request_id", "witness"}:
+                raise HextileClientError("Fractal capture takes only its original request and witness", kind="other", status_code=422)
+            self._require_native_render()
         else:
             allowed = {"client_request_id", "witness", "mode", "target_scene_id"}
             if not isinstance(args, Mapping) or not allowed <= set(args) <= allowed | {"name", "scene_revision"}:
@@ -3952,7 +4300,13 @@ class Client:
         if type(data.get("reason")) is str:
             receipt["reason"] = data["reason"]
         body = data.get("result")
+        if data.get("kind") == "fractal_capture" and data["status"] == "applied" and not isinstance(body, dict):
+            raise HextileClientError("Known Fractal mint ID missing; recover the original request", kind="fractal_outcome_unknown",
+                                     receipt={"client_request_id": request_id, "status": "unknown"})
         if isinstance(body, dict):
+            if data.get("kind") == "fractal_capture":
+                receipt["result"] = self._fractal_capture_result(body, minted=data["status"] == "applied")
+                return receipt
             projected: dict[str, Any] = {}
             if type(body.get("scene_id")) is str:
                 projected["scene_id"] = body["scene_id"]
@@ -3965,6 +4319,31 @@ class Client:
             if projected:
                 receipt["result"] = projected
         return receipt
+
+    @classmethod
+    def _fractal_capture_result(cls, body: dict[str, Any], *, minted: bool) -> dict[str, Any]:
+        fields = {"scene_id", "scene_revision", "time", "sample_id", "width", "height"}
+        if minted:
+            fields |= {"render_id", "node_id"}
+        sample, time = body.get("sample_id"), body.get("time")
+        if (set(body) != fields or type(time) is not dict or set(time) != {"num", "den"}
+                or any(type(time[key]) is not str or re.fullmatch(
+                    r"-?[0-9]{1,32}" if key == "num" else r"[1-9][0-9]{0,31}", time[key]) is None
+                    for key in ("num", "den"))
+                or type(sample) is not dict or set(sample) != {"owner_generation", "source_generation",
+                    "evaluation_sequence", "exact_time", "document_hash"}
+                or any(type(sample[key]) is not int or sample[key] < 0 for key in
+                       ("owner_generation", "source_generation", "evaluation_sequence"))
+                or sample["exact_time"] != time or cls._fractal_sha(sample["document_hash"]) is None
+                or any(type(body[key]) is not int or not 1 <= body[key] <= limit
+                       for key, limit in (("width", 2048), ("height", 1024)))
+                or body["scene_id"] is not None and re.fullmatch(r"scn_[0-9a-f]{8}", str(body["scene_id"])) is None
+                or body["scene_revision"] is not None and cls._fractal_sha(body["scene_revision"]) is None
+                or minted and any(type(body[key]) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", body[key]) is None
+                                  for key in ("render_id", "node_id"))):
+            raise HextileClientError("Invalid bounded Fractal capture receipt", kind="fractal_outcome_unknown",
+                                     receipt={"status": "unknown"})
+        return dict(body)
 
     def get_fractal_context(self) -> dict[str, Any]:
         data = self.get_json("/api/agent/live-context", params={"include_nav": 0, "include_active_tool": 0})
@@ -4067,6 +4446,9 @@ class Client:
     def save_fractal_scene(self, args: Mapping[str, Any]) -> dict[str, Any]:
         return self._post_fractal_action("fractal_save", args)
 
+    def capture_fractal_still(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        return self._post_fractal_action("fractal_capture", args)
+
     def get_fractal_request(self, client_request_id: str) -> dict[str, Any]:
         request_id = self._fractal_request_id(client_request_id)
         try:
@@ -4077,7 +4459,7 @@ class Client:
         except HextileClientError as exc:
             if exc.status_code == 410:
                 raise HextileClientError(
-                    "Fractal request outcome unknown. Expiry is not refusal and is not proof a Save was not published.",
+                    "Fractal request outcome unknown. Expiry is not refusal or permission to repeat a capture or Save.",
                     status_code=410, kind="fractal_outcome_unknown",
                     receipt={"client_request_id": request_id, "status": "unknown"},
                 ) from exc
@@ -4090,10 +4472,22 @@ class Client:
             "start_time", "end_time", "frame_count", "seed", "quality", "width", "height",
             "output", "publication_mode",
         }
-        if not isinstance(body, Mapping) or set(body) != required or body.get("publication_mode") != "deferred":
+        optional = {"destination_intent", "project_path", "folder_export"}
+        if (not isinstance(body, Mapping) or not required <= set(body) <= required | optional
+                or body.get("publication_mode") != "deferred"
+                or body.get("folder_export") is not None
+                or ("destination_intent" in body and body["destination_intent"] is not None
+                    and not _native_folder_intent(body["destination_intent"]))
+                or ("project_path" in body and body["project_path"] is not None
+                    and not _absolute_task_path(body["project_path"]))):
             raise HextileClientError("Expected a closed deferred Fractal sequence request", kind="other", status_code=422)
         if self._fractal_sha(body.get("scene_revision")) is None or re.fullmatch(r"scn_[0-9a-f]{8}", str(body.get("scene_id"))) is None:
             raise HextileClientError("Invalid saved Fractal scene identity", kind="other", status_code=422)
+        if (type(body.get("idempotency_key")) is not str or not 1 <= len(body["idempotency_key"]) <= 128
+                or type(body.get("name")) is not str or not 1 <= len(body["name"]) <= 128
+                or body.get("quality") not in {"explore_smoke", "final_8k"}
+                or type(body.get("seed")) is not int or not 0 <= body["seed"] < 2**32):
+            raise HextileClientError("Invalid Fractal sequence choices", kind="other", status_code=422)
         try:
             rate = body["frame_rate"]
             if type(rate) is not dict or set(rate) != {"num", "den"} or any(type(rate[k]) is not int or not 1 <= rate[k] <= 1000000 for k in rate):
@@ -4123,13 +4517,22 @@ class Client:
             raise HextileClientError("Invalid Fractal sequence geometry", kind="other", status_code=422, receipt={"code": "geometry"})
         projection = output.get("projection")
         if projection == "equirectangular":
-            if not (64 <= height <= 8192 and 128 <= width <= 16384 and height % 2 == 0 and width == 2 * height):
+            if (set(output) != {"projection", "pan", "tilt", "roll"}
+                    or any(type(output[key]) not in (int, float) or output[key] != 0
+                           for key in ("pan", "tilt", "roll"))
+                    or not (64 <= height <= 8192 and 128 <= width <= 16384 and height % 2 == 0 and width == 2 * height)):
                 raise HextileClientError(
                     "Fractal equirectangular output requires exact 2:1 and at least 128x64",
                     kind="other", status_code=422, receipt={"code": "geometry"},
                 )
         elif projection in {"fulldome", "fulldome_angular"}:
-            if output.get("diameter") not in {1024, 2048, 4096, 8192} or width != height or width != output["diameter"]:
+            if (set(output) != {"projection", "diameter", "fov_deg", "pan", "tilt", "roll"}
+                    or type(output["diameter"]) is not int
+                    or output["diameter"] not in {1024, 2048, 4096, 8192}
+                    or width != height or width != output["diameter"]
+                    or any(type(output[key]) not in (int, float) or not math.isfinite(output[key])
+                           or not lo <= output[key] <= hi for key, lo, hi in
+                           (("fov_deg", 10, 360), ("pan", -180, 180), ("tilt", -90, 90), ("roll", -180, 180)))):
                 raise HextileClientError(
                     "Fractal Dome output must be square at diameter 1024, 2048, 4096, or 8192",
                     kind="other", status_code=422, receipt={"code": "geometry"},
@@ -4153,8 +4556,13 @@ class Client:
 
     @staticmethod
     def _fractal_sequence_identity(body: Mapping[str, Any]) -> dict[str, str]:
-        # APP FractalSequenceRequest.model_dump includes its default folder_export.
+        # Match APP's backwards-compatible request hash defaults, not a guessed locator.
         request = {**body, "folder_export": None}
+        if request.get("destination_intent") is None:
+            request.pop("destination_intent", None)
+        else:
+            request["destination_intent"] = {**request["destination_intent"],
+                                             "quality_if_jpg": request["destination_intent"].get("quality_if_jpg")}
         output = body["output"]
         if output["projection"] in {"fulldome", "fulldome_angular"}:
             normalized = dict(output)
@@ -4172,6 +4580,8 @@ class Client:
 
     def _fractal_sequence_post(self, body: Mapping[str, Any], *, preflight: bool) -> dict[str, Any]:
         checked = self._fractal_sequence_body(body)
+        if checked.get("destination_intent") is not None or "project_path" in checked:
+            self._require_native_render()
         path = "/api/fractal/sequences/preflight" if preflight else "/api/fractal/sequences"
         try:
             data = self.post_json(path, checked)
@@ -4193,13 +4603,14 @@ class Client:
             return {key: data[key] for key in (*keys, "render_identity")}
         known = self._fractal_sequence_identity(checked)
         if (not isinstance(data, dict) or data.get("sequence_id") != known["sequence_id"]
-                or data.get("request_hash") != known["request_hash"]):
+                or data.get("request_hash") != known["request_hash"]
+                or data.get("status") not in {"queued", "processing", "completed", "completed_with_errors",
+                                               "failed", "cancelled", "incomplete", "paused", "stopped"}):
             raise HextileClientError("Fractal sequence acknowledgement unknown. Read the known sequence id; do not repost.",
                                      kind="fractal_sequence_outcome_unknown",
                                      receipt={"status": "unknown", **known})
         receipt = dict(known)
-        if type(data.get("status")) is str:
-            receipt["status"] = data["status"]
+        receipt["status"] = data["status"]
         for key in ("recipe_hash",):
             if self._fractal_sha(data.get(key)):
                 receipt[key] = data[key]
@@ -4207,6 +4618,23 @@ class Client:
 
     def preflight_fractal_sequence(self, body: Mapping[str, Any]) -> dict[str, Any]:
         return self._fractal_sequence_post(body, preflight=True)
+
+    def inspect_fractal_sequence_output(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(args, Mapping) or set(args) != {"request", "destination"}:
+            raise HextileClientError("Expected a closed Fractal destination inspection", kind="other", status_code=422)
+        request = self._fractal_sequence_body(args["request"])
+        destination = args["destination"]
+        if (not _native_folder_intent(destination)
+                or (request.get("destination_intent") is not None
+                    and not _same_native_intent(request["destination_intent"], destination))):
+            raise HextileClientError("Inspection destination differs from the retained Fractal intent", kind="other", status_code=422)
+        self._require_native_render()
+        try:
+            data = self.post_json("/api/fractal/sequences/inspect", {"request": request, "destination": dict(destination)},
+                                  timeout=LONG_OPERATION_TIMEOUT_S)
+            return _native_inspection_result(data, "fractal")
+        except HextileClientError as exc:
+            raise self._fractal_sequence_error(exc, uncertain=False) from exc
 
     def render_fractal_sequence(self, body: Mapping[str, Any]) -> dict[str, Any]:
         return self._fractal_sequence_post(body, preflight=False)
@@ -4227,7 +4655,8 @@ class Client:
         if not isinstance(data, dict) or data.get("sequence_id") != sequence_id:
             raise HextileClientError("Invalid Fractal sequence status", kind="other")
         receipt: dict[str, Any] = {"sequence_id": sequence_id}
-        if type(data.get("status")) is str:
+        if data.get("status") in {"queued", "processing", "completed", "completed_with_errors",
+                                  "failed", "cancelled", "incomplete", "paused", "stopped"}:
             receipt["status"] = data["status"]
         for key in ("request_hash", "recipe_hash", "render_identity"):
             if self._fractal_sha(data.get(key)):
@@ -4262,6 +4691,11 @@ class Client:
                 if type(value) in (int, float) and not isinstance(value, bool) and math.isfinite(value):
                     projected[key] = value
             receipt["output"] = projected
+        receipt.update(_native_sequence_fields(data))
+        destination = data.get("destination_intent")
+        if _native_folder_intent(destination):
+            receipt["destination_intent"] = {"format": destination["format"],
+                                             "quality_if_jpg": destination.get("quality_if_jpg")}
         return receipt
 
     @classmethod
@@ -4277,6 +4711,11 @@ class Client:
                 out[key] = data[key]
         if cls._fractal_sha(data.get("transaction_fingerprint")):
             out["transaction_fingerprint"] = data["transaction_fingerprint"]
+        if type(data.get("destination_available")) is bool:
+            out["destination_available"] = data["destination_available"]
+        observation = _native_observation(data.get("observation"))
+        if observation is not None:
+            out["observation"] = observation
         return out
 
     def _fractal_export_args(self, args: Mapping[str, Any], *, submit: bool) -> tuple[str, dict[str, Any]]:
@@ -4355,43 +4794,92 @@ class Client:
         if not isinstance(args, Mapping) or "sequence_id" not in args or "action" not in args:
             raise HextileClientError("Expected closed Fractal sequence control", kind="other", status_code=422)
         sequence_id, action = args["sequence_id"], args["action"]
-        if type(sequence_id) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", sequence_id) is None:
+        if (type(sequence_id) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", sequence_id) is None
+                or type(action) is not str):
             raise HextileClientError("Expected a known Fractal sequence id", kind="other", status_code=422)
         publication = action in {"cancel_export", "retry_export", "open_folder"}
-        if action in {"stop", "resume"}:
-            if set(args) != {"sequence_id", "action"}:
-                raise HextileClientError("Native Fractal control takes no attempt", kind="other", status_code=422)
-            suffix, body = action, None
+        if action == "stop" and set(args) == {"sequence_id", "action", "run_id"}:
+            if type(args["run_id"]) is not str or re.fullmatch(r"[0-9a-f]{32}", args["run_id"]) is None:
+                raise HextileClientError("Stop requires the observed Fractal run_id", kind="other", status_code=422)
+            suffix, body = "stop", {"run_id": args["run_id"]}
+        elif action == "resume" and set(args) == {"sequence_id", "action"}:
+            suffix, body = "resume", None
+        elif action == "continue" and set(args) == {"sequence_id", "action", "request", "destination", "inspection_fingerprint"}:
+            request = self._fractal_sequence_body(args["request"])
+            destination = args["destination"]
+            if (not _native_folder_intent(destination)
+                    or request.get("destination_intent") is not None
+                    and not _same_native_intent(request["destination_intent"], destination)
+                    or self._fractal_sha(args["inspection_fingerprint"]) is None):
+                raise HextileClientError("Continue requires the exact inspected Fractal intent", kind="other", status_code=422)
+            self._require_native_render()
+            suffix, body = "continue", {"request": request, "destination": dict(destination),
+                                        "inspection_fingerprint": args["inspection_fingerprint"]}
         elif publication:
             if set(args) != {"sequence_id", "action", "attempt_id", "attempt_revision"}:
                 raise HextileClientError("Publication control requires the observed attempt id and revision", kind="other", status_code=422)
-            if type(args["attempt_id"]) is not str or re.fullmatch(r"attempt_[0-9a-f]{32}", args["attempt_id"]) is None or type(args["attempt_revision"]) is not int:
+            if (type(args["attempt_id"]) is not str or re.fullmatch(r"attempt_[0-9a-f]{32}", args["attempt_id"]) is None
+                    or type(args["attempt_revision"]) is not int or args["attempt_revision"] < 0):
                 raise HextileClientError("Invalid Fractal export attempt", kind="other", status_code=422)
             suffix = {"cancel_export": "export/cancel", "retry_export": "export/retry", "open_folder": "export/open-folder"}[action]
             body = {"attempt_id": args["attempt_id"], "attempt_revision": args["attempt_revision"]}
         else:
             raise HextileClientError("Invalid Fractal sequence control", kind="other", status_code=422)
         try:
-            data = self.post_json(f"/api/fractal/sequences/{sequence_id}/{suffix}", body)
+            data = self.post_json(f"/api/fractal/sequences/{sequence_id}/{suffix}", body,
+                                  timeout=LONG_OPERATION_TIMEOUT_S if action == "continue" else None)
         except HextileClientError as exc:
             if self._fractal_uncertain(exc):
                 raise HextileClientError(
                     "Fractal control POST outcome unknown. GET the known sequence before another action.",
                     status_code=exc.status_code, kind="fractal_sequence_outcome_unknown",
-                    receipt={"status": "unknown", "sequence_id": sequence_id},
+                    receipt={"status": "unknown", "sequence_id": sequence_id,
+                             **({"inspection_fingerprint": args["inspection_fingerprint"],
+                                 "idempotency_key": args["request"]["idempotency_key"]} if action == "continue" else {})},
                 ) from exc
+            if exc.status_code == 409 and self._fractal_code(exc) == "sequence_run_changed":
+                raise HextileClientError("Native Fractal run changed. GET fresh status; never retry Stop without its observed run_id.",
+                                         status_code=409, kind="http", receipt={"sequence_id": sequence_id,
+                                                                                "code": "sequence_run_changed"}) from exc
             raise self._fractal_sequence_error(exc, uncertain=False) from exc
+        if not isinstance(data, dict) or data.get("sequence_id") != sequence_id:
+            raise HextileClientError("Fractal control acknowledgement unknown; GET the known sequence",
+                                     kind="fractal_sequence_outcome_unknown", status_code=202,
+                                     receipt={"sequence_id": sequence_id, "status": "unknown"})
         receipt = {"sequence_id": sequence_id, "action": action}
-        if isinstance(data, dict) and type(data.get("status")) is str:
+        if action in {"stop", "resume", "continue"} and data.get("status") not in {
+                "queued", "processing", "completed", "completed_with_errors",
+                "failed", "cancelled", "incomplete", "paused", "stopped"}:
+            raise HextileClientError("Fractal control acknowledgement unknown; GET the known sequence",
+                                     kind="fractal_sequence_outcome_unknown", status_code=202,
+                                     receipt={"sequence_id": sequence_id, "status": "unknown"})
+        if data.get("status") in {"queued", "processing", "completed", "completed_with_errors",
+                                  "failed", "cancelled", "incomplete", "paused", "stopped",
+                                  "running", "interrupted"}:
             receipt["status"] = data["status"]
         if publication and type(args.get("attempt_id")) is str:
             receipt["attempt_id"] = args["attempt_id"]
+            receipt["attempt_revision"] = args["attempt_revision"]
+        if action == "stop":
+            receipt["run_id"] = args["run_id"]
+        if action == "continue":
+            run_id = data.get("run_id")
+            if run_id is not None and (type(run_id) is not str or re.fullmatch(r"[0-9a-f]{32}", run_id) is None):
+                raise HextileClientError("Fractal Continue acknowledgement unknown; GET the known sequence",
+                                         kind="fractal_sequence_outcome_unknown", status_code=202,
+                                         receipt={"sequence_id": sequence_id, "status": "unknown"})
+            receipt["run_id"] = run_id
         return receipt
 
     # ── Shader output tools ─────────────────────────────────────────────
 
     def _shader_output_post(self, operation: str, args: Mapping[str, Any], path: str) -> dict:
         _shader_output_args(operation, args)
+        if ((operation in {"preflight", "still"} and args.get("profile") == "shader-raster-still/1")
+                or operation == "preflight" and (args.get("allow_unpreviewed_revision") is True
+                    or args.get("profile") == "shader-linear-rgba-exr/1"
+                    and args["output"].get("projection", "equirectangular") != "equirectangular")):
+            self._require_native_render(still_profile=args["profile"])
         try:
             result = self.request_json("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
         except HextileClientError as exc:

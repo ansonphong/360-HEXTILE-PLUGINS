@@ -287,6 +287,7 @@ def test_shader_render_export_mcp_tool_chain() -> None:
     sid = "seq_" + "a" * 32
     digest = "sha256:" + "c" * 64
     attempt = "attempt_" + "c" * 32
+    run_id = "d" * 32
     folder = {"sequence_id": sid, "destination_folder": "C:\\Chosen\\Frames", "format": "PNG"}
     jsonschema.validate(folder, tools["preflight_shader_sequence_export"]["inputSchema"])
     jsonschema.validate({**folder, "transaction_fingerprint": digest},
@@ -303,6 +304,8 @@ def test_shader_render_export_mcp_tool_chain() -> None:
             Client().preflight_shader_sequence_export(invalid)
     for action in ("stop", "resume", "cancel_export", "retry_export"):
         args = {"sequence_id": sid, "action": action}
+        if action == "stop":
+            args["run_id"] = run_id
         if action.endswith("export"):
             args["attempt_id"] = attempt
         jsonschema.validate(args, tools["control_shader_sequence"]["inputSchema"])
@@ -372,6 +375,8 @@ def test_shader_render_export_mcp_tool_chain() -> None:
     for action, suffix in (("stop", "/stop"), ("resume", "/resume"),
                            ("retry_export", "/export/retry")):
         arguments = {"sequence_id": sid, "action": action}
+        if action == "stop":
+            arguments["run_id"] = run_id
         if action == "retry_export":
             arguments["attempt_id"] = attempt
         assert transport.control_shader_sequence(arguments)["action"] == action
@@ -388,7 +393,7 @@ def test_shader_render_export_mcp_tool_chain() -> None:
                 {"sequence_id": sid},
                 {"sequence_id": "seq_" + "f" * 32, "status": "queued"}):
         malformed = Client(opener=lambda *_a, _bad=bad, **_kw: Response(_bad))
-        for action_args in ({"sequence_id": sid, "action": "stop"},
+        for action_args in ({"sequence_id": sid, "action": "stop", "run_id": run_id},
                             {"sequence_id": sid, "action": "retry_export", "attempt_id": attempt}):
             with pytest.raises(HextileClientError) as control_unknown:
                 malformed.control_shader_sequence(action_args)
@@ -487,7 +492,8 @@ def test_shader_render_export_mcp_tool_chain() -> None:
         preflight_error = json.loads(preflight["content"][0]["text"])
         assert preflight_error["kind"] == "http" and preflight_error["status_code"] == status
 
-    if importlib.util.find_spec("mcp") is not None:
+    sdk_spec = importlib.util.find_spec("mcp")
+    if sdk_spec is not None and sdk_spec.origin is not None:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
         script = ("import sys; sys.path.insert(0, " + repr(str(MCP_DIR)) + "); "
@@ -513,10 +519,100 @@ def test_shader_render_export_mcp_tool_chain() -> None:
                             "export_shader_sequence"} <= {tool.name for tool in catalog.tools}
                     for name, args in (("preflight_shader_sequence", body), ("render_shader_sequence", body),
                                        ("get_shader_sequence", {"sequence_id": sid}),
-                                       ("control_shader_sequence", {"sequence_id": sid, "action": "stop"}),
+                                       ("control_shader_sequence", {"sequence_id": sid, "action": "stop", "run_id": run_id}),
                                        ("preflight_shader_sequence_export", folder),
                                        ("export_shader_sequence", {**folder, "transaction_fingerprint": digest})):
                         result = await session.call_tool(name, args)
                         assert result.isError is False
                         assert json.loads(result.content[0].text)["sequence_id"] == sid
         asyncio.run(exercise_sdk())
+
+
+def test_native_shader_direct_inspect_continue_and_observed_stop() -> None:
+    tools = {tool["name"]: tool for tool in HextileMcpServer(client=Client()).handle_rpc(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})["result"]["tools"]}
+    digest = "sha256:" + "a" * 64
+    sequence_id = "seq_" + "b" * 32
+    run_id = "c" * 32
+    folder = {"destination_folder": "C:\\chosen\\native", "format": "JPG", "quality_if_jpg": 91}
+    request = {"shader_ref": {"origin": "project", "id": "aurora"},
+               "project_context_witness": "project-witness", "working_revision": 2,
+               "document_hash": digest, "source_hash": digest,
+               "idempotency_key": "direct-1", "name": "Aurora",
+               "frame_rate": {"num": 24, "den": 1}, "frame_count": 24,
+               "start_time": {"num": "0", "den": "1"}, "end_time": {"num": "1", "den": "1"},
+               "width": 2048, "height": 1024, "seed": 7, "supersampling": 1.25,
+               "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0},
+               "folder_export": folder}
+    jsonschema.validate(request, tools["render_shader_sequence"]["inputSchema"])
+    jsonschema.validate({"request": request}, tools["inspect_shader_sequence_output"]["inputSchema"])
+    control = {"sequence_id": sequence_id, "action": "continue", "request": request,
+               "inspection_fingerprint": digest}
+    jsonschema.validate(control, tools["control_shader_sequence"]["inputSchema"])
+    seen: list[Any] = []
+    def opener(req: Any, timeout=None):
+        seen.append(req)
+        if req.full_url.endswith("/capabilities"):
+            return _Resp({"native_render": {"contract": "native-render/1", "sequences": {}, "stills": {}}})
+        if req.full_url.endswith("/inspect"):
+            return _Resp({"status": "unfinished", "sequence_id": sequence_id,
+                          "producer": "shader", "render_identity": digest, "recipe_hash": digest,
+                          "destination_folder": folder["destination_folder"], "format": "JPG",
+                          "quality_if_jpg": 91, "frames_completed": 7, "frame_count": 24,
+                          "native_status": "incomplete", "publication_state": "direct",
+                          "inspection_fingerprint": digest, "ownership_live": False})
+        if req.full_url.endswith("/continue"):
+            return _Resp({"sequence_id": sequence_id, "status": "queued", "run_id": run_id})
+        if req.full_url.endswith("/stop"):
+            return _Resp({"sequence_id": sequence_id, "status": "processing"})
+        if req.get_method() == "GET":
+            return _Resp({"sequence_id": sequence_id, "status": "processing",
+                          "frames_completed": 7, "frame_count": 24, "ownership_live": True,
+                          "render_observation": {"run_id": run_id, "revision": 3,
+                                                 "phase": "checking", "checked_count": 2,
+                                                 "check_total": 7, "verified_cursor": 0,
+                                                 "durations_ms": [120], "sample_count": 1},
+                          "continuation_receipt": {"key": request["idempotency_key"],
+                                                   "request_hash": digest,
+                                                   "inspection_fingerprint": digest, "run_id": run_id},
+                          "accepted_settings": {"supersampling": 1.25, "frame_count": 24,
+                                                "selected_resource_frames": [{"private": "resource"}]}})
+        raise AssertionError(req.full_url)
+    client = Client(base_url=BASE, opener=opener)
+    inspected = client.inspect_shader_sequence_output({"request": request})
+    assert inspected["inspection_fingerprint"] == digest
+    assert "destination_folder" not in inspected
+    accepted = client.control_shader_sequence(control)
+    assert accepted["run_id"] == run_id
+    detail = client.get_shader_sequence(sequence_id)
+    assert detail["frames_completed"] == 7
+    assert detail["render_observation"]["verified_cursor"] == 0
+    assert detail["render_observation"]["checked_count"] == 2
+    assert detail["continuation_receipt"]["run_id"] == run_id
+    assert detail["accepted_settings"] == {"supersampling": 1.25, "frame_count": 24}
+    assert client.control_shader_sequence({"sequence_id": sequence_id, "action": "stop",
+                                           "run_id": run_id})["run_id"] == run_id
+    assert json.loads(seen[-1].data) == {"run_id": run_id}
+    assert any(req.get_header("X-hextile-project-witness") == "project-witness"
+               for req in seen if req.full_url.endswith(("/inspect", "/continue")))
+    assert folder["destination_folder"] not in json.dumps(inspected)
+
+
+def test_native_render_new_semantics_require_advertised_contract() -> None:
+    body = {"shader_ref": {"origin": "user", "id": "known"},
+            "project_context_witness": "w", "working_revision": 1,
+            "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64,
+            "idempotency_key": "one", "name": "One", "frame_rate": {"num": 1, "den": 1},
+            "frame_count": 1, "start_time": {"num": "0", "den": "1"},
+            "end_time": {"num": "1", "den": "1"}, "width": 1024, "height": 512,
+            "seed": 0, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0},
+            "folder_export": {"destination_folder": "/chosen", "format": "PNG"}}
+    seen: list[str] = []
+    def old_peer(req: Any, timeout=None):
+        seen.append(req.full_url)
+        return _Resp({"capabilities": []})
+    client = Client(base_url=BASE, opener=old_peer)
+    with pytest.raises(HextileClientError) as error:
+        client.render_shader_sequence(body)
+    assert error.value.status_code == 501
+    assert seen == [f"{BASE}/api/workflows/capabilities"]

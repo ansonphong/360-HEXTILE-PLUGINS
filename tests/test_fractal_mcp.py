@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import sys
 import urllib.error
@@ -31,7 +32,9 @@ NAMES = (
     "open_fractal_scene",
     "save_fractal_scene",
     "get_fractal_request",
+    "capture_fractal_still",
     "preflight_fractal_sequence",
+    "inspect_fractal_sequence_output",
     "render_fractal_sequence",
     "get_fractal_sequence",
     "control_fractal_sequence",
@@ -116,11 +119,13 @@ def test_fractal_tools_are_closed_and_classified() -> None:
     assert tuple(name for name in TOOL_NAMES if name in NAMES) == NAMES
     read_only = {
         "get_fractal_context", "get_fractal_request",
-        "preflight_fractal_sequence", "get_fractal_sequence", "preflight_fractal_sequence_export",
+        "preflight_fractal_sequence", "inspect_fractal_sequence_output",
+        "get_fractal_sequence", "preflight_fractal_sequence_export",
     }
     for name in NAMES:
         tool = _schema(name)
-        assert tool["inputSchema"]["additionalProperties"] is False
+        branches = tool["inputSchema"].get("oneOf", [tool["inputSchema"]])
+        assert all(branch["additionalProperties"] is False for branch in branches)
         assert tool["annotations"]["readOnlyHint"] is (name in read_only)
         assert tool["annotations"]["destructiveHint"] is False
         assert "arm" not in json.dumps(tool["inputSchema"])
@@ -668,7 +673,7 @@ def test_export_posts_fingerprint_and_control_routes() -> None:
     })
     assert opened["action"] == "open_folder"
     assert "path" not in opened
-    client.control_fractal_sequence({"sequence_id": SEQ, "action": "stop"})
+    client.control_fractal_sequence({"sequence_id": SEQ, "action": "stop", "run_id": "c" * 32})
     client.control_fractal_sequence({
         "sequence_id": SEQ, "action": "retry_export", "attempt_id": ATTEMPT, "attempt_revision": 2,
     })
@@ -707,7 +712,12 @@ def test_sequence_detail_keeps_current_attempt_for_controls_without_paths() -> N
         return _Response({"sequence_id": SEQ, "status": "completed", "frame_rate": {"num": 30000, "den": 1001},
                           "start_time": {"num": "0", "den": "1"}, "end_time": {"num": "1001", "den": "15000"},
                           "attempt_id": ATTEMPT, "attempt_revision": 4, "folder_export": attempt,
-                          "publication_attempts": [attempt], "frames_completed": 2, "frames_failed": 0})
+                          "publication_attempts": [attempt], "frames_completed": 2, "frames_failed": 0,
+                          "ownership_live": False, "render_observation": {"run_id": "c" * 32,
+                          "revision": 5, "phase": "checking", "verified_cursor": 0,
+                          "checked_count": 1, "check_total": 2, "durations_ms": [30],
+                          "sample_count": 1},
+                          "destination_intent": {"destination_folder": "/tmp/secret", "format": "PNG"}})
     result = Client(opener=opener).get_fractal_sequence(SEQ)
     assert result["attempt_id"] == ATTEMPT
     assert result["attempt_revision"] == 4
@@ -715,6 +725,9 @@ def test_sequence_detail_keeps_current_attempt_for_controls_without_paths() -> N
     assert result["publication_attempts"] == [result["folder_export"]]
     assert result["frame_rate"] == {"num": 30000, "den": 1001}
     assert result["start_time"] == {"num": "0", "den": "1"}
+    assert result["render_observation"]["checked_count"] == 1
+    assert result["render_observation"]["verified_cursor"] == 0
+    assert result["destination_intent"] == {"format": "PNG", "quality_if_jpg": None}
     assert "/tmp" not in json.dumps(result)
 
 
@@ -739,3 +752,90 @@ def test_exact_sequence_range_refuses_before_http(over: dict[str, Any]) -> None:
     with pytest.raises(HextileClientError) as exc:
         Client(opener=unexpected).preflight_fractal_sequence(_sequence(**over))
     assert exc.value.status_code == 422
+
+
+def test_fractal_capture_known_mint_and_lost_ack_recover_original_request() -> None:
+    witness = _witness()
+    witness["scene_id"] = None
+    witness["scene_revision"] = None
+    args = {"client_request_id": "capture_once", "witness": witness}
+    jsonschema.validate(args, _schema("capture_fractal_still")["inputSchema"])
+    sample = {"owner_generation": 2, "source_generation": 1,
+              "evaluation_sequence": 7, "exact_time": {"num": "1", "den": "2"},
+              "document_hash": SHA}
+    result = {"scene_id": None, "scene_revision": None, "time": sample["exact_time"],
+              "sample_id": sample, "width": 1024, "height": 512,
+              "render_id": "render_exact", "node_id": "node_exact"}
+    seen: list[Any] = []
+    def opener(req: Any, timeout=None):
+        seen.append(req)
+        if req.full_url.endswith("/capabilities"):
+            return _Response({"native_render": {"contract": "native-render/1", "sequences": {}, "stills": {}}})
+        if req.get_method() == "POST":
+            raise urllib.error.URLError(TimeoutError())
+        return _Response({"status": "applied", "kind": "fractal_capture", "result": result})
+    client = Client(opener=opener)
+    with pytest.raises(HextileClientError) as unknown:
+        client.capture_fractal_still(args)
+    assert unknown.value.kind == "fractal_outcome_unknown"
+    assert unknown.value.receipt == {"client_request_id": "capture_once", "status": "unknown"}
+    recovered = client.get_fractal_request("capture_once")
+    assert recovered["result"]["render_id"] == "render_exact"
+    assert recovered["result"]["sample_id"] == sample
+    assert [req.get_method() for req in seen] == ["GET", "POST", "GET"]
+    assert json.loads(seen[1].data) == {"kind": "fractal_capture", **args}
+    assert "/requests/capture_once" in seen[-1].full_url
+    def expired(req: Any, timeout=None):
+        assert req.get_method() == "GET" and "/requests/capture_once" in req.full_url
+        raise _http_error(410, "request_expired")
+    with pytest.raises(HextileClientError) as expired_receipt:
+        Client(opener=expired).get_fractal_request("capture_once")
+    assert expired_receipt.value.kind == "fractal_outcome_unknown"
+    assert expired_receipt.value.receipt == {"client_request_id": "capture_once", "status": "unknown"}
+
+
+def test_fractal_inspect_continue_preserves_intent_and_run_fence() -> None:
+    intent = {"destination_folder": "D:\\chosen\\frames", "format": "PNG"}
+    request = _sequence(destination_intent=intent, project_path="D:\\Projects\\Current")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "360-HEXTILE-APP"))
+    from plugins.fractal.backend.sequence_samples import FractalSequenceRequest
+    frozen = FractalSequenceRequest.model_validate(request).model_dump(mode="json")
+    expected_hash = "sha256:" + hashlib.sha256(json.dumps(
+        frozen, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    assert Client._fractal_sequence_identity(request)["request_hash"] == expected_hash
+    jsonschema.validate(request, _schema("render_fractal_sequence")["inputSchema"])
+    jsonschema.validate({"request": request, "destination": intent},
+                        _schema("inspect_fractal_sequence_output")["inputSchema"])
+    run_id = "d" * 32
+    seen: list[Any] = []
+    def opener(req: Any, timeout=None):
+        seen.append(req)
+        if req.full_url.endswith("/capabilities"):
+            return _Response({"native_render": {"contract": "native-render/1", "sequences": {}, "stills": {}}})
+        if req.full_url.endswith("/inspect"):
+            return _Response({"status": "unfinished", "sequence_id": SEQ,
+                              "producer": "fractal", "render_identity": SHA,
+                              "recipe_hash": SHA, "destination_folder": intent["destination_folder"],
+                              "format": "PNG", "quality_if_jpg": None,
+                              "frames_completed": 1, "frame_count": 2,
+                              "native_status": "incomplete", "publication_state": "not_admitted",
+                              "inspection_fingerprint": SHA, "ownership_live": False})
+        if req.full_url.endswith("/continue"):
+            return _Response({"sequence_id": SEQ, "status": "queued", "run_id": run_id})
+        if req.full_url.endswith("/stop"):
+            return _Response({"sequence_id": SEQ, "status": "processing"})
+        raise AssertionError(req.full_url)
+    client = Client(opener=opener)
+    inspected = client.inspect_fractal_sequence_output({"request": request, "destination": intent})
+    assert inspected["inspection_fingerprint"] == SHA
+    assert "destination_folder" not in inspected
+    continued = client.control_fractal_sequence({"sequence_id": SEQ, "action": "continue",
+                                                  "request": request, "destination": intent,
+                                                  "inspection_fingerprint": SHA})
+    assert continued["run_id"] == run_id
+    client.control_fractal_sequence({"sequence_id": SEQ, "action": "stop", "run_id": run_id})
+    assert json.loads(seen[-1].data) == {"run_id": run_id}
+    assert json.loads(seen[-2].data)["request"]["project_path"] == request["project_path"]
+    with pytest.raises(HextileClientError):
+        client.control_fractal_sequence({"sequence_id": SEQ, "action": "stop", "run_id": "old"})
+    assert len(seen) == 5

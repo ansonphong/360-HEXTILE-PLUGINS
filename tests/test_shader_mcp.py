@@ -120,6 +120,57 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
     assert all(block["type"] != "text" for block in result["content"])
 
 
+def test_raster_still_and_dome_exr_preflight_use_native_contract(monkeypatch) -> None:
+    digest = "sha256:" + "a" * 64
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    owner = {"request_id": request_id, "shader": {"origin": "user", "shaderId": "aurora"},
+             "project_context_witness": "w", "base": {"kind": "saved", "working_revision": 1,
+             "document_hash": digest, "source_hash": digest},
+             "studio_surface_id": "surface", "expected_edit_sequence": 1}
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    schema = next(tool["inputSchema"] for tool in SHADER_EXTENSION_TOOLS
+                  if tool["name"] == "shader_preflight_still_export")
+    raster = {**owner, "profile": "shader-raster-still/1",
+              "output": {"projection": "equirectangular", "encoding": "jpg",
+                         "width": 2048, "height": 1024, "output_path": "D:\\Stills\\frame.jpg"},
+              "allow_unpreviewed_revision": True}
+    dome_exr = {**owner, "profile": "shader-linear-rgba-exr/1",
+                "output": {"projection": "fulldome", "width": 2048, "height": 2048,
+                           "fov_deg": 180, "pan": 0, "tilt": 0, "roll": 0,
+                           "output_path": "D:\\Stills\\dome.exr"}}
+    jsonschema.validate(raster, schema)
+    jsonschema.validate(dome_exr, schema)
+    seen: list[tuple[str, Any]] = []
+    client = Client(opener=lambda *_a, **_kw: pytest.fail("native request_json is injected"))
+    monkeypatch.setattr(client, "get_capabilities", lambda: {"native_render": {
+        "contract": "native-render/1", "sequences": {},
+        "stills": {"shader-raster-still/1": {}, "shader-linear-rgba-exr/1": {}}}})
+    def reply(method, path, body=None, **kwargs):
+        seen.append((path, body))
+        return {"request_id": request_id, "state": "pending"}
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.preflight_shader_still(raster)["state"] == "pending"
+    assert seen[-1][1]["allow_unpreviewed_revision"] is True
+    assert client.preflight_shader_still(dome_exr)["state"] == "pending"
+    for output in ({**raster["output"], "quality_if_jpg": 91},
+                   {**raster["output"], "width": 4096, "height": 1024},
+                   {**dome_exr["output"], "width": 1024}):
+        with pytest.raises(HextileClientError):
+            client.preflight_shader_still({**(raster if "encoding" in output else dome_exr),
+                                           "output": output})
+    assert len(seen) == 2
+    job = {"job_id": "b" * 32, "state": "completed", "progress": 1.0,
+           "idempotency_key": request_id,
+           "output": {"projection": "equirectangular", "width": 2048, "height": 1024,
+                      "encoding": "jpg", "file": "frame.jpg"}}
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_kw: {
+        "request_id": request_id, "profile": "shader-raster-still/1",
+        "job": job, "state": "completed"})
+    result = client.get_shader_output_job({"shader": owner["shader"], "project_context_witness": "w",
+                                           "request_id": request_id, "profile": "shader-raster-still/1"})
+    assert result["job"]["output"]["file"] == "frame.jpg"
+
+
 def test_shader_preview_binary_transport_requires_explicit_image_opt_in() -> None:
     shader = {"origin": "user", "shaderId": "aurora"}
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"

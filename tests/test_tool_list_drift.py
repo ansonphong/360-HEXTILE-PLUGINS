@@ -135,6 +135,7 @@ EXPECTED_TOOLS = (
     "propose_shader",
     "control_shader_timeline",
     "preflight_shader_sequence",
+    "inspect_shader_sequence_output",
     "render_shader_sequence",
     "get_shader_sequence",
     "control_shader_sequence",
@@ -151,7 +152,9 @@ EXPECTED_TOOLS = (
     "open_fractal_scene",
     "save_fractal_scene",
     "get_fractal_request",
+    "capture_fractal_still",
     "preflight_fractal_sequence",
+    "inspect_fractal_sequence_output",
     "render_fractal_sequence",
     "get_fractal_sequence",
     "control_fractal_sequence",
@@ -174,7 +177,9 @@ FRACTAL_CANONICAL_AHEAD = frozenset({
     "open_fractal_scene",
     "save_fractal_scene",
     "get_fractal_request",
+    "capture_fractal_still",
     "preflight_fractal_sequence",
+    "inspect_fractal_sequence_output",
     "render_fractal_sequence",
     "get_fractal_sequence",
     "control_fractal_sequence",
@@ -253,11 +258,12 @@ def test_open4_annotations_partition() -> None:
     assert not {"open_shader_workspace", "register_shader_update"} & _DESTRUCTIVE
     assert {
         "get_fractal_context", "get_fractal_request",
-        "preflight_fractal_sequence", "get_fractal_sequence", "preflight_fractal_sequence_export",
+        "preflight_fractal_sequence", "inspect_fractal_sequence_output",
+        "get_fractal_sequence", "preflight_fractal_sequence_export",
     } <= _READ_ONLY
     assert {
         "apply_fractal_edits", "control_fractal_timeline", "open_fractal_scene", "save_fractal_scene",
-        "render_fractal_sequence", "control_fractal_sequence", "export_fractal_sequence",
+        "capture_fractal_still", "render_fractal_sequence", "control_fractal_sequence", "export_fractal_sequence",
     } <= _MUTATING
     assert not FRACTAL_CANONICAL_AHEAD & _DESTRUCTIVE
     assert {
@@ -351,7 +357,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 107 and len(SHADER_EXTENSION_TOOLS) == 47
+    assert len(TOOLS) == 110 and len(SHADER_EXTENSION_TOOLS) == 47
 
 
 def test_trusted_local_file_contract() -> None:

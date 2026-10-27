@@ -125,6 +125,7 @@ TOOL_NAMES = (
     "propose_shader",
     "control_shader_timeline",
     "preflight_shader_sequence",
+    "inspect_shader_sequence_output",
     "render_shader_sequence",
     "get_shader_sequence",
     "control_shader_sequence",
@@ -141,7 +142,9 @@ TOOL_NAMES = (
     "open_fractal_scene",
     "save_fractal_scene",
     "get_fractal_request",
+    "capture_fractal_still",
     "preflight_fractal_sequence",
+    "inspect_fractal_sequence_output",
     "render_fractal_sequence",
     "get_fractal_sequence",
     "control_fractal_sequence",
@@ -198,6 +201,7 @@ _READ_ONLY = frozenset(
         "get_shader_context",
         "get_shader_parameters",
         "preflight_shader_sequence",
+        "inspect_shader_sequence_output",
         "get_shader_sequence",
         "preflight_shader_sequence_export",
         "get_shader_update",
@@ -205,6 +209,7 @@ _READ_ONLY = frozenset(
         "get_fractal_context",
         "get_fractal_request",
         "preflight_fractal_sequence",
+        "inspect_fractal_sequence_output",
         "get_fractal_sequence",
         "preflight_fractal_sequence_export",
         "get_local_access_status",
@@ -265,6 +270,7 @@ _MUTATING = frozenset(
         "control_fractal_timeline",
         "open_fractal_scene",
         "save_fractal_scene",
+        "capture_fractal_still",
         "render_fractal_sequence",
         "control_fractal_sequence",
         "export_fractal_sequence",
@@ -310,6 +316,13 @@ _CONTROL_TOOLS = frozenset(
         "get_seed_job",
         "get_logs",
         "get_sequence",
+        "get_shader_sequence",
+        "control_shader_sequence",
+        "get_fractal_sequence",
+        "control_fractal_sequence",
+        "get_fractal_request",
+        "shader_get_output_job",
+        "shader_stop_output_job",
         "get_batch",
         "get_batch_items",
         "cancel_run",
@@ -730,6 +743,16 @@ _SHADER_SEQUENCE_OUTPUT = {"oneOf": [
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
                     "roll": {"type": "number", "minimum": -180, "maximum": 180}}),
 ]}
+_NATIVE_FOLDER_INTENT = _shader_closed({
+    "destination_folder": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "format": {"enum": ["PNG", "JPG"]},
+    "quality_if_jpg": {"oneOf": [{"type": "integer", "minimum": 1, "maximum": 100}, {"type": "null"}]},
+}, ("quality_if_jpg",))
+_NATIVE_FOLDER_INTENT["allOf"] = [
+    {"if": {"properties": {"format": {"const": "JPG"}}},
+     "then": {"required": ["quality_if_jpg"], "properties": {"quality_if_jpg": {"type": "integer"}}},
+     "else": {"properties": {"quality_if_jpg": {"type": "null"}}}},
+]
 _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "shader_ref": _shader_closed({"origin": {"enum": ["builtin", "user", "project"]},
                                   "id": {"type": "string", "minLength": 1,
@@ -753,8 +776,16 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "width": {"type": "integer", "minimum": 4, "maximum": 16384},
     "height": {"type": "integer", "minimum": 2, "maximum": 8192},
     "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
-    "output": _SHADER_SEQUENCE_OUTPUT, "publication_mode": {"const": "deferred"},
-}, ("resource_manifest_hash", "selected_resource_frames"))
+    "supersampling": {"type": "number", "minimum": 1, "maximum": 2},
+    "output": _SHADER_SEQUENCE_OUTPUT,
+    "folder_export": {"oneOf": [_NATIVE_FOLDER_INTENT, {"type": "null"}]},
+    "publication_mode": {"oneOf": [{"const": "deferred"}, {"type": "null"}]},
+}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode"))
+_SHADER_SEQUENCE_REQUEST["allOf"] = [
+    {"if": {"properties": {"publication_mode": {"const": "deferred"}}, "required": ["publication_mode"]},
+     "then": {"properties": {"folder_export": {"type": "null"}}},
+     "else": {"required": ["folder_export"], "properties": {"folder_export": _NATIVE_FOLDER_INTENT}}},
+]
 _SHADER_SEQUENCE_ID = {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}
 _SHADER_ATTEMPT_ID = {"type": "string", "pattern": r"^attempt_[0-9a-f]{32}$"}
 _SHADER_FOLDER_EXPORT = _shader_closed({
@@ -768,16 +799,16 @@ _SHADER_FOLDER_EXPORT["allOf"] = [
      "then": {"required": ["quality_if_jpg"]},
      "else": {"not": {"required": ["quality_if_jpg"]}}},
 ]
-_SHADER_SEQUENCE_CONTROL = _shader_closed({
-    "sequence_id": _SHADER_SEQUENCE_ID,
-    "action": {"enum": ["stop", "resume", "cancel_export", "retry_export"]},
-    "attempt_id": _SHADER_ATTEMPT_ID,
-}, ("attempt_id",))
-_SHADER_SEQUENCE_CONTROL["allOf"] = [
-    {"if": {"properties": {"action": {"enum": ["cancel_export", "retry_export"]}}},
-     "then": {"required": ["attempt_id"]},
-     "else": {"not": {"required": ["attempt_id"]}}},
-]
+_SHADER_SEQUENCE_CONTROL = {"oneOf": [
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "stop"},
+                    "run_id": {"type": "string", "pattern": r"^[0-9a-f]{32}$"}}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "resume"}}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "continue"},
+                    "request": _SHADER_SEQUENCE_REQUEST, "inspection_fingerprint": _SHADER_DIGEST}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"enum": ["cancel_export", "retry_export"]},
+                    "attempt_id": _SHADER_ATTEMPT_ID}),
+]}
+_SHADER_INSPECT = _shader_closed({"request": _SHADER_SEQUENCE_REQUEST})
 _FRACTAL_SHA = _SHADER_DIGEST
 _FRACTAL_SCENE = {"type": "string", "pattern": r"^scn_[0-9a-f]{8}$"}
 _FRACTAL_TARGET = {"type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_.:-]+$"}
@@ -805,8 +836,8 @@ _FRACTAL_HEADER = _shader_closed({
 _FRACTAL_WITNESS = _shader_closed({
     "header_witness": _FRACTAL_HEADER,
     "project_context_witness": {"type": "string", "minLength": 1, "maxLength": 256},
-    "scene_id": _FRACTAL_SCENE,
-    "scene_revision": _FRACTAL_SHA,
+    "scene_id": {"oneOf": [_FRACTAL_SCENE, {"type": "null"}]},
+    "scene_revision": {"oneOf": [_FRACTAL_SHA, {"type": "null"}]},
     "draft_generation": _FRACTAL_COUNT,
     "source_generation": _FRACTAL_COUNT,
     "viewer_generation": _FRACTAL_COUNT,
@@ -926,6 +957,8 @@ _FRACTAL_SAVE["allOf"] = [
      "then": {"required": ["scene_revision"]},
      "else": {"not": {"required": ["scene_revision"]}}},
 ]
+_FRACTAL_CAPTURE = _shader_closed({"client_request_id": _FRACTAL_REQUEST_ID,
+                                   "witness": _FRACTAL_WITNESS})
 _FRACTAL_SEQUENCE_OUTPUT = {"oneOf": [
     _shader_closed({"projection": {"const": "equirectangular"}, "pan": {"const": 0}, "tilt": {"const": 0}, "roll": {"const": 0}}),
     _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
@@ -949,8 +982,11 @@ _FRACTAL_SEQUENCE_REQUEST = _shader_closed({
     "width": {"type": "integer", "minimum": 128, "maximum": 16384},
     "height": {"type": "integer", "minimum": 64, "maximum": 8192},
     "output": _FRACTAL_SEQUENCE_OUTPUT,
+    "destination_intent": {"oneOf": [_NATIVE_FOLDER_INTENT, {"type": "null"}]},
+    "folder_export": {"type": "null"},
+    "project_path": {"oneOf": [{"type": "string", "minLength": 1, "maxLength": 4096}, {"type": "null"}]},
     "publication_mode": {"const": "deferred"},
-})
+}, ("destination_intent", "project_path", "folder_export"))
 _FRACTAL_EXPORT = _shader_closed({
     "sequence_id": _SHADER_SEQUENCE_ID,
     "destination_folder": {"type": "string", "minLength": 1},
@@ -963,17 +999,20 @@ _FRACTAL_EXPORT_SUBMIT = _shader_closed({
     "transaction_fingerprint": _FRACTAL_SHA,
 }, ("quality_if_jpg",))
 _FRACTAL_EXPORT_SUBMIT["allOf"] = _FRACTAL_EXPORT["allOf"]
-_FRACTAL_SEQUENCE_CONTROL = _shader_closed({
-    "sequence_id": _SHADER_SEQUENCE_ID,
-    "action": {"enum": ["stop", "resume", "cancel_export", "retry_export", "open_folder"]},
-    "attempt_id": _SHADER_ATTEMPT_ID,
-    "attempt_revision": {"type": "integer", "minimum": 0},
-}, ("attempt_id", "attempt_revision"))
-_FRACTAL_SEQUENCE_CONTROL["allOf"] = [
-    {"if": {"properties": {"action": {"enum": ["cancel_export", "retry_export", "open_folder"]}}},
-     "then": {"required": ["attempt_id", "attempt_revision"]},
-     "else": {"not": {"anyOf": [{"required": ["attempt_id"]}, {"required": ["attempt_revision"]}]}}},
-]
+_FRACTAL_SEQUENCE_CONTROL = {"oneOf": [
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "stop"},
+                    "run_id": {"type": "string", "pattern": r"^[0-9a-f]{32}$"}}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "resume"}}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "continue"},
+                    "request": _FRACTAL_SEQUENCE_REQUEST, "destination": _NATIVE_FOLDER_INTENT,
+                    "inspection_fingerprint": _FRACTAL_SHA}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID,
+                    "action": {"enum": ["cancel_export", "retry_export", "open_folder"]},
+                    "attempt_id": _SHADER_ATTEMPT_ID,
+                    "attempt_revision": {"type": "integer", "minimum": 0}}),
+]}
+_FRACTAL_INSPECT = _shader_closed({"request": _FRACTAL_SEQUENCE_REQUEST,
+                                   "destination": _NATIVE_FOLDER_INTENT})
 _SHADER_BASE_PROPERTIES = {"shader": _shader_closed({"origin": {"enum": ["builtin", "user", "project"]}, "shaderId": {"type": "string", "minLength": 1, "pattern": r"^[a-zA-Z0-9_-]+$"}}),
     "project_context_witness": _SHADER_TEXT, "working_revision": {"type": "integer", "minimum": 1},
     "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST,
@@ -2276,14 +2315,17 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "preflight_shader_sequence",
      "description": "Check a confirmed saved Shader revision and exact rational native interval without queuing. "
                     "Use the returned deterministic sequence_id and request_hash for uncertain render recovery. "
-                    "Only explicit deferred native masters are supported; no folder or automatic publication.",
+                    "Direct PNG/JPG uses folder_export; explicit deferred keeps its managed native master.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("preflight_shader_sequence")},
+    {"name": "inspect_shader_sequence_output",
+     "description": "Inspect one selected Shader destination with metadata only. Continue only the matching unfinished receipt and fingerprint; a conflict never overwrites files.",
+     "inputSchema": _SHADER_INSPECT, "annotations": _annotations("inspect_shader_sequence_output")},
     {"name": "render_shader_sequence",
      "description": "Queue only the exact saved Shader request already preflighted, with its caller-known "
                     "idempotency_key and confirmed revision. On an uncertain reply, GET the known sequence_id "
                     "and compare request_hash; unknown 404 is an unknown outcome, never blind repost. "
-                    "Produces verified native masters; folder publication is unavailable here.",
+                    "Direct output uses its selected folder and encoding; explicit deferred retains the legacy master.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("render_shader_sequence")},
     _tool_def("get_shader_sequence",
@@ -2292,9 +2334,8 @@ TOOLS: list[dict[str, Any]] = [
         {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}},
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
-     "description": "Stop or resume the known native Shader sequence; cancel_export or retry_export requires the exact "
-                    "current attempt_id from get_shader_sequence. Resume/retry require operational Standard or Pro. "
-                    "After an uncertain reply, GET the known sequence_id and attempt_id before any new action.",
+     "description": "Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request and fingerprint. "
+                    "Publication controls require the observed attempt_id. A stale Stop needs a fresh GET, never an unscoped retry.",
      "inputSchema": _SHADER_SEQUENCE_CONTROL,
      "annotations": _annotations("control_shader_sequence")},
     {"name": "preflight_shader_sequence_export",
@@ -2408,6 +2449,9 @@ TOOLS: list[dict[str, Any]] = [
         "410 request_expired is unknown, not proof the action was refused or that a Save did not publish.",
         {"client_request_id": _FRACTAL_REQUEST_ID},
         required=["client_request_id"]),
+    {"name": "capture_fractal_still",
+     "description": "Mint exactly the last acknowledged finished 360 Fractal preview through the mounted private writer. Returns actual Render/node IDs or a retained unknown; recover only by get_fractal_request with the original ID. No pixels, path, Fly switch, or destination.",
+     "inputSchema": _FRACTAL_CAPTURE, "annotations": _annotations("capture_fractal_still")},
     {"name": "preflight_fractal_sequence",
      "description": "Check one saved Fractal scene revision, rational frame rate, exact range, and native output without queueing. "
                     "Equirectangular output is exact 2:1 and at least 128x64. "
@@ -2415,11 +2459,14 @@ TOOLS: list[dict[str, Any]] = [
                     "publication_mode is deferred. The receipt keeps source and output width and height. "
                     "Resource and geometry refusals come from this check. It does not allocate a new sequence id.",
      "inputSchema": _FRACTAL_SEQUENCE_REQUEST, "annotations": _annotations("preflight_fractal_sequence")},
+    {"name": "inspect_fractal_sequence_output",
+     "description": "Inspect one selected Fractal destination with metadata only. Continue requires the same request, destination and inspection fingerprint.",
+     "inputSchema": _FRACTAL_INSPECT, "annotations": _annotations("inspect_fractal_sequence_output")},
     {"name": "render_fractal_sequence",
      "description": "Queue the exact saved Fractal sequence request already checked, using the same idempotency_key. "
                     "The acknowledgement returns sequence_id and request_hash. "
                     "A lost POST is unknown. Do not change the key or mint another id. "
-                    "Native work still needs the app GPU and sequence entitlement. This call does not publish a folder.",
+                    "Native work needs the app GPU and sequence entitlement; optional destination_intent retains later publication under the same owner.",
      "inputSchema": _FRACTAL_SEQUENCE_REQUEST, "annotations": _annotations("render_fractal_sequence")},
     _tool_def("get_fractal_sequence",
         "Read one known Fractal sequence id. Compare request_hash after a lost render reply. "
@@ -2427,7 +2474,7 @@ TOOLS: list[dict[str, Any]] = [
         {"sequence_id": _SHADER_SEQUENCE_ID},
         required=["sequence_id"]),
     {"name": "control_fractal_sequence",
-     "description": "Stop or resume the known native Fractal sequence. "
+     "description": "Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request. "
                     "cancel_export, retry_export, and open_folder require the observed attempt_id and attempt_revision. "
                     "A lost control reply is reconciled by get_fractal_sequence, not a new sequence.",
      "inputSchema": _FRACTAL_SEQUENCE_CONTROL, "annotations": _annotations("control_fractal_sequence")},
@@ -2566,7 +2613,8 @@ _CAPTURE_DEFAULTS = _shader_closed({
 })
 _OUTPUT_OWNER = {**_MOUNTED_SHADER_FIELDS, "base": _NATIVE_SHADER_BASE}
 _OUTPUT_OWNER_REQUIRED = [*_MOUNTED_SHADER_REQUIRED, "base"]
-_OUTPUT_PROFILE = {"enum": ["png-master/1", "shader-linear-rgba-exr/1", "dome-png/1"]}
+_OUTPUT_PROFILE = {"enum": ["png-master/1", "shader-linear-rgba-exr/1", "dome-png/1",
+                            "shader-raster-still/1"]}
 _PREVIEW_OUTPUT = {"oneOf": [
     _shader_closed({"projection": {"const": "equirectangular"}, "pan": {"const": 0},
                     "tilt": {"const": 0}, "roll": {"const": 0},
@@ -2593,6 +2641,27 @@ _STILL_OUTPUT = {"anyOf": [
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
                     "roll": {"type": "number", "minimum": -180, "maximum": 180},
                     "output_path": _ABS_PATH}, ("output_path",)),
+    _shader_closed({"projection": {"const": "equirectangular"},
+                    "encoding": {"enum": ["png", "jpg"]},
+                    "width": {"enum": [1024, 2048, 4096]},
+                    "height": {"enum": [512, 1024, 2048]},
+                    "output_path": _ABS_PATH}),
+    _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
+                    "encoding": {"enum": ["png", "jpg"]},
+                    "diameter": {"enum": [1024, 2048, 4096, 8192]},
+                    "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
+                    "pan": {"type": "number", "minimum": -180, "maximum": 180},
+                    "tilt": {"type": "number", "minimum": -90, "maximum": 90},
+                    "roll": {"type": "number", "minimum": -180, "maximum": 180},
+                    "output_path": _ABS_PATH}, ("fov_deg", "pan", "tilt", "roll")),
+    _shader_closed({"width": {"type": "integer", "minimum": 1024, "maximum": 8192},
+                    "height": {"type": "integer", "minimum": 1024, "maximum": 8192},
+                    "projection": {"enum": ["fulldome", "fulldome_angular"]},
+                    "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
+                    "pan": {"type": "number", "minimum": -180, "maximum": 180},
+                    "tilt": {"type": "number", "minimum": -90, "maximum": 90},
+                    "roll": {"type": "number", "minimum": -180, "maximum": 180},
+                    "output_path": _ABS_PATH}, ("fov_deg", "pan", "tilt", "roll")),
 ]}
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
@@ -2612,8 +2681,9 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_release_preview", "Release one exact private preview lease and GPU broker without starting work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_preflight_still_export", "Preflight one native PNG master, linear EXR, or dome profile using the mounted completed frame and an optional absolute output_path; no GPU start.",
-              {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT},
+    _tool_def("shader_preflight_still_export", "Preflight one native PNG/JPG raster, PNG master, linear EXR, or Dome profile using the mounted completed frame; no GPU start.",
+              {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT,
+               "allow_unpreviewed_revision": {"type": "boolean"}},
               _OUTPUT_OWNER_REQUIRED + ["profile", "output"]),
     _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting.",
               {**_OUTPUT_OWNER, "preflight_request_id": _NATIVE_SHADER_REQUEST_ID,
@@ -3249,6 +3319,7 @@ class HextileMcpServer:
             "propose_shader": self._propose_shader,
             "control_shader_timeline": self._control_shader_timeline,
             "preflight_shader_sequence": self._preflight_shader_sequence,
+            "inspect_shader_sequence_output": self._inspect_shader_sequence_output,
             "render_shader_sequence": self._render_shader_sequence,
             "get_shader_sequence": self._get_shader_sequence,
             "control_shader_sequence": self._control_shader_sequence,
@@ -3265,7 +3336,9 @@ class HextileMcpServer:
             "open_fractal_scene": self._open_fractal_scene,
             "save_fractal_scene": self._save_fractal_scene,
             "get_fractal_request": self._get_fractal_request,
+            "capture_fractal_still": self._capture_fractal_still,
             "preflight_fractal_sequence": self._preflight_fractal_sequence,
+            "inspect_fractal_sequence_output": self._inspect_fractal_sequence_output,
             "render_fractal_sequence": self._render_fractal_sequence,
             "get_fractal_sequence": self._get_fractal_sequence,
             "control_fractal_sequence": self._control_fractal_sequence,
@@ -4173,6 +4246,11 @@ class HextileMcpServer:
     def _preflight_shader_sequence(self, args: dict[str, Any]) -> Any:
         return self.client.preflight_shader_sequence(args)
 
+    def _inspect_shader_sequence_output(self, args: dict[str, Any]) -> Any:
+        if set(args) != {"request"}:
+            raise HextileClientError("Expected one Shader inspection request", kind="other", status_code=422)
+        return self.client.inspect_shader_sequence_output(args)
+
     def _render_shader_sequence(self, args: dict[str, Any]) -> Any:
         return self.client.render_shader_sequence(args)
 
@@ -4298,9 +4376,17 @@ class HextileMcpServer:
         self._validate_fractal_args("get_fractal_request", args)
         return self.client.get_fractal_request(args.get("client_request_id"))
 
+    def _capture_fractal_still(self, args: dict[str, Any]) -> Any:
+        self._validate_fractal_args("capture_fractal_still", args)
+        return self.client.capture_fractal_still(args)
+
     def _preflight_fractal_sequence(self, args: dict[str, Any]) -> Any:
         self._validate_fractal_args("preflight_fractal_sequence", args)
         return self.client.preflight_fractal_sequence(args)
+
+    def _inspect_fractal_sequence_output(self, args: dict[str, Any]) -> Any:
+        self._validate_fractal_args("inspect_fractal_sequence_output", args)
+        return self.client.inspect_fractal_sequence_output(args)
 
     def _render_fractal_sequence(self, args: dict[str, Any]) -> Any:
         self._validate_fractal_args("render_fractal_sequence", args)

@@ -72,6 +72,12 @@ def test_control_lane_replies_while_ordinary_call_is_blocked(monkeypatch) -> Non
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "list_workflows", "arguments": {}}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_status", "arguments": {"run_id": "run_1"}}},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_seed_job", "arguments": {"job_id": "seed_1"}}},
+        *({"jsonrpc": "2.0", "id": index, "method": "tools/call",
+           "params": {"name": name, "arguments": {}}}
+          for index, name in enumerate(("get_shader_sequence", "control_shader_sequence",
+                                        "get_fractal_sequence", "control_fractal_sequence",
+                                        "get_fractal_request", "shader_get_output_job",
+                                        "shader_stop_output_job"), start=4)),
     ]
     stdin = io.StringIO("".join(json.dumps(row) + "\n" for row in rows))
     stdout = io.StringIO()
@@ -81,7 +87,8 @@ def test_control_lane_replies_while_ordinary_call_is_blocked(monkeypatch) -> Non
 
     assert hextile_mcp.main() == 0
     replies = [json.loads(line) for line in stdout.getvalue().splitlines()]
-    assert [row["id"] for row in replies] == [2, 3, 1]
+    assert {row["id"] for row in replies} == set(range(1, 11))
+    assert [row["id"] for row in replies][-1] == 1
 
 
 def test_internal_meta_headers_and_activity_suppression() -> None:
