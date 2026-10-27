@@ -4303,6 +4303,8 @@ class HextileMcpServer:
             if "enum" in schema and (value not in schema["enum"] or type(value) is bool):
                 return False
             kind = schema.get("type")
+            if kind == 'null' and value is not None:
+                return False
             if kind == "object" and type(value) is not dict or kind == "array" and type(value) is not list:
                 return False
             if kind == "string" and type(value) is not str or kind == "integer" and type(value) is not int:

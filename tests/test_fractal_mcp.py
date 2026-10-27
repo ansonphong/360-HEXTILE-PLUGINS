@@ -115,6 +115,20 @@ def _http_error(code: int, detail: Any) -> urllib.error.HTTPError:
     )
 
 
+@pytest.mark.parametrize('saved', [True, False])
+def test_fractal_dispatch_matches_saved_or_unsaved_witness_once(saved):
+    witness = _witness()
+    if not saved:
+        witness.update(scene_id=None, scene_revision=None)
+    args = {'client_request_id': 'capture-nullable', 'witness': witness}
+    jsonschema.validate(args, _schema('capture_fractal_still')['inputSchema'])
+    HextileMcpServer._validate_fractal_args('capture_fractal_still', args)
+    for wrong in (True, 1, {}, []):
+        with pytest.raises(HextileClientError):
+            HextileMcpServer._validate_fractal_args('capture_fractal_still', {
+                **args, 'witness': {**witness, 'scene_id': wrong}})
+
+
 def test_fractal_tools_are_closed_and_classified() -> None:
     assert tuple(name for name in TOOL_NAMES if name in NAMES) == NAMES
     read_only = {
