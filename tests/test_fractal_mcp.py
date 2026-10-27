@@ -808,6 +808,36 @@ def test_fractal_capture_known_mint_and_lost_ack_recover_original_request() -> N
     assert expired_receipt.value.receipt == {"client_request_id": "capture_once", "status": "unknown"}
 
 
+def test_fractal_static_capture_recovery_keeps_frame_proof_and_rejects_mixed_receipts() -> None:
+    frame = {"generation": 12, "context_generation": 3, "capture_retirement": 2,
+             "width": 1024, "height": 512}
+    known = {"scene_id": None, "scene_revision": None, "sample_id": None, "time": None,
+             "static_frame": frame, "width": 768, "height": 384,
+             "render_id": "render_static", "node_id": "node_static"}
+    def opener(req: Any, timeout=None):
+        assert req.get_method() == "GET" and "/requests/capture_static" in req.full_url
+        return _Response({"status": "applied", "kind": "fractal_capture", "result": known})
+    client = Client(opener=opener)
+    assert client.get_fractal_request("capture_static")["result"] == known
+    unfinished = {key: value for key, value in known.items() if key not in {"render_id", "node_id"}}
+    def unresolved(req: Any, timeout=None):
+        assert req.get_method() == "GET" and "/requests/capture_static" in req.full_url
+        return _Response({"status": "unknown", "kind": "fractal_capture",
+                          "reason": "outcome_unconfirmed", "result": unfinished})
+    assert Client(opener=unresolved).get_fractal_request("capture_static")["result"] == unfinished
+    for bad in (
+        {**known, "sample_id": {"owner_generation": 1}},
+        {**known, "time": {"num": "0", "den": "1"}},
+        {**known, "static_frame": {**frame, "generation": True}},
+        {**known, "width": 1025},
+    ):
+        def invalid(_req: Any, timeout=None):
+            return _Response({"status": "applied", "kind": "fractal_capture", "result": bad})
+        with pytest.raises(HextileClientError) as failure:
+            Client(opener=invalid).get_fractal_request("capture_static")
+        assert failure.value.kind == "fractal_outcome_unknown"
+
+
 def test_fractal_inspect_continue_preserves_intent_and_run_fence() -> None:
     intent = {"destination_folder": "D:\\chosen\\frames", "format": "PNG"}
     request = _sequence(destination_intent=intent, project_path="D:\\Projects\\Current")

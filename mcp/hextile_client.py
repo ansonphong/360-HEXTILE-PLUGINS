@@ -4363,7 +4363,20 @@ class Client:
         if minted:
             fields |= {"render_id", "node_id"}
         sample, time = body.get("sample_id"), body.get("time")
-        if (set(body) != fields or type(time) is not dict or set(time) != {"num", "den"}
+        static = body.get("static_frame")
+        if static is not None:
+            if (set(body) != fields | {"static_frame"} or sample is not None or time is not None
+                    or type(static) is not dict
+                    or set(static) != {"generation", "context_generation", "capture_retirement", "width", "height"}
+                    or any(type(static[key]) is not int or static[key] < 0 for key in
+                           ("generation", "context_generation", "capture_retirement"))
+                    or any(type(static[key]) is not int or not 1 <= static[key] <= limit
+                           for key, limit in (("width", 2048), ("height", 1024)))
+                    or any(type(body[key]) is not int or not 1 <= body[key] <= static[key]
+                           for key in ("width", "height"))):
+                raise HextileClientError("Invalid bounded Fractal static capture receipt", kind="fractal_outcome_unknown",
+                                         receipt={"status": "unknown"})
+        elif (set(body) != fields or type(time) is not dict or set(time) != {"num", "den"}
                 or any(type(time[key]) is not str or re.fullmatch(
                     r"-?[0-9]{1,32}" if key == "num" else r"[1-9][0-9]{0,31}", time[key]) is None
                     for key in ("num", "den"))
@@ -4373,8 +4386,10 @@ class Client:
                        ("owner_generation", "source_generation", "evaluation_sequence"))
                 or sample["exact_time"] != time or cls._fractal_sha(sample["document_hash"]) is None
                 or any(type(body[key]) is not int or not 1 <= body[key] <= limit
-                       for key, limit in (("width", 2048), ("height", 1024)))
-                or body["scene_id"] is not None and re.fullmatch(r"scn_[0-9a-f]{8}", str(body["scene_id"])) is None
+                       for key, limit in (("width", 2048), ("height", 1024)))):
+            raise HextileClientError("Invalid bounded Fractal capture receipt", kind="fractal_outcome_unknown",
+                                     receipt={"status": "unknown"})
+        if (body["scene_id"] is not None and re.fullmatch(r"scn_[0-9a-f]{8}", str(body["scene_id"])) is None
                 or body["scene_revision"] is not None and cls._fractal_sha(body["scene_revision"]) is None
                 or minted and any(type(body[key]) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", body[key]) is None
                                   for key in ("render_id", "node_id"))):
