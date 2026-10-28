@@ -46,7 +46,7 @@ def _inspector_ready(request_id):
         "mode": "still", "supersampling": 1.5, "physical_width": 3072, "physical_height": 1536,
         "index": 0, "time": "0/1", "frame_rate": {"num": 24, "den": 1}, "sample": None,
         "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0},
-        "document_hash": digest, "source_hash": digest, "resource_manifest_hash": None, "intent_sha256": "a" * 64}
+        "document_hash": digest, "source_hash": digest, "resource_manifest_hash": None}
 
 
 def test_sequence_input_capture_is_typed_private_and_recovers_original_ticket(monkeypatch):
@@ -332,7 +332,7 @@ def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_rec
     monkeypatch.setattr(client, "request_json", lambda *a, **kw: ready)
     assert client.get_shader_preview(args) == ready
     for patch in ({"index": 28}, {"time": "11/1"}, {"supersampling": 1}, {"width": 512},
-                  {"lease": "private"}, {"size": 10 ** 20}):
+                  {"lease": "private"}, {"intent_sha256": "a" * 64}, {"size": 10 ** 20}):
         monkeypatch.setattr(client, "request_json", lambda *a, row={**ready, **patch}, **kw: row)
         with pytest.raises(HextileClientError):
             client.get_shader_preview(args)

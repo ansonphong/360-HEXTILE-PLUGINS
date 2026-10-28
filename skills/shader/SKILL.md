@@ -174,7 +174,7 @@ original UUID, then poll `shader_get_preview` with that UUID and original Shader
 Project witness. Native admission is retained before its reply: unknown remains
 unknown until the same request resolves; never mint another ID to retry it.
 Metadata reports actual delivered dimensions, supersampling/internal dimensions,
-projection, exact sample/time/FPS, format, source/intent hashes and native progress.
+projection, exact sample/time/FPS, format, source/pixel hashes and native progress.
 Poll while inspecting to keep the short native lease alive. `shader_release_preview`
 cancels/releases only this owned request, including original-request cleanup after
 disconnect or selection change. It does not stop an accepted export Sequence.

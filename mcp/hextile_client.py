@@ -234,7 +234,7 @@ def _valid_preview_receipt(result: dict) -> bool:
         return set(result) == common
     fields = {"width", "height", "stride", "size", "sha256", "format", "profile", "mode", "supersampling",
               "physical_width", "physical_height", "index", "time", "frame_rate", "sample", "output",
-              "document_hash", "source_hash", "resource_manifest_hash", "intent_sha256"}
+              "document_hash", "source_hash", "resource_manifest_hash"}
     if result["state"] != "ready" or set(result) != common | fields or result["status"] != "completed":
         return False
     if (type(result["output"]) is not dict or not _valid_preview_selection({
@@ -247,8 +247,7 @@ def _valid_preview_receipt(result: dict) -> bool:
             or any(type(result[key]) is not str or _WORKSPACE_DIGEST.fullmatch(result[key]) is None
                    for key in ("sha256", "document_hash", "source_hash"))
             or result["resource_manifest_hash"] is not None and (type(result["resource_manifest_hash"]) is not str
-                or _WORKSPACE_DIGEST.fullmatch(result["resource_manifest_hash"]) is None)
-            or type(result["intent_sha256"]) is not str or re.fullmatch(r"[0-9a-f]{64}", result["intent_sha256"]) is None):
+                or _WORKSPACE_DIGEST.fullmatch(result["resource_manifest_hash"]) is None)):
         return False
     rate = result["frame_rate"]
     if (type(rate) is not dict or set(rate) != {"num", "den"}
