@@ -68,14 +68,16 @@ def test_preservation_requires_advertised_peer_support(monkeypatch):
     api._require_native_render(preservation=True)
 
 
-def test_public_dome_preflight_forwards_preservation(monkeypatch):
+@pytest.mark.parametrize("enabled", [True, False])
+def test_public_dome_preflight_forwards_preservation(monkeypatch, enabled):
     api = client.Client()
     digest = "sha256:" + "a" * 64
     args = dict(shader=dict(origin="user", shaderId="saved"), project_context_witness="w",
         request_id="550e8400-e29b-41d4-a716-446655440000", studio_surface_id="surface",
         expected_edit_sequence=0,
         base=dict(kind="saved", working_revision=1, document_hash=digest, source_hash=digest),
-        profile="dome-png/1", output=OUTPUT)
+        profile="dome-png/1", output=OUTPUT if enabled else {key: value for key, value in
+            {**OUTPUT, "preserve_360": False}.items() if key != "preserve_360_profile"})
     seen = []
     monkeypatch.setattr(api, "get_capabilities", lambda: dict(native_render=dict(
         contract="native-render/1", stills={"dome-png/1": {}}, sequences={}, shader_dome_preservation=dict(
@@ -85,7 +87,12 @@ def test_public_dome_preflight_forwards_preservation(monkeypatch):
         return dict(request_id=args["request_id"], state="pending")
     monkeypatch.setattr(api, "request_json", reply)
     assert api.preflight_shader_still(args)["state"] == "pending"
-    assert seen[0]["output"] == OUTPUT
+    assert seen[0]["output"] == args["output"]
+    for invalid in ({**OUTPUT, "preserve_360_profile": "unknown/2"},
+                    {**OUTPUT, "projection": "equirectangular"}):
+        with pytest.raises(client.HextileClientError):
+            api.preflight_shader_still({**args, "output": invalid})
+    assert len(seen) == 1
 
 
 @pytest.mark.parametrize("preflight", [True, False])
