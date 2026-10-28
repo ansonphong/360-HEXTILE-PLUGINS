@@ -517,8 +517,10 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
             else:
                 shape = {"png-master/1": ({"width", "height"}, {"supersampling", "output_path"}),
                          "dome-png/1": ({"projection", "diameter", "fov_deg", "pan", "tilt", "roll"},
-                                        {"output_path"})}[args["profile"]]
+                                        {"output_path", "preserve_360", "preserve_360_profile"})}[args["profile"]]
                 valid = shape[0] <= output.keys() and set(output) <= shape[0] | shape[1]
+                if args["profile"] == "dome-png/1":
+                    valid = valid and _valid_preservation(output)
         if not valid:
             raise HextileClientError("Unsupported closed Shader output settings", status_code=422, kind="other")
     for field in ("output_path", "destination_project"):
@@ -2355,7 +2357,8 @@ class Client:
 
     def _shader_sequence_post(self, body: Mapping[str, Any], *, preflight: bool) -> dict[str, Any]:
         validate_shader_sequence_request(body)
-        if body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1 or 'input_capture_id' in body:
+        if (body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1
+                or 'input_capture_id' in body or 'preserve_360' in body.get('output', {})):
             self._require_native_render(sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}))
         path = "/api/shaders/sequences/preflight" if preflight else "/api/shaders/sequences"
         try:
