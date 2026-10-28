@@ -374,10 +374,15 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     raise invalid()
                 job_id = job["id"]
             elif profile == "shader-linear-rgba-exr/1":
-                if (set(job) != {"job_id", "state", "progress", "profile", "output"}
+                if (set(job) - {"accepted_settings"} != {"job_id", "state", "progress", "profile", "output"}
                         or job["profile"] != profile or job["output"] is not None
                         and not _safe_output_leaf(job["output"], {".exr"})):
                     raise invalid()
+                if "accepted_settings" in job:
+                    settings = job["accepted_settings"]
+                    if (type(settings) is not dict or set(settings) != {"output"}
+                            or not _valid_dome_job_output(settings["output"], raster=False)):
+                        raise invalid()
                 job_id = job["job_id"]
             else:
                 if (set(job) != {"job_id", "state", "progress", "idempotency_key", "output"}
@@ -1829,7 +1834,8 @@ class Client:
 
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,
-                               sequence_inputs: bool = False, preview_inspector: bool = False) -> None:
+                               sequence_inputs: bool = False, preview_inspector: bool = False,
+                               preservation: bool = False) -> None:
         """New native semantics require an explicitly advertised peer contract."""
         try:
             capabilities = self.get_capabilities()
@@ -1845,6 +1851,10 @@ class Client:
                 or preview_inspector and (type(native.get("shader_preview")) is not dict
                     or native["shader_preview"].get("profile") != "shader-export-preview/2")
                 or still_profile is not None and still_profile not in native["stills"]
+                or preservation and (type(native.get("shader_dome_preservation")) is not dict
+                    or native["shader_dome_preservation"].get("field") != "preserve_360"
+                    or type(native["shader_dome_preservation"].get("profiles")) is not list
+                    or "shader-dome-from-360/1" not in native["shader_dome_preservation"].get("profiles", []))
                 or sequence_inputs and (type(native['sequences'].get('shader')) is not dict
                     or type(native['sequences']['shader'].get('input_snapshot')) is not dict
                     or native['sequences']['shader']['input_snapshot'].get('contract') != 'shader-sequence-input/1')
@@ -2346,7 +2356,7 @@ class Client:
     def _shader_sequence_post(self, body: Mapping[str, Any], *, preflight: bool) -> dict[str, Any]:
         validate_shader_sequence_request(body)
         if body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1 or 'input_capture_id' in body:
-            self._require_native_render(sequence_inputs='input_capture_id' in body)
+            self._require_native_render(sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}))
         path = "/api/shaders/sequences/preflight" if preflight else "/api/shaders/sequences"
         try:
             data = self.post_json(path, dict(body),
@@ -2368,7 +2378,7 @@ class Client:
         validate_shader_sequence_request(request)
         if request.get("folder_export") is None:
             raise HextileClientError("Inspection needs a selected Shader destination", kind="other", status_code=422)
-        self._require_native_render(sequence_inputs='input_capture_id' in request)
+        self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}))
         try:
             data = self.post_json("/api/shaders/sequences/inspect", {"request": dict(request)},
                                   headers={"X-Hextile-Project-Witness": request["project_context_witness"]},
@@ -2432,6 +2442,10 @@ class Client:
                 value = output.get(key)
                 if type(value) in (int, float) and math.isfinite(value):
                     projected[key] = value
+            if _valid_preservation(output) and "preserve_360" in output:
+                projected["preserve_360"] = output["preserve_360"]
+                if output.get("preserve_360") is True:
+                    projected["preserve_360_profile"] = output.get("preserve_360_profile", "shader-dome-from-360/1")
             result["output"] = projected
         def attempt(source: Any) -> dict[str, Any] | None:
             if not isinstance(source, Mapping):
@@ -2564,7 +2578,7 @@ class Client:
             if (request.get("folder_export") is None or type(args["inspection_fingerprint"]) is not str
                     or _WORKSPACE_DIGEST.fullmatch(args["inspection_fingerprint"]) is None):
                 raise HextileClientError("Continue requires the inspected Shader destination", kind="other", status_code=422)
-            self._require_native_render(sequence_inputs='input_capture_id' in request)
+            self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}))
             suffix, body = "continue", {"request": dict(request), "inspection_fingerprint": args["inspection_fingerprint"]}
             headers = {"X-Hextile-Project-Witness": request["project_context_witness"]}
         elif action in {"cancel_export", "retry_export"} and set(args) == {"sequence_id", "action", "attempt_id"}:
@@ -5062,8 +5076,10 @@ class Client:
         if ((operation in {"preflight", "still"} and args.get("profile") == "shader-raster-still/1")
                 or operation == "preflight" and (args.get("allow_unpreviewed_revision") is True
                     or args.get("profile") == "shader-linear-rgba-exr/1"
-                    and args["output"].get("projection", "equirectangular") != "equirectangular")):
-            self._require_native_render(still_profile=args["profile"])
+                    and args["output"].get("projection", "equirectangular") != "equirectangular")
+                or operation == "preflight" and "preserve_360" in args.get("output", {})):
+            self._require_native_render(still_profile=args["profile"],
+                preservation="preserve_360" in args.get("output", {}))
         try:
             result = self.request_json("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
         except HextileClientError as exc:
@@ -5076,7 +5092,8 @@ class Client:
 
     def request_shader_preview(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("preview", args)
-        self._require_native_render(preview_inspector=True)
+        self._require_native_render(preview_inspector=True,
+            preservation="preserve_360" in args.get("output", {}))
         return self._shader_output_post("preview", args, "/api/shaders/agent-operations/output/preview")
 
     def capture_shader_sequence_input(self, args: Mapping[str, Any]) -> dict:

@@ -39,3 +39,30 @@ def test_equirectangular_rejects_preservation():
 def test_status_projection_keeps_original_mode_for_recovery():
     value = client._native_sequence_fields(dict(producer="shader", accepted_settings={"output": OUTPUT}))
     assert value["accepted_settings"]["output"] == OUTPUT
+
+
+def test_shader_status_top_level_output_keeps_mode(monkeypatch):
+    api = client.Client()
+    sid = "seq_" + "a" * 32
+    monkeypatch.setattr(api, "get_json", lambda *args, **kwargs:
+        dict(sequence_id=sid, status="completed", output=OUTPUT))
+    assert api.get_shader_sequence(sid)["output"] == OUTPUT
+
+
+def test_exr_job_status_retains_checked_accepted_mode():
+    args = dict(request_id="a" * 32, profile="shader-linear-rgba-exr/1")
+    receipt = dict(request_id=args["request_id"], profile=args["profile"],
+        job=dict(job_id="b" * 32, state="completed", progress=1, profile=args["profile"],
+                 output="render.exr", accepted_settings=dict(output=OUTPUT)))
+    assert client._shader_output_receipt("get_job", args, receipt) == receipt
+
+
+def test_preservation_requires_advertised_peer_support(monkeypatch):
+    api = client.Client()
+    native = dict(contract="native-render/1", sequences={}, stills={})
+    monkeypatch.setattr(api, "get_capabilities", lambda: dict(native_render=native))
+    with pytest.raises(client.HextileClientError) as error:
+        api._require_native_render(preservation=True)
+    assert error.value.status_code == 501
+    native["shader_dome_preservation"] = dict(field="preserve_360", profiles=["shader-dome-from-360/1"])
+    api._require_native_render(preservation=True)
