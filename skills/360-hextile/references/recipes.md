@@ -390,4 +390,3 @@ the original UUID and original Shader/Project witness. Unknown replies retain th
 original identity; never create a replacement ID automatically. Preview cleanup
 does not cancel an accepted export job. Still uses `mode:"still"` and omits
 `sequence_sample`, freezing the actual completed native frame.
-
