@@ -496,6 +496,16 @@ def _shader_closed(properties: dict[str, Any], optional: tuple[str, ...] = ()) -
     return _layer_object(properties, tuple(key for key in properties if key not in optional))
 
 
+def _shader_dome(properties: dict[str, Any], optional: tuple[str, ...] = ()) -> dict[str, Any]:
+    result = _shader_closed({**properties, "preserve_360": {"type": "boolean"},
+        "preserve_360_profile": {"const": "shader-dome-from-360/1"}},
+        (*optional, "preserve_360", "preserve_360_profile"))
+    result["allOf"] = [{"if": {"required": ["preserve_360"],
+        "properties": {"preserve_360": {"const": True}}},
+        "then": {}, "else": {"not": {"required": ["preserve_360_profile"]}}}]
+    return result
+
+
 _WORKSPACE_ID = {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9_-]+$"}
 _WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
 _WORKSPACE_DIGEST = {"type": "string", "pattern": r"^sha256:[0-9a-f]{64}$"}
@@ -738,7 +748,7 @@ _SHADER_DIGEST = {"type": "string", "pattern": r"^sha256:[0-9a-f]{64}$"}
 _SHADER_SEQUENCE_OUTPUT = {"oneOf": [
     _shader_closed({"projection": {"const": "equirectangular"},
                     "pan": {"const": 0}, "tilt": {"const": 0}, "roll": {"const": 0}}),
-    _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
+    _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "diameter": {"enum": [1024, 2048, 4096, 8192]},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
@@ -2623,7 +2633,7 @@ _PREVIEW_OUTPUT = {"oneOf": [
                     "tilt": {"const": 0}, "roll": {"const": 0},
                     "supersampling": {"type": "number", "minimum": 1, "maximum": 2}},
                    ("supersampling",)),
-    _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
+    _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "diameter": {"enum": [1024, 2048, 4096, 8192]},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
@@ -2644,7 +2654,7 @@ _STILL_OUTPUT = {"anyOf": [
                     "height": {"type": "integer", "minimum": 512, "maximum": 8192},
                     "supersampling": {"type": "number", "minimum": 1, "maximum": 2},
                     "output_path": _ABS_PATH}, ("supersampling", "output_path")),
-    _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
+    _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "diameter": {"enum": [1024, 2048, 4096, 8192]},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
@@ -2656,7 +2666,7 @@ _STILL_OUTPUT = {"anyOf": [
                     "width": {"enum": [1024, 2048, 4096]},
                     "height": {"enum": [512, 1024, 2048]},
                     "output_path": _ABS_PATH}),
-    _shader_closed({"projection": {"enum": ["fulldome", "fulldome_angular"]},
+    _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "encoding": {"enum": ["png", "jpg"]},
                     "diameter": {"enum": [1024, 2048, 4096, 8192]},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
@@ -2664,7 +2674,7 @@ _STILL_OUTPUT = {"anyOf": [
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
                     "roll": {"type": "number", "minimum": -180, "maximum": 180},
                     "output_path": _ABS_PATH}, ("fov_deg", "pan", "tilt", "roll")),
-    _shader_closed({"width": {"type": "integer", "minimum": 1024, "maximum": 8192},
+    _shader_dome({"width": {"type": "integer", "minimum": 1024, "maximum": 8192},
                     "height": {"type": "integer", "minimum": 1024, "maximum": 8192},
                     "projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},

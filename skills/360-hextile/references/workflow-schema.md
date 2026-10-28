@@ -87,6 +87,27 @@ cursor; checking/replay is separate work; timing is observed, not a proxy ETA.
 Last-reported restart counts are unverified until accepted Continue checks them.
 Stop carries the observed run ID and settles only after its owner drains.
 
+### Preserve the 360° appearance in Shader dome output
+
+Discover `native_render.shader_dome_preservation` before sending this option.
+For either Shader dome projection, set `preserve_360:true` and
+`preserve_360_profile:"shader-dome-from-360/1"` on the output object. The same
+setting applies to native preview, raster/linear EXR stills, and sequences.
+Equirectangular output has no preservation field. Missing means the historical
+direct dome path; explicit false selects that path. Continue and recovery use
+their original frozen mode/profile, never a new default or request ID.
+
+Preservation first renders a complete canonical 2:1 panorama (logical 2D×D for
+dome diameter D), then maps its completed scene-linear pixels to the dome.
+Bilinear filtering wraps longitude, clamps latitude and interpolates associated
+alpha. PNG/JPG keep opaque display output; EXR keeps associated scene-linear
+HDR and transparent black outside the disk. Computation and render time
+increase. Stateless preview/sequences use their selected supersampling; native
+stills keep 1×. Stateful rendering keeps existing source-size/replay limits
+and 1× supersampling (accumulation/separate feedback: D=1024, ≤240 frames).
+Unsupported capacity is refused; no silent downscale or direct fallback occurs.
+Use the existing status, cancellation and original-request recovery tools.
+
 ## Separate Shader workspace format
 
 Mounted Shader parameter controls are live session values, not Workflow fields, workspace source edits, or proof of a Saved document. `get_shader_parameters` returns the current source-free descriptor, exact witness and native `writable` state. With MCP enabled, `set_shader_parameter` submits one exact-witness value using `operation:"submit"` and a caller-known `client_request_id`; APP validates the current bounds, writable state and writer before one undoable edit. `applied` acknowledges that edit only. Verify Save separately through the exact clean saved revision/hash. If the result is uncertain, use `operation:"status"` with the original request ID, including after selection changes. An absent or expired receipt remains unknown; read fresh metadata and obtain human direction before any new ID. Never retry automatically. Source/formula include options select content independently; structural edits use the acknowledged workspace and native Apply/Save receipts.

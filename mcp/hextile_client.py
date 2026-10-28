@@ -92,6 +92,18 @@ def _native_pose(output: Mapping[str, Any]) -> bool:
                if key in output)
 
 
+
+def _valid_preservation(output: Mapping[str, Any]) -> bool:
+    fields = {"preserve_360", "preserve_360_profile"} & output.keys()
+    if not fields:
+        return True
+    if (output.get("projection") not in {"fulldome", "fulldome_angular"}
+            or type(output.get("preserve_360")) is not bool):
+        return False
+    if output["preserve_360"]:
+        return output.get("preserve_360_profile", "shader-dome-from-360/1") == "shader-dome-from-360/1"
+    return "preserve_360_profile" not in output
+
 def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
     if (not {"projection", "encoding", "output_path"} <= set(output)
             or output["encoding"] not in {"png", "jpg"}):
@@ -105,27 +117,27 @@ def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
                 and type(output["height"]) is int and output["height"] * 2 == output["width"])
     return (output["projection"] in {"fulldome", "fulldome_angular"}
             and set(output) <= {"projection", "encoding", "output_path", "diameter",
-                                "fov_deg", "pan", "tilt", "roll"}
+                                "fov_deg", "pan", "tilt", "roll", "preserve_360", "preserve_360_profile"}
             and type(output.get("diameter")) is int
             and output["diameter"] in {1024, 2048, 4096, 8192}
-            and _native_pose(output))
+            and _native_pose(output) and _valid_preservation(output))
 
 
 def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
     if (not {"width", "height"} <= set(output)
-            or set(output) - {"width", "height", "projection", "fov_deg", "pan", "tilt", "roll", "output_path"}
+            or set(output) - {"width", "height", "projection", "fov_deg", "pan", "tilt", "roll", "output_path", "preserve_360", "preserve_360_profile"}
             or type(output["width"]) is not int or type(output["height"]) is not int):
         return False
     projection = output.get("projection", "equirectangular")
     if projection == "equirectangular":
         return (2 <= output["width"] <= 4096
                 and output["width"] == output["height"] * 2
-                and not {"fov_deg", "pan", "tilt", "roll"} & set(output))
+                and not {"fov_deg", "pan", "tilt", "roll", "preserve_360", "preserve_360_profile"} & set(output))
     return (projection in {"fulldome", "fulldome_angular"}
             and output["width"] == output["height"]
             and output["width"] in {1024, 2048, 4096, 8192}
             and _safe_task_output_path(output.get("output_path"), {".exr"})
-            and _native_pose(output))
+            and _native_pose(output) and _valid_preservation(output))
 
 
 def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
@@ -143,15 +155,15 @@ def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
                 return False
         elif (type(output.get("diameter")) is not int
                 or output["diameter"] not in {1024, 2048, 4096, 8192}
-                or set(output) - {"projection", "encoding", "diameter", "fov_deg", "pan", "tilt", "roll", "file"}):
+                or set(output) - {"projection", "encoding", "diameter", "fov_deg", "pan", "tilt", "roll", "file", "preserve_360", "preserve_360_profile"}):
             return False
     else:
         if (output["projection"] == "equirectangular" or type(output.get("diameter")) is not int
                 or output["diameter"] not in {1024, 2048, 4096, 8192}
                 or "fov_deg" not in output
-                or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file"}):
+                or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file", "preserve_360", "preserve_360_profile"}):
             return False
-    if not _native_pose(output):
+    if not _native_pose(output) or not _valid_preservation(output):
         return False
     if "file" not in output:
         return True
@@ -209,11 +221,12 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
         return (fields - {"supersampling"} <= output.keys() and not set(output) - fields
                 and all(type(output[key]) in (int, float) and output[key] == 0 for key in ("pan", "tilt", "roll"))
                 and width == height * 2 and height % 2 == 0)
-    fields |= {"diameter", "fov_deg"}
+    required = fields - {"supersampling"}
+    fields |= {"diameter", "fov_deg", "preserve_360", "preserve_360_profile"}
     return (type(projection) is str and projection in {"fulldome", "fulldome_angular"}
-            and fields - {"supersampling"} <= output.keys() and not set(output) - fields
+            and required | {"diameter", "fov_deg"} <= output.keys() and not set(output) - fields
             and width == height == output.get("diameter") and type(output["diameter"]) is int
-            and width in {1024, 2048, 4096, 8192} and _native_pose(output))
+            and width in {1024, 2048, 4096, 8192} and _native_pose(output) and _valid_preservation(output))
 
 
 def _valid_preview_receipt(result: dict) -> bool:
@@ -1145,6 +1158,10 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
                 value = output.get(key)
                 if type(value) in (int, float) and math.isfinite(value):
                     projected[key] = value
+            if _valid_preservation(output) and "preserve_360" in output:
+                projected["preserve_360"] = output["preserve_360"]
+                if output.get("preserve_360") is True:
+                    projected["preserve_360_profile"] = output.get("preserve_360_profile", "shader-dome-from-360/1")
             safe_settings["output"] = projected
         destination = settings.get("destination_intent")
         if _native_folder_intent(destination):
@@ -1298,8 +1315,9 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
                 or body["width"] != 2 * body["height"] or body["height"] % 2):
             refuse()
     elif projection in ("fulldome", "fulldome_angular"):
-        if (set(output) != {"projection", "diameter", "fov_deg", "pan", "tilt", "roll"}
+        if (set(output) - {"preserve_360", "preserve_360_profile"} != {"projection", "diameter", "fov_deg", "pan", "tilt", "roll"}
                 or type(output["diameter"]) is not int or output["diameter"] not in (1024, 2048, 4096, 8192)
+                or not _valid_preservation(output)
                 or body["width"] != output["diameter"] or body["height"] != output["diameter"]):
             refuse()
         for key, lo, hi in (("fov_deg", 10, 360), ("pan", -180, 180), ("tilt", -90, 90), ("roll", -180, 180)):
