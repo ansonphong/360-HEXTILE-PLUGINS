@@ -43,6 +43,18 @@ Workflow document. Require `get_capabilities.native_render.contract` equal to
 `native-render/1`; missing support requires upgrade rather than dropped fields.
 The capability projection gives actual native bounds and supported combinations.
 
+Full-quality Shader inspection advertises `native_render.shader_preview.profile`
+`shader-export-preview/2`. `shader_request_preview` adds required `mode:"still"|
+"sequence"`, `width`, `height` to its saved mounted-owner request; `output` retains
+projection/framing and optional hundredth `supersampling`. Sequence requires
+`sequence_sample:{start_time,end_time,frame_rate,frame_count,index}` with reduced
+rational string endpoints, exact integer FPS, zero-based index and exclusive End.
+Geometry/quality/history use native export limits. This is a transient inspector,
+not an export job or Workflow. Native status/cancellation and uncertainty use the
+original request UUID. Default `shader_get_preview` returns actual full-size
+metadata and progress; `image:true` is a labeled reduced display attachment capped
+at 512 px per side/1 MiB. It never replaces the native full-resolution raster.
+
 Shader sequence input includes the saved identity/hashes/Project witness, exact
 rational interval/FPS/count, dimensions, seed, output and optional hundredth
 `supersampling`1.00–2.00. Direct output carries

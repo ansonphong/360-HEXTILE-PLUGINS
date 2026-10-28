@@ -323,6 +323,8 @@ _CONTROL_TOOLS = frozenset(
         "get_fractal_request",
         "shader_get_output_job",
         "shader_stop_output_job",
+        "shader_get_preview",
+        "shader_release_preview",
         "get_batch",
         "get_batch_items",
         "cancel_run",
@@ -2630,6 +2632,13 @@ _PREVIEW_OUTPUT = {"oneOf": [
                     "supersampling": {"type": "number", "minimum": 1, "maximum": 2}},
                    ("supersampling",)),
 ]}
+_PREVIEW_SAMPLE = _shader_closed({
+    "start_time": _SHADER_SEQUENCE_REQUEST["properties"]["start_time"],
+    "end_time": _SHADER_SEQUENCE_REQUEST["properties"]["end_time"],
+    "frame_rate": _SHADER_SEQUENCE_REQUEST["properties"]["frame_rate"],
+    "frame_count": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "index": {"type": "integer", "minimum": 0, "maximum": 9999},
+})
 _STILL_OUTPUT = {"anyOf": [
     _shader_closed({"width": {"type": "integer", "minimum": 1024, "maximum": 16384},
                     "height": {"type": "integer", "minimum": 512, "maximum": 8192},
@@ -2674,11 +2683,14 @@ SHADER_EXTENSION_TOOLS = [
               ["project_context_witness"]),
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_request_preview", "Request a bounded preview of the exact clean saved current frame through the private mounted Capture owner. Response is an operation ticket.",
-              {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT}, _OUTPUT_OWNER_REQUIRED + ["output"]),
+    _tool_def("shader_request_preview", "Request shader-export-preview/2 at the selected full dimensions and supersampling. Still freezes the completed frame; Sequence evaluates the exact end-exclusive rational sample and native replay. Requires advertised native limits and the private clean saved mounted Capture owner. Recover the original operation ID; never repost under a new ID.",
+              {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT, "mode": {"enum": ["still", "sequence"]},
+               "width": {"type": "integer", "minimum": 4, "maximum": 16384},
+               "height": {"type": "integer", "minimum": 2, "maximum": 8192},
+               "sequence_sample": _PREVIEW_SAMPLE}, _OUTPUT_OWNER_REQUIRED + ["output", "mode", "width", "height"]),
     _tool_def("shader_capture_sequence_input", "Freeze camera pose and persistent toggles from the current completed Shader frame for offline sequences; no GPU work or private input bytes. Recover the original ticket with shader_get_operation (asset scope). Once applied, pass the same request_id as input_capture_id to sequence preflight/render. Continue uses its stored recipe without a fresh capture.",
               _OUTPUT_OWNER, _OUTPUT_OWNER_REQUIRED),
-    _tool_def("shader_get_preview", "Read preview metadata by default. Set image true to opt in to one bounded MCP ImageContent block; pixels never enter text JSON.",
+    _tool_def("shader_get_preview", "Read actual full-resolution dimensions, selected supersampling, exact sample and native progress by original request ID. Image true opts in to a labeled reduced display attachment (max512px/side,1MiB), not source-pixel quality. The native inspector retains the full-quality RGB raster. Pixels never enter text JSON.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "image": {"type": "boolean"}}, ["shader", "project_context_witness", "request_id"]),
     _tool_def("shader_release_preview", "Release one exact private preview lease and GPU broker without starting work.",
@@ -2933,6 +2945,12 @@ SHADER_EXTENSION_TOOLS = [
               _MOUNTED_SHADER_REQUIRED + ["direction", "owner"]),
 ]
 
+next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_preview")["inputSchema"]["allOf"] = [
+    {"if": {"properties": {"mode": {"const": "sequence"}}, "required": ["mode"]},
+     "then": {"required": ["sequence_sample"]},
+     "else": {"not": {"required": ["sequence_sample"]}}},
+]
+
 for _name, _variants in {
     "shader_create_asset": [
         {"properties": {"action": {"const": "new"}}, "required": ["template_id"],
@@ -3171,6 +3189,12 @@ def _layer_error_payload(exc: HextileClientError) -> dict[str, Any]:
             "code": code or ("app_down" if exc.kind == "app_down" else "layer_refused")}
 
 
+SHADER_PREVIEW_ATTACHMENT_LABEL = (
+    "Reduced display attachment (maximum 512 px per side). The native inspector retains the full-resolution "
+    "RGB raster and selected supersampling. Read preview metadata for the actual source size and sample; "
+    "this attachment does not qualify source-pixel quality.")
+
+
 class _McpImage:
     def __init__(self, png: bytes) -> None:
         self.png = png
@@ -3179,7 +3203,7 @@ class _McpImage:
 def _ok_result(data: Any) -> dict[str, Any]:
     if isinstance(data, _McpImage):
         return {"content": [{"type": "image", "data": base64.b64encode(data.png).decode("ascii"),
-                              "mimeType": "image/png"}], "isError": False}
+                              "mimeType": "image/png"}, {"type": "text", "text": SHADER_PREVIEW_ATTACHMENT_LABEL}], "isError": False}
     text = data if isinstance(data, str) else json.dumps(data, indent=2, default=str)
     return {"content": [{"type": "text", "text": text}], "isError": False}
 
@@ -3455,7 +3479,7 @@ class HextileMcpServer:
             and name not in _LOCAL_FILE_DIAGNOSTICS
             and name not in {"shader_get_operation", "shader_get_proposal", "shader_get_workspace",
                              "shader_stop_workspace", "shader_get_output_job",
-                             "shader_stop_output_job"}
+                             "shader_stop_output_job", "shader_get_preview", "shader_release_preview"}
         ):
             probe = getattr(self.client, "request_json", None)
             if callable(probe):

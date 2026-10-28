@@ -162,6 +162,112 @@ def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
     return (type(file) is str and re.fullmatch(r"domes/[A-Za-z0-9_-]{1,64}\.png", file) is not None)
 
 
+def _valid_preview_sample(sample: Any) -> bool:
+    if type(sample) is not dict or set(sample) != {"start_time", "end_time", "frame_rate", "frame_count", "index"}:
+        return False
+    try:
+        points = []
+        for key in ("start_time", "end_time"):
+            value = sample[key]
+            if (type(value) is not dict or set(value) != {"num", "den"}
+                    or type(value["num"]) is not str or re.fullmatch(r"0|[1-9][0-9]{0,31}", value["num"]) is None
+                    or type(value["den"]) is not str or re.fullmatch(r"[1-9][0-9]{0,31}", value["den"]) is None):
+                return False
+            point = Fraction(int(value["num"]), int(value["den"]))
+            if point.denominator != int(value["den"]):
+                return False
+            points.append(point)
+        rate = sample["frame_rate"]
+        if (type(rate) is not dict or set(rate) != {"num", "den"}
+                or any(type(rate[key]) is not int or not 1 <= rate[key] <= 1_000_000 for key in rate)):
+            return False
+        fps = Fraction(rate["num"], rate["den"])
+        count = (points[1] - points[0]) * fps
+        expected = -(-count.numerator // count.denominator)
+        return (fps.denominator == rate["den"] and 1 <= fps <= 120 and 0 <= points[0] < points[1] <= 86400
+                and type(sample["frame_count"]) is int and sample["frame_count"] == expected
+                and 1 <= expected <= 10000 and type(sample["index"]) is int and 0 <= sample["index"] < expected)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return False
+
+
+def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
+    mode, width, height = (args.get(key) for key in ("mode", "width", "height"))
+    output, sample = args.get("output"), args.get("sequence_sample")
+    if (type(mode) is not str or mode not in {"still", "sequence"} or type(width) is not int or type(height) is not int
+            or not 4 <= width <= 16384 or not 2 <= height <= 8192 or type(output) is not dict
+            or (mode == "sequence") != (sample is not None)
+            or sample is not None and not _valid_preview_sample(sample)):
+        return False
+    scale = output.get("supersampling", 1)
+    if (type(scale) not in (int, float) or not math.isfinite(scale) or not 1 <= scale <= 2
+            or abs(scale * 100 - round(scale * 100)) > 1e-9):
+        return False
+    projection = output.get("projection")
+    fields = {"projection", "pan", "tilt", "roll", "supersampling"}
+    if projection == "equirectangular":
+        return (fields - {"supersampling"} <= output.keys() and not set(output) - fields
+                and all(type(output[key]) in (int, float) and output[key] == 0 for key in ("pan", "tilt", "roll"))
+                and width == height * 2 and height % 2 == 0)
+    fields |= {"diameter", "fov_deg"}
+    return (type(projection) is str and projection in {"fulldome", "fulldome_angular"}
+            and fields - {"supersampling"} <= output.keys() and not set(output) - fields
+            and width == height == output.get("diameter") and type(output["diameter"]) is int
+            and width in {1024, 2048, 4096, 8192} and _native_pose(output))
+
+
+def _valid_preview_receipt(result: dict) -> bool:
+    common = {"request_id", "state", "status", "progress", "error"}
+    if not common <= result.keys() or result["status"] not in {
+            "pending", "running", "completed", "failed", "cancelled", "released", "refused", "unknown"}:
+        return False
+    error, progress = result["error"], result["progress"]
+    if error is not None and (type(error) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", error) is None):
+        return False
+    if progress is not None and (type(progress) is not dict or not {"phase", "index"} <= progress.keys()
+            or set(progress) - {"phase", "index", "frac"} or progress["phase"] not in {"compiling", "replaying", "rendering"}
+            or type(progress["index"]) is not int or not 0 <= progress["index"] < 1_000_000
+            or "frac" in progress and (type(progress["frac"]) not in (int, float)
+                or not math.isfinite(progress["frac"]) or not 0 <= progress["frac"] <= 1)):
+        return False
+    if result["state"] in {"pending", "unavailable"}:
+        return set(result) == common
+    fields = {"width", "height", "stride", "size", "sha256", "format", "profile", "mode", "supersampling",
+              "physical_width", "physical_height", "index", "time", "frame_rate", "sample", "output",
+              "document_hash", "source_hash", "resource_manifest_hash", "intent_sha256"}
+    if result["state"] != "ready" or set(result) != common | fields or result["status"] != "completed":
+        return False
+    if (type(result["output"]) is not dict or not _valid_preview_selection({
+            **{key: result[key] for key in ("mode", "width", "height")}, "sequence_sample": result["sample"],
+            "output": {**result["output"], "supersampling": result["supersampling"]}})
+            or any(type(result[key]) is not int for key in ("stride", "size", "index", "physical_width", "physical_height"))
+            or result["stride"] != result["width"] * 3 or result["size"] != result["stride"] * result["height"]
+            or result["size"] > 16384 * 8192 * 3 or not 0 <= result["index"] < 1_000_000
+            or result["format"] != "rgb8-srgb-top-origin" or result["profile"] != "shader-export-preview/2"
+            or any(type(result[key]) is not str or _WORKSPACE_DIGEST.fullmatch(result[key]) is None
+                   for key in ("sha256", "document_hash", "source_hash"))
+            or result["resource_manifest_hash"] is not None and (type(result["resource_manifest_hash"]) is not str
+                or _WORKSPACE_DIGEST.fullmatch(result["resource_manifest_hash"]) is None)
+            or type(result["intent_sha256"]) is not str or re.fullmatch(r"[0-9a-f]{64}", result["intent_sha256"]) is None):
+        return False
+    rate = result["frame_rate"]
+    if (type(rate) is not dict or set(rate) != {"num", "den"}
+            or any(type(rate[key]) is not int or not 1 <= rate[key] <= 1_000_000 for key in rate)
+            or type(result["time"]) is not str or re.fullmatch(r"[0-9]{1,64}/[1-9][0-9]{0,63}", result["time"]) is None):
+        return False
+    physical_height = math.ceil(result["height"] * result["supersampling"])
+    if (result["physical_height"] != physical_height or result["physical_width"] !=
+            (physical_height * 2 if result["output"]["projection"] == "equirectangular" else physical_height)):
+        return False
+    if result["mode"] == "sequence":
+        sample = result["sample"]
+        expected_time = Fraction(int(sample["start_time"]["num"]), int(sample["start_time"]["den"])) + Fraction(
+            sample["index"] * rate["den"], rate["num"])
+        if result["index"] != sample["index"] or rate != sample["frame_rate"] or Fraction(result["time"]) != expected_time:
+            return False
+    return True
+
+
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                            *, mutation: bool = False) -> dict:
     """Close the native output boundary, retaining its actual task destination."""
@@ -214,16 +320,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                                for key in ("from_doc_generation", "to_doc_generation") if key in transition)):
                     raise invalid()
         elif operation == "get_preview":
-            if result.get("state") in {"pending", "unavailable"}:
-                if keys != {"request_id", "state"}:
-                    raise invalid()
-            elif (result.get("state") != "ready" or keys != {"request_id", "state", "width",
-                    "height", "sha256", "format"} or type(result["width"]) is not int
-                    or type(result["height"]) is not int or not 0 < result["width"] <= 1024
-                    or not 0 < result["height"] <= 512 or result["width"] * result["height"] > 524288
-                    or type(result["sha256"]) is not str
-                    or _WORKSPACE_DIGEST.fullmatch(result["sha256"]) is None
-                    or result["format"] != "rgb8-srgb-top-origin"):
+            if not _valid_preview_receipt(result):
                 raise invalid()
         elif operation == "release_preview":
             if keys != {"request_id", "released"} or result["released"] is not True:
@@ -353,7 +450,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
         "sequence_input": (_OUTPUT_OWNER, set()),
-        "preview": (_OUTPUT_OWNER | {"output"}, set()),
+        "preview": (_OUTPUT_OWNER | {"output", "mode", "width", "height"}, {"sequence_sample"}),
         "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision"}),
         "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, set()),
         "get_preview": (common, {"image"}),
@@ -392,13 +489,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
         if not isinstance(output, Mapping):
             raise HextileClientError("Invalid Shader output settings", status_code=422, kind="other")
         if operation == "preview":
-            projection = output.get("projection")
-            fields = ({"projection", "pan", "tilt", "roll", "supersampling"}
-                      if projection == "equirectangular" else
-                      {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "supersampling"})
-            required = fields - {"supersampling"}
-            valid = (type(projection) is str and projection in {"equirectangular", "fulldome", "fulldome_angular"}
-                     and required <= output.keys() and set(output) <= fields)
+            valid = _valid_preview_selection(args)
         else:
             if args["profile"] == "shader-raster-still/1":
                 valid = _valid_raster_still_output(output)
@@ -1435,12 +1526,16 @@ class Client:
         try:
             cm = self._opener(req, timeout=self.timeout) if self._opener is not None else urllib.request.urlopen(req, timeout=self.timeout)
             with cm as response:
-                data = response.read(8 * 1024 * 1024 + 1)
-                if len(data) > 8 * 1024 * 1024:
+                data = response.read(1024 * 1024 + 1)
+                if len(data) > 1024 * 1024:
                     raise HextileClientError("Shader image exceeds bounded output", status_code=413, kind="other")
                 content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
                 if content_type == "image/png":
-                    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                    if (len(data) < 33 or data[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+                            or not 1 <= int.from_bytes(data[16:20], "big") <= 512
+                            or not 1 <= int.from_bytes(data[20:24], "big") <= 512
+                            or response.headers.get("X-Hextile-Preview-Request-ID") != request_id
+                            or response.headers.get("X-Hextile-Preview-Attachment") != "reduced-display/1"):
                         raise HextileClientError("Invalid Shader image bytes", status_code=502, kind="other")
                     return data
                 if content_type == "application/json":
@@ -1715,7 +1810,7 @@ class Client:
 
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,
-                               sequence_inputs: bool = False) -> None:
+                               sequence_inputs: bool = False, preview_inspector: bool = False) -> None:
         """New native semantics require an explicitly advertised peer contract."""
         try:
             capabilities = self.get_capabilities()
@@ -1728,6 +1823,8 @@ class Client:
         if (type(native) is not dict or native.get("contract") != "native-render/1"
                 or type(native.get("sequences")) is not dict
                 or type(native.get("stills")) is not dict
+                or preview_inspector and (type(native.get("shader_preview")) is not dict
+                    or native["shader_preview"].get("profile") != "shader-export-preview/2")
                 or still_profile is not None and still_profile not in native["stills"]
                 or sequence_inputs and (type(native['sequences'].get('shader')) is not dict
                     or type(native['sequences']['shader'].get('input_snapshot')) is not dict
@@ -4959,6 +5056,8 @@ class Client:
         return _shader_output_receipt(operation, args, result, mutation=True)
 
     def request_shader_preview(self, args: Mapping[str, Any]) -> dict:
+        _shader_output_args("preview", args)
+        self._require_native_render(preview_inspector=True)
         return self._shader_output_post("preview", args, "/api/shaders/agent-operations/output/preview")
 
     def capture_shader_sequence_input(self, args: Mapping[str, Any]) -> dict:

@@ -159,6 +159,33 @@ Report saved only after an exact server-observed `save="saved"` receipt with acc
 
 ## Native rendering and exact destination output
 
+`get_capabilities.native_render.shader_preview.profile` must be
+`shader-export-preview/2` for the full-quality inspector. `shader_request_preview`
+requires a caller-known UUID, the clean saved mounted owner, `mode`, `width`,
+`height` and projection/framing `output` with optional selected `supersampling`
+1.00–2.00. Still freezes the completed native sample. Sequence additionally
+requires `sequence_sample:{start_time,end_time,frame_rate,frame_count,index}`;
+times are reduced rational strings, FPS is an exact integer rational, index is
+zero-based, and End is exclusive. Native export limits also govern history,
+replay, resources and supported combinations. A refusal never lowers quality.
+
+Recover a lost capture acknowledgement with `shader_get_operation` using the
+original UUID, then poll `shader_get_preview` with that UUID and original Shader/
+Project witness. Native admission is retained before its reply: unknown remains
+unknown until the same request resolves; never mint another ID to retry it.
+Metadata reports actual delivered dimensions, supersampling/internal dimensions,
+projection, exact sample/time/FPS, format, source/intent hashes and native progress.
+Poll while inspecting to keep the short native lease alive. `shader_release_preview`
+cancels/releases only this owned request, including original-request cleanup after
+disconnect or selection change. It does not stop an accepted export Sequence.
+
+`image:true` explicitly requests a **reduced display attachment**, at most 512 px
+per side and 1 MiB, accompanied by that label. It is not pixel-quality evidence.
+The native inspector retains full-size RGB8 sRGB pixels at the selected SS;
+Fit/zoom only change display scale. This does not inspect scene-linear EXR data
+or JPEG encoding artifacts. Zoom/pan/Fit and Auto are local presentation/request
+scheduling: agents use explicit typed requests, status and cancellation instead.
+
 New Shader sequences use the chosen PNG/JPG `folder_export` directly, with JPG
 quality1–100 and optional hundredth supersampling1.00–2.00. Final dimensions stay
 fixed; internal work grows with supersampling. Native temporal/resource/history

@@ -350,3 +350,44 @@ Attack/Release are finite seconds `[0,60]`. Curve objects have exactly `shape, e
 Aliases match ASCII `[A-Za-z][A-Za-z0-9_]{0,31}`, contain no `__`, are unique across channels/modulators and avoid GLSL/host names and source declarations. Modulator IDs are `mod_` plus 24 lowercase hex digits; binding IDs are `binding_` plus 24 lowercase hex digits. An envelope must reference an existing default-0 gate; orphaned inputs, incompatible targets, missing declarations or malformed settings yield real Prepare diagnostics, not a static pass. Preserve the admitted modulation schema and required capabilities on revisions; workspace format stays at its acknowledged v1 or v2 schema.
 
 Report an effective Enter shortcut conflict and propose an explicit remap. It is not a compile failure; never press keys, arm Interact, change Hotkeys, set live pose or save Project presets to prove the recipe. Review controls/modulators/parameters/values/code and the exact candidate-bound check states together; native Apply and its exact Save receipt establish the saved result through APP's checked door. Compilation is not physical input or visual proof. Legacy `propose_shader` and every Copilot Board row must keep convention/envelope bytes and Playable declarations unchanged; only the current attested workspace can first create or revise them. Future admitted INPUT adapters may route MIDI/OSC/gamepad to the same logical gate/evaluator, but those device routes, addresses and live events never belong in these portable files.
+# Inspect an exact full-quality Shader Sequence frame
+
+Discover `native_render.shader_preview` and require `shader-export-preview/2`.
+Use the actual clean saved mounted Shader owner/base/witness and a fresh caller
+UUID for this explicit request. For an Angular Dome frame near the end of a
+10–11 second interval at 30000/1001 FPS, add these settings to that owner envelope:
+
+```json
+{
+  "mode": "sequence",
+  "width": 4096,
+  "height": 4096,
+  "output": {
+    "projection": "fulldome_angular", "diameter": 4096,
+    "fov_deg": 180, "pan": 0, "tilt": 0, "roll": 0,
+    "supersampling": 1.5
+  },
+  "sequence_sample": {
+    "start_time": {"num": "10", "den": "1"},
+    "end_time": {"num": "11", "den": "1"},
+    "frame_rate": {"num": 30000, "den": 1001},
+    "frame_count": 30, "index": 29
+  }
+}
+```
+
+Call `shader_request_preview` once. Reconcile its original operation via
+`shader_get_operation`; poll `shader_get_preview` under the same UUID. This is
+frame 30 of 30 at exact time 329029/30000 s, strictly before End. Metadata must
+confirm 4096² delivered pixels, 1.5× SS, Angular Dome and that exact sample;
+queued settings or success alone do not prove those pixels. Supported stateful
+Shaders replay the native frozen samples. A native refusal stays a refusal.
+
+Opt into `image:true` only for a labeled reduced display attachment (512 px/side,
+1 MiB maximum). Inspect source-pixel quality in the APP inspector at 100%; the
+attachment does not prove it. Release/cancel with `shader_release_preview` using
+the original UUID and original Shader/Project witness. Unknown replies retain the
+original identity; never create a replacement ID automatically. Preview cleanup
+does not cancel an accepted export job. Still uses `mode:"still"` and omits
+`sequence_sample`, freezing the actual completed native frame.
+

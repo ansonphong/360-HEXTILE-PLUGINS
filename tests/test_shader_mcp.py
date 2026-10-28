@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import ast
 import http.client
 import hashlib
@@ -30,6 +31,22 @@ from hextile_mcp import TOOLS, HextileMcpServer  # noqa: E402
 
 def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
+
+
+def _inspector_capabilities():
+    return {"native_render": {"contract": "native-render/1", "stills": {}, "sequences": {},
+                              "shader_preview": {"profile": "shader-export-preview/2"}}}
+
+
+def _inspector_ready(request_id):
+    digest = "sha256:" + "a" * 64
+    return {"request_id": request_id, "state": "ready", "status": "completed", "progress": None, "error": None,
+        "width": 2048, "height": 1024, "stride": 6144, "size": 2048 * 1024 * 3,
+        "sha256": digest, "format": "rgb8-srgb-top-origin", "profile": "shader-export-preview/2",
+        "mode": "still", "supersampling": 1.5, "physical_width": 3072, "physical_height": 1536,
+        "index": 0, "time": "0/1", "frame_rate": {"num": 24, "den": 1}, "sample": None,
+        "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0},
+        "document_hash": digest, "source_hash": digest, "resource_manifest_hash": None, "intent_sha256": "a" * 64}
 
 
 def test_sequence_input_capture_is_typed_private_and_recovers_original_ticket(monkeypatch):
@@ -85,7 +102,8 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
              "base": {"kind": "saved", "working_revision": 1,
                       "document_hash": digest, "source_hash": digest},
              "studio_surface_id": "surface", "expected_edit_sequence": 1}
-    preview = {**owner, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
+    preview = {**owner, "mode": "still", "width": 2048, "height": 1024,
+               "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
     jsonschema.validate(preview, descriptor("shader_request_preview")["inputSchema"])
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**preview, "output": {**preview["output"], "path": "C:/pixels.png"}},
@@ -105,6 +123,7 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
                             descriptor("shader_preflight_still_export")["inputSchema"])
     calls = []
     client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    monkeypatch.setattr(client, "get_capabilities", _inspector_capabilities)
     def reply(method, path, body=None, **kwargs):
         calls.append((method, path, body, kwargs))
         return {"request_id": request_id, "state": "pending"}
@@ -153,7 +172,7 @@ def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatc
     monkeypatch.setattr(client, "request_shader_preview_image", lambda *_a: b"\x89PNG\r\n\x1a\nFAKE")
     result = HextileMcpServer(client=client).call_tool("shader_get_preview", image_args)
     assert result["content"][0]["type"] == "image" and result["content"][0]["mimeType"] == "image/png"
-    assert all(block["type"] != "text" for block in result["content"])
+    assert "Reduced display attachment" in result["content"][1]["text"]
 
 
 def test_raster_still_and_dome_exr_preflight_use_native_contract(monkeypatch) -> None:
@@ -253,23 +272,75 @@ def test_shader_preview_binary_transport_requires_explicit_image_opt_in() -> Non
     class Reply(io.BytesIO):
         def __init__(self, data, content_type):
             super().__init__(data)
-            self.headers = {"Content-Type": content_type}
+            self.headers = {"Content-Type": content_type, "X-Hextile-Preview-Request-ID": request_id,
+                            "X-Hextile-Preview-Attachment": "reduced-display/1"}
             self.status = 200
         def getcode(self):
             return 200
     def opener(request, timeout=None):
         seen.append(request)
         if "image=true" in request.full_url:
-            return Reply(b"\x89PNG\r\n\x1a\nFAKE", "image/png")
-        return Reply(json.dumps({"request_id": request_id, "state": "ready", "width": 2,
-                                 "height": 1, "sha256": "sha256:" + "a" * 64,
-                                 "format": "rgb8-srgb-top-origin"}).encode(), "application/json")
+            png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lL8AAAAASUVORK5CYII=")
+            return Reply(png, "image/png")
+        return Reply(json.dumps(_inspector_ready(request_id)).encode(), "application/json")
     client = Client(opener=opener)
     metadata = client.get_shader_preview(args)
     assert metadata["state"] == "ready" and seen[-1].headers["X-hextile-agent"] == "mcp"
     image = client.get_shader_preview({**args, "image": True})
     assert isinstance(image, bytes) and image.startswith(b"\x89PNG")
     assert "image=true" in seen[-1].full_url
+
+
+def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_recipe(monkeypatch):
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    descriptor = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_preview")
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    digest = "sha256:" + "a" * 64
+    sample = {"start_time": {"num": "10", "den": "1"}, "end_time": {"num": "11", "den": "1"},
+              "frame_rate": {"num": 30000, "den": 1001}, "frame_count": 30, "index": 29}
+    request = {"request_id": request_id, "shader": {"origin": "user", "shaderId": "aurora"},
+        "project_context_witness": "w", "base": {"kind": "saved", "working_revision": 1,
+        "document_hash": digest, "source_hash": digest}, "studio_surface_id": "surface", "expected_edit_sequence": 1,
+        "mode": "sequence", "width": 4096, "height": 4096, "sequence_sample": sample,
+        "output": {"projection": "fulldome_angular", "diameter": 4096, "fov_deg": 180,
+                   "pan": 0, "tilt": 0, "roll": 0, "supersampling": 1.5}}
+    jsonschema.validate(request, descriptor["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({key: value for key, value in request.items() if key != "sequence_sample"}, descriptor["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**request, "mode": "still"}, descriptor["inputSchema"])
+    client = Client()
+    monkeypatch.setattr(client, "get_capabilities", _inspector_capabilities)
+    calls = []
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body))
+        return {"request_id": request_id, "state": "pending"}
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.request_shader_preview(request)["request_id"] == request_id
+    assert calls[-1][2] == request
+    for patch in ({"height": 2048}, {"sequence_sample": {**sample, "index": 30}},
+                  {"sequence_sample": {**sample, "frame_count": 29}}, {"sequence_sample": None},
+                  {"output": {**request["output"], "supersampling": 1.234}}):
+        with pytest.raises(HextileClientError):
+            client.request_shader_preview({**request, **patch})
+    assert len(calls) == 1  # Invalid settings never cross mutation admission.
+    ready = {**_inspector_ready(request_id), "mode": "sequence", "width": 4096, "height": 4096,
+        "stride": 4096 * 3, "size": 4096 * 4096 * 3, "physical_width": 6144, "physical_height": 6144,
+        "index": 29, "time": "329029/30000", "frame_rate": sample["frame_rate"], "sample": sample,
+        "output": {key: value for key, value in request["output"].items() if key != "supersampling"}}
+    args = {key: request[key] for key in ("request_id", "shader", "project_context_witness")}
+    monkeypatch.setattr(client, "request_json", lambda *a, **kw: ready)
+    assert client.get_shader_preview(args) == ready
+    for patch in ({"index": 28}, {"time": "11/1"}, {"supersampling": 1}, {"width": 512},
+                  {"lease": "private"}, {"size": 10 ** 20}):
+        monkeypatch.setattr(client, "request_json", lambda *a, row={**ready, **patch}, **kw: row)
+        with pytest.raises(HextileClientError):
+            client.get_shader_preview(args)
+    monkeypatch.setattr(client, "get_capabilities", lambda: {"native_render": {
+        "contract": "native-render/1", "stills": {}, "sequences": {}}})
+    with pytest.raises(HextileClientError) as unavailable:
+        client.request_shader_preview(request)
+    assert unavailable.value.status_code == 501
 
 
 def test_known_shader_output_job_recovers_through_disabled_mcp_proxy(monkeypatch) -> None:
@@ -297,6 +368,7 @@ def test_known_shader_output_job_recovers_through_disabled_mcp_proxy(monkeypatch
 
 def test_shader_output_receipts_refuse_wrong_identity_and_private_fields(monkeypatch) -> None:
     client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    monkeypatch.setattr(client, "get_capabilities", _inspector_capabilities)
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
     shader = {"origin": "user", "shaderId": "aurora"}
     digest = "sha256:" + "a" * 64
@@ -304,7 +376,8 @@ def test_shader_output_receipts_refuse_wrong_identity_and_private_fields(monkeyp
              "base": {"kind": "saved", "working_revision": 1,
                       "document_hash": digest, "source_hash": digest},
              "studio_surface_id": "surface", "expected_edit_sequence": 1}
-    preview = {**owner, "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
+    preview = {**owner, "mode": "still", "width": 2048, "height": 1024,
+               "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
     replies = [{"request_id": "wrong-id", "state": "pending"},
                {"request_id": request_id, "state": "pending", "private_path": "D:/secret"},
                {"request_id": request_id, "state": "saved"},
