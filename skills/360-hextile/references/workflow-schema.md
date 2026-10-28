@@ -54,6 +54,9 @@ not an export job or Workflow. Native status/cancellation and uncertainty use th
 original request UUID. Default `shader_get_preview` returns actual full-size
 metadata and progress; `image:true` is a labeled reduced display attachment capped
 at 512 px per side/1 MiB. It never replaces the native full-resolution raster.
+`shader_release_preview` also cancels the original queued capture or native
+freeze. `released:false,status:"cancel_pending",cleanup:"pending"` keeps the
+original owner until cleanup is confirmed; it is not permission to start anew.
 
 Shader sequence input includes the saved identity/hashes/Project witness, exact
 rational interval/FPS/count, dimensions, seed, output and optional hundredth

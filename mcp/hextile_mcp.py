@@ -2693,7 +2693,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_get_preview", "Read actual full-resolution dimensions, selected supersampling, exact sample and native progress by original request ID. Image true opts in to a labeled reduced display attachment (max512px/side,1MiB), not source-pixel quality. The native inspector retains the full-quality RGB raster. Pixels never enter text JSON.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "image": {"type": "boolean"}}, ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_release_preview", "Release one exact private preview lease and GPU broker without starting work.",
+    _tool_def("shader_release_preview", "Cancel/release this original inspector, including a queued capture or resource freeze, without starting new work. A cancel_pending result retains the same request ID until cleanup is confirmed; it does not stop an accepted export Sequence.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["shader", "project_context_witness", "request_id"]),
     _tool_def("shader_preflight_still_export", "Preflight one native PNG/JPG raster, PNG master, linear EXR, or Dome profile using the mounted completed frame; no GPU start.",

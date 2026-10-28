@@ -178,6 +178,10 @@ projection, exact sample/time/FPS, format, source/intent hashes and native progr
 Poll while inspecting to keep the short native lease alive. `shader_release_preview`
 cancels/releases only this owned request, including original-request cleanup after
 disconnect or selection change. It does not stop an accepted export Sequence.
+Cancellation also retires a queued/claimed mounted preview ticket. During a
+resource freeze it may return `released:false,status:"cancel_pending"`; keep
+polling/controlling that original ID until cleanup is confirmed. A pending
+cancellation is not a successful release and never justifies a replacement ID.
 
 `image:true` explicitly requests a **reduced display attachment**, at most 512 px
 per side and 1 MiB, accompanied by that label. It is not pixel-quality evidence.

@@ -341,6 +341,13 @@ def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_rec
     with pytest.raises(HextileClientError) as unavailable:
         client.request_shader_preview(request)
     assert unavailable.value.status_code == 501
+    pending_cancel = {"request_id": request_id, "released": False, "status": "cancel_pending", "cleanup": "pending"}
+    monkeypatch.setattr(client, "request_json", lambda *a, **kw: pending_cancel)
+    assert client.release_shader_preview(args) == pending_cancel
+    monkeypatch.setattr(client, "request_json", lambda *a, **kw: {**pending_cancel, "lease": "private"})
+    with pytest.raises(HextileClientError) as malformed:
+        client.release_shader_preview(args)
+    assert malformed.value.receipt == {"request_id": request_id}
 
 
 def test_known_shader_output_job_recovers_through_disabled_mcp_proxy(monkeypatch) -> None:

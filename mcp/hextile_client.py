@@ -219,7 +219,7 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
 def _valid_preview_receipt(result: dict) -> bool:
     common = {"request_id", "state", "status", "progress", "error"}
     if not common <= result.keys() or result["status"] not in {
-            "pending", "running", "completed", "failed", "cancelled", "released", "refused", "unknown"}:
+            "pending", "preparing", "cancel_pending", "running", "completed", "failed", "cancelled", "released", "refused", "unknown"}:
         return False
     error, progress = result["error"], result["progress"]
     if error is not None and (type(error) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", error) is None):
@@ -323,7 +323,9 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
             if not _valid_preview_receipt(result):
                 raise invalid()
         elif operation == "release_preview":
-            if keys != {"request_id", "released"} or result["released"] is not True:
+            if not (keys == {"request_id", "released"} and result["released"] is True
+                    or keys == {"request_id", "released", "status", "cleanup"}
+                    and result["released"] is False and result["status"] == "cancel_pending" and result["cleanup"] == "pending"):
                 raise invalid()
         elif operation in {"still", "get_job", "stop_job"}:
             allowed = {"request_id", "profile", "job", "publication", "state", "output_name", "output_path", "reason"}
