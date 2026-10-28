@@ -167,6 +167,17 @@ pixels. Keep exact rational interval/FPS/count and all saved source/resource
 identity fields. Explicit deferred masters and later copy/conversion remain
 separate supported operations.
 
+For a new playable Shader sequence, call `shader_capture_sequence_input` with
+the discovered clean saved base, mounted surface and edit sequence. Recover its
+original ticket using `shader_get_operation(scope="asset")`; once applied, pass
+that same request ID as `input_capture_id` to preflight and render. The capture
+expires after five minutes before admission. It freezes the completed camera
+pose and persistent toggles, neutralizes movement/held/delta channels and keeps
+time animation running. Private samples never enter MCP requests or replies.
+Unsupported mouse/history modulation still refuses. Do not recapture or change
+keys after an uncertain submission: recover its known sequence instead.
+Continue reuses the stored snapshot without a new capture or live preview.
+
 Preflight and submit the identical body/key. `inspect_shader_sequence_output`
 inspects one selected destination using metadata; matching unfinished work uses
 `control_shader_sequence(action="continue")` with its original request and

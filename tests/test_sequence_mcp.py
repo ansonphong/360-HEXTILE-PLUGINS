@@ -528,7 +528,8 @@ def test_shader_render_export_mcp_tool_chain() -> None:
         asyncio.run(exercise_sdk())
 
 
-def test_native_shader_direct_inspect_continue_and_observed_stop() -> None:
+@pytest.mark.parametrize('capture_id', [None, '7e720fa5-192b-47da-a705-ab3b5ddc979e'])
+def test_native_shader_direct_inspect_continue_and_observed_stop(capture_id) -> None:
     tools = {tool["name"]: tool for tool in HextileMcpServer(client=Client()).handle_rpc(
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})["result"]["tools"]}
     digest = "sha256:" + "a" * 64
@@ -544,6 +545,10 @@ def test_native_shader_direct_inspect_continue_and_observed_stop() -> None:
                "width": 2048, "height": 1024, "seed": 7, "supersampling": 1.25,
                "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0},
                "folder_export": folder}
+    if capture_id is not None:
+        request['input_capture_id'] = capture_id
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**request, 'input_sample': {}}, tools['render_shader_sequence']['inputSchema'])
     jsonschema.validate(request, tools["render_shader_sequence"]["inputSchema"])
     jsonschema.validate({"request": request}, tools["inspect_shader_sequence_output"]["inputSchema"])
     control = {"sequence_id": sequence_id, "action": "continue", "request": request,
@@ -553,7 +558,8 @@ def test_native_shader_direct_inspect_continue_and_observed_stop() -> None:
     def opener(req: Any, timeout=None):
         seen.append(req)
         if req.full_url.endswith("/capabilities"):
-            return _Resp({"native_render": {"contract": "native-render/1", "sequences": {}, "stills": {}}})
+            return _Resp({"native_render": {"contract": "native-render/1", "sequences": {'shader': {
+                'input_snapshot': {'contract': 'shader-sequence-input/1'}}}, "stills": {}}})
         if req.full_url.endswith("/inspect"):
             return _Resp({"status": "unfinished", "sequence_id": sequence_id,
                           "producer": "shader", "render_identity": digest, "recipe_hash": digest,
@@ -583,6 +589,7 @@ def test_native_shader_direct_inspect_continue_and_observed_stop() -> None:
     assert inspected["inspection_fingerprint"] == digest
     assert "destination_folder" not in inspected
     accepted = client.control_shader_sequence(control)
+    assert json.loads(seen[-1].data)['request'] == request
     assert accepted["run_id"] == run_id
     detail = client.get_shader_sequence(sequence_id)
     assert detail["frames_completed"] == 7

@@ -50,6 +50,15 @@ same acknowledged saved source and choose an existing folder on the APP machine.
 This example is24FPS over[0,2),48frames, final2048×1024, JPG90 and1.25spatial
 supersampling. Use the byte-identical intent for preflight and submit.
 
+For playable camera controls, first use `shader_capture_sequence_input` with the
+discovered saved base, mounted surface and edit sequence. Wait for its original
+`shader_get_operation(scope="asset")` ticket to apply, then include that request
+ID as `input_capture_id` in both requests below. Captures expire after five
+minutes before admission. The native recipe retains camera pose and persistent
+toggles, neutralizes movement and preserves time animation. Unsupported event
+history still refuses. Continue uses its stored snapshot without recapturing;
+an uncertain submission must be recovered by its original sequence ID/key.
+
 ```json
 {"shader_ref":{"origin":"project","id":"aurora"},"project_context_witness":"project-witness","working_revision":2,"document_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_hash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","resource_manifest_hash":null,"selected_resource_frames":[],"idempotency_key":"aurora-direct-001","name":"Aurora direct","frame_rate":{"num":24,"den":1},"frame_count":48,"start_time":{"num":"0","den":"1"},"end_time":{"num":"2","den":"1"},"width":2048,"height":1024,"seed":7,"supersampling":1.25,"output":{"projection":"equirectangular","pan":0,"tilt":0,"roll":0},"folder_export":{"destination_folder":"D:\\Renders\\Aurora","format":"JPG","quality_if_jpg":90}}
 ```

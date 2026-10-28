@@ -181,7 +181,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
             if field in result and not _absolute_task_path(result[field]):
                 raise invalid()
 
-        if operation in {"preview", "preflight"}:
+        if operation in {"preview", "preflight", "sequence_input"}:
             full = {"schema", "request_id", "operation", "state", "shader",
                     "project_context_witness"}
             if ((keys != {"request_id", "state"} and
@@ -352,6 +352,7 @@ def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, compl
 def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
+        "sequence_input": (_OUTPUT_OWNER, set()),
         "preview": (_OUTPUT_OWNER | {"output"}, set()),
         "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision"}),
         "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, set()),
@@ -374,7 +375,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
                 valid = False
             if not valid:
                 raise HextileClientError("Expected canonical output UUID", status_code=422, kind="other")
-    if operation in {"preview", "preflight", "still", "bundle", "project"}:
+    if operation in {"preview", "preflight", "still", "bundle", "project", "sequence_input"}:
         base = args["base"]
         if (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
                 or base["kind"] != "saved" or type(base["working_revision"]) is not int or base["working_revision"] < 1
@@ -913,7 +914,7 @@ _SHADER_SEQUENCE_REQUIRED = {
     "start_time", "end_time", "width", "height", "seed", "output",
 }
 _SHADER_SEQUENCE_OPTIONAL = {"resource_manifest_hash", "selected_resource_frames",
-                             "supersampling", "folder_export", "publication_mode"}
+                             "supersampling", "folder_export", "publication_mode", "input_capture_id"}
 
 
 def _native_folder_intent(value: Any) -> bool:
@@ -1162,6 +1163,14 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
         refuse()
     if "resource_manifest_hash" in body and body["resource_manifest_hash"] is not None and not digest(body["resource_manifest_hash"]):
         refuse()
+    if 'input_capture_id' in body:
+        try:
+            if (type(body['input_capture_id']) is not str
+                    or str(uuid.UUID(body['input_capture_id'])) != body['input_capture_id']
+                    or uuid.UUID(body['input_capture_id']).version != 4):
+                refuse()
+        except (ValueError, AttributeError):
+            refuse()
     frames = body.get("selected_resource_frames")
     if frames is not None:
         if type(frames) is not list:
@@ -1705,7 +1714,8 @@ class Client:
         return self.get_json("/api/workflows/capabilities")
 
     def _require_native_render(self, *, still_profile: str | None = None,
-                               fractal_still_capture: bool = False) -> None:
+                               fractal_still_capture: bool = False,
+                               sequence_inputs: bool = False) -> None:
         """New native semantics require an explicitly advertised peer contract."""
         try:
             capabilities = self.get_capabilities()
@@ -1719,6 +1729,9 @@ class Client:
                 or type(native.get("sequences")) is not dict
                 or type(native.get("stills")) is not dict
                 or still_profile is not None and still_profile not in native["stills"]
+                or sequence_inputs and (type(native['sequences'].get('shader')) is not dict
+                    or type(native['sequences']['shader'].get('input_snapshot')) is not dict
+                    or native['sequences']['shader']['input_snapshot'].get('contract') != 'shader-sequence-input/1')
                 or fractal_still_capture and native.get("fractal_still_capture") != {
                     "protocol": "fractal_capture/1", "producer": "mounted_finished_preview",
                     "static_frame": True, "animated_sample": True}):
@@ -2216,8 +2229,8 @@ class Client:
 
     def _shader_sequence_post(self, body: Mapping[str, Any], *, preflight: bool) -> dict[str, Any]:
         validate_shader_sequence_request(body)
-        if body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1:
-            self._require_native_render()
+        if body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1 or 'input_capture_id' in body:
+            self._require_native_render(sequence_inputs='input_capture_id' in body)
         path = "/api/shaders/sequences/preflight" if preflight else "/api/shaders/sequences"
         try:
             data = self.post_json(path, dict(body),
@@ -2239,7 +2252,7 @@ class Client:
         validate_shader_sequence_request(request)
         if request.get("folder_export") is None:
             raise HextileClientError("Inspection needs a selected Shader destination", kind="other", status_code=422)
-        self._require_native_render()
+        self._require_native_render(sequence_inputs='input_capture_id' in request)
         try:
             data = self.post_json("/api/shaders/sequences/inspect", {"request": dict(request)},
                                   headers={"X-Hextile-Project-Witness": request["project_context_witness"]},
@@ -2435,7 +2448,7 @@ class Client:
             if (request.get("folder_export") is None or type(args["inspection_fingerprint"]) is not str
                     or _WORKSPACE_DIGEST.fullmatch(args["inspection_fingerprint"]) is None):
                 raise HextileClientError("Continue requires the inspected Shader destination", kind="other", status_code=422)
-            self._require_native_render()
+            self._require_native_render(sequence_inputs='input_capture_id' in request)
             suffix, body = "continue", {"request": dict(request), "inspection_fingerprint": args["inspection_fingerprint"]}
             headers = {"X-Hextile-Project-Witness": request["project_context_witness"]}
         elif action in {"cancel_export", "retry_export"} and set(args) == {"sequence_id", "action", "attempt_id"}:
@@ -4947,6 +4960,11 @@ class Client:
 
     def request_shader_preview(self, args: Mapping[str, Any]) -> dict:
         return self._shader_output_post("preview", args, "/api/shaders/agent-operations/output/preview")
+
+    def capture_shader_sequence_input(self, args: Mapping[str, Any]) -> dict:
+        _shader_output_args('sequence_input', args)
+        self._require_native_render(sequence_inputs=True)
+        return self._shader_output_post('sequence_input', args, '/api/shaders/agent-operations/output/sequence-input')
 
     def preflight_shader_still(self, args: Mapping[str, Any]) -> dict:
         return self._shader_output_post("preflight", args, "/api/shaders/agent-operations/output/still/preflight")

@@ -32,6 +32,42 @@ def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
 
 
+def test_sequence_input_capture_is_typed_private_and_recovers_original_ticket(monkeypatch):
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    tool = next(row for row in SHADER_EXTENSION_TOOLS if row['name'] == 'shader_capture_sequence_input')
+    digest = 'sha256:' + 'a' * 64
+    request_id = '7e720fa5-192b-47da-a705-ab3b5ddc979e'
+    owner = {'request_id': request_id, 'shader': {'origin': 'user', 'shaderId': 'aurora'},
+        'project_context_witness': 'w', 'studio_surface_id': 'surface', 'expected_edit_sequence': 1,
+        'base': {'kind': 'saved', 'working_revision': 1, 'document_hash': digest, 'source_hash': digest}}
+    jsonschema.validate(owner, tool['inputSchema'])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**owner, 'input_sample': {}}, tool['inputSchema'])
+    calls = []
+    native = {'contract': 'native-render/1', 'stills': {}, 'sequences': {'shader': {
+        'input_snapshot': {'contract': 'shader-sequence-input/1'}}}}
+    client = Client()
+    monkeypatch.setattr(client, 'get_capabilities', lambda: {'native_render': native})
+    def post(method, path, body=None, **kwargs):
+        calls.append((method, path, body))
+        return {'request_id': request_id, 'state': 'pending'}
+    monkeypatch.setattr(client, 'request_json', post)
+    assert client.capture_shader_sequence_input(owner) == {'request_id': request_id, 'state': 'pending'}
+    assert calls == [('POST', '/api/shaders/agent-operations/output/sequence-input', owner)]
+    for result in ({'request_id': request_id, 'state': 'pending', 'input_sample': {}},
+                   {'request_id': 'different', 'state': 'pending'}):
+        monkeypatch.setattr(client, 'request_json', lambda *a, row=result, **kw: row)
+        with pytest.raises(HextileClientError) as unknown:
+            client.capture_shader_sequence_input(owner)
+        assert unknown.value.kind == 'shader_output_outcome_unknown'
+        assert unknown.value.receipt['request_id'] == request_id
+    for malformed in ({}, {'shader': []}, {'shader': {'input_snapshot': []}}):
+        monkeypatch.setattr(client, 'get_capabilities', lambda: {'native_render': {**native, 'sequences': malformed}})
+        with pytest.raises(HextileClientError) as refused:
+            client.capture_shader_sequence_input(owner)
+        assert refused.value.status_code == 501
+
+
 def test_shader_output_extensions_use_closed_profiles_and_image_block(monkeypatch) -> None:
     # The MCP host may be Linux while the APP owns Windows-native paths.
     monkeypatch.setattr("hextile_client.Path", PurePosixPath)

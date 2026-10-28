@@ -754,6 +754,7 @@ _NATIVE_FOLDER_INTENT["allOf"] = [
      "else": {"properties": {"quality_if_jpg": {"type": "null"}}}},
 ]
 _SHADER_SEQUENCE_REQUEST = _shader_closed({
+    "input_capture_id": {"type": "string", "pattern": r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
     "shader_ref": _shader_closed({"origin": {"enum": ["builtin", "user", "project"]},
                                   "id": {"type": "string", "minLength": 1,
                                          "pattern": r"^[a-zA-Z0-9_-]+$"}}),
@@ -780,7 +781,7 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "output": _SHADER_SEQUENCE_OUTPUT,
     "folder_export": {"oneOf": [_NATIVE_FOLDER_INTENT, {"type": "null"}]},
     "publication_mode": {"oneOf": [{"const": "deferred"}, {"type": "null"}]},
-}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode"))
+}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id"))
 _SHADER_SEQUENCE_REQUEST["allOf"] = [
     {"if": {"properties": {"publication_mode": {"const": "deferred"}}, "required": ["publication_mode"]},
      "then": {"properties": {"folder_export": {"type": "null"}}},
@@ -2675,6 +2676,8 @@ SHADER_EXTENSION_TOOLS = [
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
     _tool_def("shader_request_preview", "Request a bounded preview of the exact clean saved current frame through the private mounted Capture owner. Response is an operation ticket.",
               {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT}, _OUTPUT_OWNER_REQUIRED + ["output"]),
+    _tool_def("shader_capture_sequence_input", "Freeze camera pose and persistent toggles from the current completed Shader frame for offline sequences; no GPU work or private input bytes. Recover the original ticket with shader_get_operation (asset scope). Once applied, pass the same request_id as input_capture_id to sequence preflight/render. Continue uses its stored recipe without a fresh capture.",
+              _OUTPUT_OWNER, _OUTPUT_OWNER_REQUIRED),
     _tool_def("shader_get_preview", "Read preview metadata by default. Set image true to opt in to one bounded MCP ImageContent block; pixels never enter text JSON.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "image": {"type": "boolean"}}, ["shader", "project_context_witness", "request_id"]),
@@ -3269,6 +3272,7 @@ class HextileMcpServer:
             "get_shader_context": self._get_shader_context,
             "shader_get_asset_state": self._shader_get_asset_state,
             "shader_request_preview": self._shader_request_preview,
+            "shader_capture_sequence_input": self._shader_capture_sequence_input,
             "shader_get_preview": self._shader_get_preview,
             "shader_release_preview": self._shader_release_preview,
             "shader_preflight_still_export": self._shader_preflight_still_export,
@@ -4088,6 +4092,9 @@ class HextileMcpServer:
 
     def _shader_request_preview(self, args: dict[str, Any]) -> Any:
         return self.client.request_shader_preview(args)
+
+    def _shader_capture_sequence_input(self, args: dict[str, Any]) -> Any:
+        return self.client.capture_shader_sequence_input(args)
 
     def _shader_get_preview(self, args: dict[str, Any]) -> Any:
         result = self.client.get_shader_preview(args)
