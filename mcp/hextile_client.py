@@ -508,6 +508,78 @@ def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, compl
         return False
 
 
+_DUPLICATE_LEAKS = {"ticket_id", "lease_id", "mutation", "authority", "authority_ticket",
+                    "path", "output_path", "native_path", "source"}
+
+
+def _duplicate_ref(value: Any, *, destination: bool) -> bool:
+    if type(value) is not dict or set(value) != {"origin", "shaderId"}:
+        return False
+    origin, shader_id = value.get("origin"), value.get("shaderId")
+    allowed = {"user", "project"} if destination else {"builtin", "user", "project"}
+    return (type(origin) is str and origin in allowed and type(shader_id) is str
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", shader_id) is not None)
+
+
+def _duplicate_digest(value: Any, *, null: bool = False) -> bool:
+    if null and value is None:
+        return True
+    return type(value) is str and _WORKSPACE_DIGEST.fullmatch(value) is not None
+
+
+def _duplicate_identity(value: Any) -> bool:
+    if type(value) is not dict or set(value) - {"shader", "working_revision", "document_hash", "source_hash", "manifest_hash"}:
+        return False
+    revision = value.get("working_revision")
+    return (set(value) == {"shader", "working_revision", "document_hash", "source_hash", "manifest_hash"}
+            and _duplicate_ref(value.get("shader"), destination=True)
+            and type(revision) is int and revision >= 1
+            and _duplicate_digest(value.get("document_hash")) and _duplicate_digest(value.get("source_hash"))
+            and _duplicate_digest(value.get("manifest_hash"), null=True))
+
+
+def _valid_shader_duplicate_status(result: Any, args: Mapping[str, Any]) -> bool:
+    """Closed saved, unknown-with-created, unknown, and refused duplicate envelopes."""
+    common = {"schema", "request_id", "operation", "state", "shader", "project_context_witness"}
+    try:
+        if (type(result) is not dict or not common <= set(result) or _DUPLICATE_LEAKS & set(result)
+                or result.get("schema") != 1 or result.get("request_id") != args.get("request_id")
+                or result.get("operation") != "shader_duplicate_asset"
+                or result.get("shader") != args.get("shader")
+                or result.get("project_context_witness") != args.get("project_context_witness")
+                or not _duplicate_ref(result.get("shader"), destination=False)
+                or type(result.get("state")) is not str
+                or len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 32768):
+            return False
+        state = result["state"]
+        error = result.get("error")
+        honest_error = ("error" not in result or type(error) is dict and set(error) <= {"message", "code"}
+                        and type(error.get("message", "")) is str and len(error.get("message", "")) <= 256
+                        and type(error.get("code", "")) is str and len(error.get("code", "")) <= 64
+                        and not _DUPLICATE_LEAKS & set(error))
+        if state == "saved":
+            receipt = result.get("receipt")
+            return (set(result) == common | {"receipt"} and honest_error and type(receipt) is dict
+                    and not _DUPLICATE_LEAKS & set(receipt)
+                    and _duplicate_identity({key: receipt.get(key) for key in
+                                             ("shader", "working_revision", "document_hash", "source_hash", "manifest_hash")})
+                    and set(receipt) == {"shader", "working_revision", "document_hash", "source_hash", "manifest_hash", "placement"}
+                    and receipt.get("placement") in {"placed", "unavailable"})
+        if state == "refused":
+            return set(result) == common | {"error"} and type(error) is dict and "message" in error and honest_error
+        if state == "unknown" and "created" in result:
+            created = result.get("created")
+            return (set(result) == common | {"created", "placement"} and honest_error
+                    and type(created) is dict and not _DUPLICATE_LEAKS & set(created)
+                    and _duplicate_identity(created) and result.get("placement") == "unavailable")
+        if state == "unknown":
+            allowed = common | ({"error"} if "error" in result else set())
+            return set(result) == allowed and "receipt" not in result and "placement" not in result and honest_error
+        return False
+    except (KeyError, TypeError, ValueError, OverflowError, UnicodeError):
+        return False
+
+
 def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
@@ -594,7 +666,7 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
         raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
     ref = args["shader"]
     if (not isinstance(ref, Mapping) or set(ref) != {"origin", "shaderId"}
-            or ref["origin"] not in {"builtin", "user", "project"}
+            or type(ref.get("origin")) is not str or ref["origin"] not in {"builtin", "user", "project"}
             or type(ref["shaderId"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ref["shaderId"])
             or type(args["project_context_witness"]) is not str or not args["project_context_witness"]):
         raise HextileClientError("Invalid native Shader target", status_code=422, kind="other")
@@ -3261,6 +3333,8 @@ class Client:
         if required - set(args) or set(args) - required - {"destination_origin"}:
             raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
         shader, base = args.get("shader"), args.get("base")
+        origin = shader.get("origin") if type(shader) is dict else None
+        destination = args.get("destination_origin")
         try:
             valid_id = (type(args.get("request_id")) is str
                         and str(uuid.UUID(args["request_id"])) == args["request_id"]
@@ -3269,7 +3343,7 @@ class Client:
             valid_id = False
         valid = (valid_id and type(args.get("project_context_witness")) is str and bool(args["project_context_witness"])
                  and type(shader) is dict and set(shader) == {"origin", "shaderId"}
-                 and shader.get("origin") in {"builtin", "user", "project"}
+                 and type(origin) is str and origin in {"builtin", "user", "project"}
                  and type(shader.get("shaderId")) is str and bool(shader["shaderId"])
                  and type(base) is dict and set(base) == {"kind", "working_revision", "document_hash", "source_hash"}
                  and base.get("kind") == "saved" and type(base.get("working_revision")) is int
@@ -3277,7 +3351,7 @@ class Client:
                  and type(base.get("document_hash")) is str and _WORKSPACE_DIGEST.fullmatch(base["document_hash"]) is not None
                  and type(base.get("source_hash")) is str and _WORKSPACE_DIGEST.fullmatch(base["source_hash"]) is not None)
         if "destination_origin" in args:
-            valid = valid and args["destination_origin"] in {"user", "project"}
+            valid = valid and type(destination) is str and destination in {"user", "project"}
         if not valid:
             raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
         try:
@@ -3289,8 +3363,7 @@ class Client:
                     kind="shader_operation_outcome_unknown",
                     receipt={"request_id": args["request_id"], "shader": shader}) from exc
             raise
-        if (type(result) is not dict or result.get("request_id") != args["request_id"]
-                or result.get("operation") != "shader_duplicate_asset"):
+        if not _valid_shader_duplicate_status(result, args):
             raise HextileClientError(
                 "Shader duplicate acknowledgement unknown; read shader_get_operation.",
                 kind="shader_operation_outcome_unknown",
@@ -3373,6 +3446,9 @@ class Client:
             if "receipt" in result:
                 _shader_output_receipt("bundle" if result["operation"] == "shader_export_bundle"
                                        else "project", args, result["receipt"])
+        if type(result) is dict and result.get("operation") == "shader_duplicate_asset":
+            if not _valid_shader_duplicate_status(result, args):
+                raise HextileClientError("Invalid Shader duplicate status", kind="other")
         return result
 
     def get_shader_credits(self, args: Mapping[str, Any]) -> dict:

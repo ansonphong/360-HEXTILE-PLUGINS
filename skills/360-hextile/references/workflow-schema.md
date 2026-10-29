@@ -134,7 +134,7 @@ Use the existing status, cancellation and original-request recovery tools.
 
 ## Library Duplicate
 
-`shader_duplicate_asset` copies one exact saved Shader into My Library or the writable active Project. Built-ins are not a destination. The result reports `placement` as `placed` or `unavailable` and does not open or select the copy. Replay and status use the original request ID and return the same created identity; they do not create a second copy.
+`shader_duplicate_asset` copies one exact saved Shader into My Library or the writable active Project. Built-ins are not a destination. The result reports `placement` as `placed` or `unavailable`; a missing placement is unavailable, and the receipt keeps the copy title and acknowledged shelf. It does not open or select the copy. Replay and status use the original request ID and return the same created identity, including a known refusal; they do not create a second copy.
 
 ## Separate Shader workspace format
 

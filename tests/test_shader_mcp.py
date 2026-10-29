@@ -819,19 +819,33 @@ def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monke
             "source_hash": "sha256:" + "b" * 64}
     body = {"request_id": request_id, "project_context_witness": "wit", "shader": shader, "base": base,
             "destination_origin": "project"}
-    receipt = {"request_id": request_id, "operation": "shader_duplicate_asset", "state": "saved",
-               "shader": shader, "receipt": {"shader": {"origin": "project", "shaderId": "shader_copy"},
-                                             "placement": "placed"}}
+    digest = "sha256:" + "d" * 64
+    saved = {"schema": 1, "request_id": request_id, "operation": "shader_duplicate_asset", "state": "saved",
+             "shader": shader, "project_context_witness": "wit", "receipt": {
+                 "shader": {"origin": "project", "shaderId": "shader_copy"}, "working_revision": 1,
+                 "document_hash": digest, "source_hash": digest, "manifest_hash": digest, "placement": "placed"}}
+    refused = {"schema": 1, "request_id": request_id, "operation": "shader_duplicate_asset", "state": "refused",
+               "shader": shader, "project_context_witness": "wit", "error": {"message": "Source Shader is not saved"}}
+    unknown_created = {"schema": 1, "request_id": request_id, "operation": "shader_duplicate_asset",
+                       "state": "unknown", "shader": shader, "project_context_witness": "wit",
+                       "created": {"shader": {"origin": "project", "shaderId": "shader_copy"},
+                                   "working_revision": 1, "document_hash": digest, "source_hash": digest,
+                                   "manifest_hash": digest}, "placement": "unavailable"}
+    unknown = {key: value for key, value in unknown_created.items() if key not in {"created", "placement"}}
+    mode = {"kind": "saved"}
 
     def reply(method, path, payload=None, **kwargs):
         sent.append((method, path, payload))
-        if path.endswith("/duplicate") and len(sent) == 1:
+        if path.endswith("/duplicate") and mode["kind"] == "lost":
             raise HextileClientError("lost", kind="app_down", status_code=503)
-        return receipt
+        return {"saved": saved, "refused": refused, "created": unknown_created, "unknown": unknown,
+                "thin": {"request_id": request_id, "operation": "shader_duplicate_asset"}}[mode["kind"]]
 
     monkeypatch.setattr(client, "request_json", reply)
+    mode["kind"] = "lost"
     with pytest.raises(HextileClientError) as lost:
         client.duplicate_shader_asset(body)
+    mode["kind"] = "saved"
     assert lost.value.kind == "shader_operation_outcome_unknown"
     assert lost.value.receipt == {"request_id": request_id, "shader": shader}
     assert sent == [("POST", "/api/shaders/agent-operations/duplicate", body)]
@@ -843,7 +857,29 @@ def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monke
         client.duplicate_shader_asset({**body, "destination_origin": "builtin"})
     with pytest.raises(HextileClientError):
         client.duplicate_shader_asset({**body, "actor": "human"})
+    with pytest.raises(HextileClientError) as bad_origin:
+        client.duplicate_shader_asset({**body, "shader": {"origin": {"shelf": "user"}, "shaderId": "source"}})
+    assert bad_origin.value.status_code == 422
+    with pytest.raises(HextileClientError) as bad_destination:
+        client.duplicate_shader_asset({**body, "destination_origin": ["project"]})
+    assert bad_destination.value.status_code == 422
     assert [item[1] for item in sent].count("/api/shaders/agent-operations/duplicate") == 2
+    mode["kind"] = "refused"
+    assert client.duplicate_shader_asset(body)["state"] == "refused"
+    assert client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit",
+                                        "shader": shader})["state"] == "refused"
+    mode["kind"] = "created"
+    assert client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit",
+                                        "shader": shader})["placement"] == "unavailable"
+    mode["kind"] = "unknown"
+    assert client.duplicate_shader_asset(body)["state"] == "unknown"
+    mode["kind"] = "thin"
+    with pytest.raises(HextileClientError) as thin:
+        client.duplicate_shader_asset(body)
+    assert thin.value.kind == "shader_operation_outcome_unknown"
+    with pytest.raises(HextileClientError) as thin_status:
+        client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit", "shader": shader})
+    assert thin_status.value.kind == "other"
 
 
 def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) -> None:

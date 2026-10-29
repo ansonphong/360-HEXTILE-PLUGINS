@@ -40,6 +40,8 @@ Accept the user's requested Shader change as natural language. Resolve identity 
 
 If APP is down, say **Launch 360 Hextile, then retry**. For missing MCP, point to the package README's host install/reconnect instructions; do not install, restart APP or change host permissions on the user's behalf. APP verifies source/current-writer identity and native CAS; the coding host retains its own filesystem rules.
 
+`shader_duplicate_asset` copies one exact saved Shader reference into My Library or the writable active Project. Built-ins may be the source and are not a destination. Send the saved base (`kind`, integer `working_revision`, `document_hash`, `source_hash`), the source Shader, the Project witness, and one new UUID. `placement` is `placed` or `unavailable`; missing placement is unavailable. A lost reply is read back with `shader_get_operation` on that original request ID. A saved, refused, or unknown result stays that result; do not post a second copy. Duplicate does not open the copy, select it, or start a source edit. Opening a Shader and editing its source still use the Workshop Open and source-edit gates above.
+
 ## On-demand 360 Doctor
 
 This diagnostic action is separate from the file-authoring procedure below. A clean, currently previewed **Builtin, My Library or Project** Shader may be diagnosed without including source or accessing native files. Ask the user before starting GPU work. Discover the current Shader, `project_context_witness` and `studio_surface_id` through `get_live_context`; use the actual current renderer and APP-owned captured frame. A dirty/saving draft or missing matching preview must stop.
