@@ -839,7 +839,9 @@ def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monke
         if path.endswith("/duplicate") and mode["kind"] == "lost":
             raise HextileClientError("lost", kind="app_down", status_code=503)
         return {"saved": saved, "refused": refused, "created": unknown_created, "unknown": unknown,
-                "thin": {"request_id": request_id, "operation": "shader_duplicate_asset"}}[mode["kind"]]
+                "thin": {"request_id": request_id, "operation": "shader_duplicate_asset"},
+                "schema_bool": {**saved, "schema": True},
+                "schema_float": {**saved, "schema": 1.0}}[mode["kind"]]
 
     monkeypatch.setattr(client, "request_json", reply)
     mode["kind"] = "lost"
@@ -880,6 +882,15 @@ def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monke
     with pytest.raises(HextileClientError) as thin_status:
         client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit", "shader": shader})
     assert thin_status.value.kind == "other"
+    for kind, schema in (("schema_bool", True), ("schema_float", 1.0)):
+        mode["kind"] = kind
+        with pytest.raises(HextileClientError) as bad_schema:
+            client.duplicate_shader_asset(body)
+        assert bad_schema.value.kind == "shader_operation_outcome_unknown"
+        with pytest.raises(HextileClientError) as bad_status:
+            client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit",
+                                        "shader": shader})
+        assert bad_status.value.kind == "other"
 
 
 def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) -> None:

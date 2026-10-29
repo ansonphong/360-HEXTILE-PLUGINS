@@ -543,7 +543,8 @@ def _valid_shader_duplicate_status(result: Any, args: Mapping[str, Any]) -> bool
     common = {"schema", "request_id", "operation", "state", "shader", "project_context_witness"}
     try:
         if (type(result) is not dict or not common <= set(result) or _DUPLICATE_LEAKS & set(result)
-                or result.get("schema") != 1 or result.get("request_id") != args.get("request_id")
+                or type(result.get("schema")) is not int or result.get("schema") != 1
+                or result.get("request_id") != args.get("request_id")
                 or result.get("operation") != "shader_duplicate_asset"
                 or result.get("shader") != args.get("shader")
                 or result.get("project_context_witness") != args.get("project_context_witness")
