@@ -112,8 +112,14 @@ and effective `raster_execution` where applicable. Preview/Still execution is
 pending (`null`) until available; completed new-policy output needs a checked
 receipt. Sequence accepted settings carry policy/profiles and storage encoding
 carries the selected PNG level. Static support does not mean GPU acceleration:
-D1 reports CPU with `forced_cpu` or `gpu_unqualified`; later GPU keys require
-actual qualification against the retained-source maximum 1/255 RGB error bound.
+D1 reports CPU with `forced_cpu` or `gpu_unqualified`. A completed automatic
+job may instead carry one closed receipt whose `actual_processing` is
+`retained_native`, `retained_native_with_cpu_repair`, or `cpu` with reason
+`dense_cpu_fallback` or `cpu_fallback`. Its `gpu_qualified` and
+`production_activated` flags are false until hardware qualification and a
+separate production activation. An `actual_processing` of `gpu`, a true flag,
+or any extra key is not evidence. Later qualification still requires the
+retained-source maximum 1/255 RGB error bound.
 Compression does not change RGB Preview identity; processing does. Progress,
 Stop, Continue and unknown-outcome recovery keep the same original native IDs.
 

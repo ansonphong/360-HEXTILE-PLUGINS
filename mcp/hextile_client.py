@@ -116,16 +116,39 @@ def _valid_raster_policy(value: Any, format: str | None) -> bool:
                 or type(value["png_compress_level"]) is int and value["png_compress_level"] in {0, 6}))
 
 
+def _closed_native_execution(policy: Mapping[str, Any], execution: Any) -> bool:
+    """Completed automatic receipt. Both flags stay false until a reviewed gate change."""
+    if type(execution) is not dict or set(execution) != {
+            "profile", "requested_processing", "actual_processing", "reason", "profiles",
+            "gpu_qualified", "production_activated", "repair_fraction"}:
+        return False
+    fraction = execution["repair_fraction"]
+    if (policy.get("processing") != "auto" or execution["requested_processing"] != "auto"
+            or execution["profile"] != policy["profile"] or execution["profiles"] != _RASTER_PROFILES
+            or execution["gpu_qualified"] is not False or execution["production_activated"] is not False
+            or isinstance(fraction, bool) or type(fraction) not in (int, float)
+            or not math.isfinite(fraction) or not 0 <= fraction <= 1):
+        return False
+    pair = (execution["actual_processing"], execution["reason"])
+    if pair == ("retained_native", "unreviewed"):
+        return fraction == 0
+    if pair == ("retained_native_with_cpu_repair", "cpu_repair"):
+        return 0 < fraction <= 1
+    return pair in {("cpu", "dense_cpu_fallback"), ("cpu", "cpu_fallback")}
+
+
 def _valid_raster_evidence(value: Mapping[str, Any], format: str | None) -> bool:
     if "raster_policy" not in value:
         return "raster_execution" not in value
     policy, execution = value["raster_policy"], value.get("raster_execution")
     if not _valid_raster_policy(policy, format) or "raster_execution" not in value:
         return False
-    return execution is None or (type(execution) is dict and execution == {
-        "profile": policy["profile"], "requested_processing": policy["processing"],
-        "actual_processing": "cpu", "reason": "forced_cpu" if policy["processing"] == "cpu" else "gpu_unqualified",
-        "profiles": _RASTER_PROFILES})
+    if execution is None:
+        return True
+    cpu = {"profile": policy["profile"], "requested_processing": policy["processing"],
+           "actual_processing": "cpu", "reason": "forced_cpu" if policy["processing"] == "cpu" else "gpu_unqualified",
+           "profiles": _RASTER_PROFILES}
+    return execution == cpu or _closed_native_execution(policy, execution)
 
 
 def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
