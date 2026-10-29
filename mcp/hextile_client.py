@@ -3253,6 +3253,50 @@ class Client:
     def fork_shader_asset(self, args: Mapping[str, Any]) -> dict:
         return self._create_shader_asset(args, "fork")
 
+    def duplicate_shader_asset(self, args: Mapping[str, Any]) -> dict:
+        """Saved-ref Library Duplicate. A lost reply is recovered by the original request, not a second POST."""
+        if not isinstance(args, Mapping):
+            raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
+        required = {"request_id", "project_context_witness", "shader", "base"}
+        if required - set(args) or set(args) - required - {"destination_origin"}:
+            raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
+        shader, base = args.get("shader"), args.get("base")
+        try:
+            valid_id = (type(args.get("request_id")) is str
+                        and str(uuid.UUID(args["request_id"])) == args["request_id"]
+                        and uuid.UUID(args["request_id"]).version == 4)
+        except (ValueError, AttributeError, TypeError):
+            valid_id = False
+        valid = (valid_id and type(args.get("project_context_witness")) is str and bool(args["project_context_witness"])
+                 and type(shader) is dict and set(shader) == {"origin", "shaderId"}
+                 and shader.get("origin") in {"builtin", "user", "project"}
+                 and type(shader.get("shaderId")) is str and bool(shader["shaderId"])
+                 and type(base) is dict and set(base) == {"kind", "working_revision", "document_hash", "source_hash"}
+                 and base.get("kind") == "saved" and type(base.get("working_revision")) is int
+                 and base["working_revision"] >= 1
+                 and type(base.get("document_hash")) is str and _WORKSPACE_DIGEST.fullmatch(base["document_hash"]) is not None
+                 and type(base.get("source_hash")) is str and _WORKSPACE_DIGEST.fullmatch(base["source_hash"]) is not None)
+        if "destination_origin" in args:
+            valid = valid and args["destination_origin"] in {"user", "project"}
+        if not valid:
+            raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
+        try:
+            result = self.request_json("POST", "/api/shaders/agent-operations/duplicate", dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError(
+                    "Shader duplicate outcome unknown; read shader_get_operation by original request ID.",
+                    kind="shader_operation_outcome_unknown",
+                    receipt={"request_id": args["request_id"], "shader": shader}) from exc
+            raise
+        if (type(result) is not dict or result.get("request_id") != args["request_id"]
+                or result.get("operation") != "shader_duplicate_asset"):
+            raise HextileClientError(
+                "Shader duplicate acknowledgement unknown; read shader_get_operation.",
+                kind="shader_operation_outcome_unknown",
+                receipt={"request_id": args["request_id"], "shader": shader})
+        return result
+
     def import_shader_bundle(self, args: Mapping[str, Any]) -> dict:
         required = {"request_id", "project_context_witness", "input_path", "collision_intent"}
         if (not isinstance(args, Mapping) or required - args.keys() or set(args) - required - {"bundle_sha256"}

@@ -711,6 +711,7 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
             "shader_stop_workspace"} <= names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset",
             "shader_open_asset", "shader_save_asset", "shader_create_asset", "shader_fork_asset",
+            "shader_duplicate_asset",
             "shader_save_as", "shader_import_bundle", "shader_get_operation"} <= names
     assert {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look",
             "shader_checkpoint", "shader_restore_revision", "shader_copy_revision",
@@ -807,6 +808,42 @@ def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/create", fork)
     with pytest.raises(HextileClientError):
         client.fork_shader_asset({**fork, "actor": "human"})
+
+
+def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    sent = []
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    shader = {"origin": "user", "shaderId": "source"}
+    base = {"kind": "saved", "working_revision": 3, "document_hash": "sha256:" + "a" * 64,
+            "source_hash": "sha256:" + "b" * 64}
+    body = {"request_id": request_id, "project_context_witness": "wit", "shader": shader, "base": base,
+            "destination_origin": "project"}
+    receipt = {"request_id": request_id, "operation": "shader_duplicate_asset", "state": "saved",
+               "shader": shader, "receipt": {"shader": {"origin": "project", "shaderId": "shader_copy"},
+                                             "placement": "placed"}}
+
+    def reply(method, path, payload=None, **kwargs):
+        sent.append((method, path, payload))
+        if path.endswith("/duplicate") and len(sent) == 1:
+            raise HextileClientError("lost", kind="app_down", status_code=503)
+        return receipt
+
+    monkeypatch.setattr(client, "request_json", reply)
+    with pytest.raises(HextileClientError) as lost:
+        client.duplicate_shader_asset(body)
+    assert lost.value.kind == "shader_operation_outcome_unknown"
+    assert lost.value.receipt == {"request_id": request_id, "shader": shader}
+    assert sent == [("POST", "/api/shaders/agent-operations/duplicate", body)]
+    assert client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit",
+                                        "shader": shader})["receipt"]["placement"] == "placed"
+    assert client.duplicate_shader_asset(body)["receipt"]["shader"]["shaderId"] == "shader_copy"
+    assert [item[1] for item in sent].count("/api/shaders/agent-operations/duplicate") == 2
+    with pytest.raises(HextileClientError):
+        client.duplicate_shader_asset({**body, "destination_origin": "builtin"})
+    with pytest.raises(HextileClientError):
+        client.duplicate_shader_asset({**body, "actor": "human"})
+    assert [item[1] for item in sent].count("/api/shaders/agent-operations/duplicate") == 2
 
 
 def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) -> None:

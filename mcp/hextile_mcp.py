@@ -2971,6 +2971,11 @@ SHADER_EXTENSION_TOOLS = [
                "action": {"const": "fork"}, "expected_document_hash": _SHADER_DIGEST,
                "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 128}},
               ["request_id", "project_context_witness", "action", "shader", "expected_document_hash"]),
+    _tool_def("shader_duplicate_asset", "Duplicate one exact saved Shader into My Library or the active Project. Same-shelf copies sit beside the source; a different shelf places the copy at the top. Result reports placement placed or unavailable and does not open or select the copy. Replay and status use the original request ID and do not create a second copy.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "base": _NATIVE_SHADER_BASE,
+               "destination_origin": {"enum": ["user", "project"]}},
+              ["request_id", "project_context_witness", "shader", "base"]),
     _tool_def("shader_import_bundle", "Import an absolute .hexshader file through the native importer. Optional bundle_sha256 is an expected digest. Explicit fork intent creates a new asset without a mounted source Shader; recover uncertainty by original request ID.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "input_path": _ABS_PATH, "bundle_sha256": _SHADER_DIGEST,
@@ -3388,6 +3393,7 @@ class HextileMcpServer:
             "shader_save_as": self._shader_save_as,
             "shader_create_asset": self._shader_create_asset,
             "shader_fork_asset": self._shader_fork_asset,
+            "shader_duplicate_asset": self._shader_duplicate_asset,
             "shader_import_bundle": self._shader_import_bundle,
             "shader_get_operation": self._shader_get_operation,
             "shader_get_credits": self._shader_get_credits,
@@ -4285,6 +4291,9 @@ class HextileMcpServer:
 
     def _shader_fork_asset(self, args: dict[str, Any]) -> Any:
         return self.client.fork_shader_asset(args)
+
+    def _shader_duplicate_asset(self, args: dict[str, Any]) -> Any:
+        return self.client.duplicate_shader_asset(args)
 
     def _shader_import_bundle(self, args: dict[str, Any]) -> Any:
         return self.client.import_shader_bundle(args)
