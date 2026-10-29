@@ -753,6 +753,11 @@ def _shader_edit_batch(schema: int, payloads: dict[str, Any]) -> dict[str, Any]:
 _SHADER_EDITS = {"oneOf": [_shader_edit_batch(1, _SHADER_EDIT_PAYLOADS),
                            _shader_edit_batch(2, _SHADER_EDIT_PAYLOADS_V2)]}
 _SHADER_DIGEST = {"type": "string", "pattern": r"^sha256:[0-9a-f]{64}$"}
+_SHADER_RASTER_PROCESSING = _shader_closed({
+    "profile": {"const": "shader-raster-policy/1"}, "processing": {"enum": ["auto", "cpu"]}})
+_SHADER_RASTER_PNG = _shader_closed({
+    **_SHADER_RASTER_PROCESSING["properties"], "png_compress_level": {"type": "integer", "enum": [0, 6]}})
+_SHADER_RASTER_POLICY = {"oneOf": [_SHADER_RASTER_PROCESSING, _SHADER_RASTER_PNG]}
 _SHADER_SEQUENCE_OUTPUT = {"oneOf": [
     _shader_closed({"projection": {"const": "equirectangular"},
                     "pan": {"const": 0}, "tilt": {"const": 0}, "roll": {"const": 0}}),
@@ -798,14 +803,21 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "height": {"type": "integer", "minimum": 2, "maximum": 8192},
     "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
     "supersampling": {"type": "number", "minimum": 1, "maximum": 2},
+    "raster_policy": _SHADER_RASTER_POLICY,
     "output": _SHADER_SEQUENCE_OUTPUT,
     "folder_export": {"oneOf": [_NATIVE_FOLDER_INTENT, {"type": "null"}]},
     "publication_mode": {"oneOf": [{"const": "deferred"}, {"type": "null"}]},
-}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id"))
+}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy"))
 _SHADER_SEQUENCE_REQUEST["allOf"] = [
     {"if": {"properties": {"publication_mode": {"const": "deferred"}}, "required": ["publication_mode"]},
      "then": {"properties": {"folder_export": {"type": "null"}}},
      "else": {"required": ["folder_export"], "properties": {"folder_export": _NATIVE_FOLDER_INTENT}}},
+    {"if": {"required": ["raster_policy"]}, "then": {
+        "properties": {"publication_mode": {"type": "null"}},
+        "required": ["folder_export"], "allOf": [
+            {"if": {"properties": {"folder_export": {"properties": {"format": {"const": "PNG"}}}}},
+             "then": {"properties": {"raster_policy": _SHADER_RASTER_PNG}},
+             "else": {"properties": {"raster_policy": _SHADER_RASTER_PROCESSING}}}]}},
 ]
 _SHADER_SEQUENCE_ID = {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}
 _SHADER_ATTEMPT_ID = {"type": "string", "pattern": r"^attempt_[0-9a-f]{32}$"}
@@ -2722,6 +2734,17 @@ _STILL_OUTPUT = {"anyOf": [
                     "roll": {"type": "number", "minimum": -180, "maximum": 180},
                     "output_path": _ABS_PATH}, ("fov_deg", "pan", "tilt", "roll")),
 ]}
+# Add only the supported shapes; PNG master and linear EXR keep their closed
+# historical fields. Omission remains legacy CPU/PNG6 on every peer.
+for _shape in _PREVIEW_OUTPUT["oneOf"]:
+    _shape["properties"]["raster_policy"] = _SHADER_RASTER_PROCESSING
+_STILL_OUTPUT["anyOf"][1]["properties"]["raster_policy"] = _SHADER_RASTER_PNG
+for _shape in _STILL_OUTPUT["anyOf"][2:4]:
+    _shape["properties"]["raster_policy"] = _SHADER_RASTER_POLICY
+    _shape.setdefault("allOf", []).append({
+        "if": {"properties": {"encoding": {"const": "png"}}},
+        "then": {"properties": {"raster_policy": _SHADER_RASTER_PNG}},
+        "else": {"properties": {"raster_policy": _SHADER_RASTER_PROCESSING}}})
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
               {"project_context_witness": _SHADER_TEXT,

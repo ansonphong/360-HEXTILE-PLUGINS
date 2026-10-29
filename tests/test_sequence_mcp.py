@@ -577,7 +577,8 @@ def test_shader_render_export_mcp_tool_chain() -> None:
 
 
 @pytest.mark.parametrize('capture_id', [None, '7e720fa5-192b-47da-a705-ab3b5ddc979e'])
-def test_native_shader_direct_inspect_continue_and_observed_stop(capture_id) -> None:
+@pytest.mark.parametrize('processing', [None, 'auto', 'cpu'])
+def test_native_shader_direct_inspect_continue_and_observed_stop(capture_id, processing) -> None:
     tools = {tool["name"]: tool for tool in HextileMcpServer(client=Client()).handle_rpc(
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})["result"]["tools"]}
     digest = "sha256:" + "a" * 64
@@ -595,6 +596,22 @@ def test_native_shader_direct_inspect_continue_and_observed_stop(capture_id) -> 
                "folder_export": folder}
     if capture_id is not None:
         request['input_capture_id'] = capture_id
+    if processing is not None:
+        request['raster_policy'] = {'profile': 'shader-raster-policy/1', 'processing': processing}
+        from hextile_client import validate_shader_sequence_request
+        for level in (0, 6):
+            png = {**request, 'folder_export': {**folder, 'format': 'PNG', 'quality_if_jpg': None},
+                   'raster_policy': {**request['raster_policy'], 'png_compress_level': level}}
+            jsonschema.validate(png, tools['render_shader_sequence']['inputSchema'])
+            validate_shader_sequence_request(png)
+        for invalid in (None, {**request['raster_policy'], 'png_compress_level': 0},
+                        {**request['raster_policy'], 'processing': True}):
+            with pytest.raises(HextileClientError):
+                validate_shader_sequence_request({**request, 'raster_policy': invalid})
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate({**request, 'raster_policy': invalid}, tools['render_shader_sequence']['inputSchema'])
+        with pytest.raises(HextileClientError):
+            validate_shader_sequence_request({**request, 'folder_export': None, 'publication_mode': 'deferred'})
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**request, 'input_sample': {}}, tools['render_shader_sequence']['inputSchema'])
     jsonschema.validate(request, tools["render_shader_sequence"]["inputSchema"])
@@ -607,7 +624,8 @@ def test_native_shader_direct_inspect_continue_and_observed_stop(capture_id) -> 
         seen.append(req)
         if req.full_url.endswith("/capabilities"):
             return _Resp({"native_render": {"contract": "native-render/1", "sequences": {'shader': {
-                'input_snapshot': {'contract': 'shader-sequence-input/1'}}}, "stills": {}}})
+                'input_snapshot': {'contract': 'shader-sequence-input/1'}}}, "stills": {},
+                'shader_raster_policy': {'profile': 'shader-raster-policy/1'}}})
         if req.full_url.endswith("/inspect"):
             return _Resp({"status": "unfinished", "sequence_id": sequence_id,
                           "producer": "shader", "render_identity": digest, "recipe_hash": digest,

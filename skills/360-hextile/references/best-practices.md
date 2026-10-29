@@ -86,6 +86,16 @@ the original IDs and immutable receipt; never automatically issue a new key or
 mutation to resolve uncertainty. Missing fields/connection remain unavailable,
 not fabricated zero progress, cancellation or successful output.
 
+For fast Shader PNG output, discover `native_render.shader_raster_policy` first,
+then explicitly select profile `shader-raster-policy/1`, processing `auto` and
+`png_compress_level:0` on new supported intents. Compression 6 is optional and
+lossless; select CPU when compatibility is needed. Omitted policy preserves old
+CPU/PNG6 requests, so replay/Continue must retain the original selection rather
+than applying today's defaults. Preview/JPG policy omits PNG compression. Read
+the actual `raster_execution` receipt: capability support alone never proves GPU
+use or a performance improvement. Never send this policy to EXR, PNG master,
+deferred Sequence or Fractal. See workflow-schema for the exact field placement.
+
 One Project-root Git repository may track many complete `shaders/<stable-id>/workspace/` trees and `360-project.index.json`. Track authored config, GLSL, Looks, provenance, every referenced PNG/frame, optional original and cover image. The minimal ignore template at https://360hextile.com/static/templates/shaders/gitignore.txt applies only after **all covered Shaders** have complete verified portable copies; mixed legacy Projects need explicit per-asset rules. The attributes example at https://360hextile.com/static/templates/shaders/gitattributes.txt uses `-text` for `workspace/**` and the marker to preserve bytes. Optional LFS needs materialized objects before clone admission. Native Git diff/commit/checkout/push requires the user's instruction; MCP has no Git tool. Clone opens unaccepted drafts, keeps stable IDs and requires Fork on collision. Text Undo, reviewed structural discard, checkpoint Revert (new revision), and Git restore are distinct; Git restoration needs new register/Prepare/review/Apply under the effective policy. `.hexshader` export reads the accepted snapshot only, including unused modules, Looks, provenance and every referenced ordered frame, never dirty files or Git HEAD; original inclusion remains truthful and rights-gated. See https://360hextile.com/docs/create/shader for the human journey.
 
 Teach the keyboard recipe first **only with observed APP available/execution_ready and executable `conventions/1` plus `modulation/2`**: resolved Enter binding → stable default-0 logical gate → schema-2 oneshot BLAST (20 ms Linear Attack, 400 ms Ease Out Release, exponent 2) → existing Range mapping to Glow → declared parameter/default/bounds and GLSL glow term. Keep sorted `conventions/1`, `master-clock/1`, `modulation/2` declarations in the acknowledged authoring metadata and default Master Clock explicit. Use current acknowledged closed schema/guide fields and aliases; no invented ADSR/event fields or header capability declarations. A base without declarations may opt in only with executable support. Preserve unknown extensions/resources, v1's immutable sidecar base or v2's complete metadata/inventory, and each Shader’s admitted modulation schema and required capabilities on later edits.

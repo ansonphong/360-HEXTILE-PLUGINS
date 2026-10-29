@@ -104,7 +104,35 @@ def _valid_preservation(output: Mapping[str, Any]) -> bool:
         return output.get("preserve_360_profile", "shader-dome-from-360/1") == "shader-dome-from-360/1"
     return "preserve_360_profile" not in output
 
+_RASTER_PROFILES = {"rgb8": "shader-rgb8-bounded/1", "area": "unit-linear-area/1",
+                    "reference": "shader-cpu-rgb8/1", "draw_geometry": "native-guarded-tiles/1"}
+
+
+def _valid_raster_policy(value: Any, format: str | None) -> bool:
+    fields = {"profile", "processing"} | ({"png_compress_level"} if format == "PNG" else set())
+    return (type(value) is dict and set(value) == fields and value["profile"] == "shader-raster-policy/1"
+            and type(value["processing"]) is str and value["processing"] in {"auto", "cpu"}
+            and format in {None, "PNG", "JPG"} and (format != "PNG"
+                or type(value["png_compress_level"]) is int and value["png_compress_level"] in {0, 6}))
+
+
+def _valid_raster_evidence(value: Mapping[str, Any], format: str | None) -> bool:
+    if "raster_policy" not in value:
+        return "raster_execution" not in value
+    policy, execution = value["raster_policy"], value.get("raster_execution")
+    if not _valid_raster_policy(policy, format) or "raster_execution" not in value:
+        return False
+    return execution is None or (type(execution) is dict and execution == {
+        "profile": policy["profile"], "requested_processing": policy["processing"],
+        "actual_processing": "cpu", "reason": "forced_cpu" if policy["processing"] == "cpu" else "gpu_unqualified",
+        "profiles": _RASTER_PROFILES})
+
+
 def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
+    if "raster_policy" in output:
+        if not _valid_raster_policy(output["raster_policy"], str(output.get("encoding", "")).upper()):
+            return False
+        output = {key: value for key, value in output.items() if key != "raster_policy"}
     if (not {"projection", "encoding", "output_path"} <= set(output)
             or output["encoding"] not in {"png", "jpg"}):
         return False
@@ -141,6 +169,10 @@ def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
 
 
 def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
+    if type(output) is dict and {"raster_policy", "raster_execution"} & output.keys():
+        if not _valid_raster_evidence(output, str(output.get("encoding", "png")).upper()):
+            return False
+        output = {key: value for key, value in output.items() if key not in {"raster_policy", "raster_execution"}}
     if type(output) is not dict or output.get("projection") not in {
             "equirectangular", "fulldome", "fulldome_angular"}:
         return False
@@ -206,6 +238,10 @@ def _valid_preview_sample(sample: Any) -> bool:
 def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
     mode, width, height = (args.get(key) for key in ("mode", "width", "height"))
     output, sample = args.get("output"), args.get("sequence_sample")
+    if type(output) is dict and "raster_policy" in output:
+        if not _valid_raster_policy(output["raster_policy"], None):
+            return False
+        output = {key: value for key, value in output.items() if key != "raster_policy"}
     if (type(mode) is not str or mode not in {"still", "sequence"} or type(width) is not int or type(height) is not int
             or not 4 <= width <= 16384 or not 2 <= height <= 8192 or type(output) is not dict
             or (mode == "sequence") != (sample is not None)
@@ -257,6 +293,10 @@ def _valid_render_estimate(value: Any) -> bool:
 
 def _valid_preview_receipt(result: dict) -> bool:
     common = {"request_id", "state", "status", "progress", "error"}
+    if (not _valid_raster_evidence(result, None) or result.get("status") == "completed"
+            and "raster_policy" in result and result["raster_execution"] is None):
+        return False
+    common |= {"raster_policy", "raster_execution"} & result.keys()
     if not common <= result.keys() or result["status"] not in {
             "pending", "preparing", "cancel_pending", "running", "completed", "failed", "cancelled", "released", "refused", "unknown"}:
         return False
@@ -424,6 +464,8 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                 if "accepted_settings" in job:
                     settings = job["accepted_settings"]
                     if (type(settings) is not dict or set(settings) != {"output"}
+                            or type(settings["output"]) is not dict
+                            or {"raster_policy", "raster_execution"} & settings["output"].keys()
                             or not _valid_dome_job_output(settings["output"], raster=False)):
                         raise invalid()
                 job_id = job["job_id"]
@@ -433,6 +475,9 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     raise invalid()
                 output = job["output"]
                 if output is not None and not _valid_dome_job_output(output, raster=profile == "shader-raster-still/1"):
+                    raise invalid()
+                if (job.get("state") == "completed" and type(output) is dict
+                        and "raster_policy" in output and output.get("raster_execution") is None):
                     raise invalid()
                 job_id = job["job_id"]
             if (type(job_id) is not str or re.fullmatch(r"[0-9a-f]{32}", job_id) is None
@@ -633,10 +678,11 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
             else:
                 shape = {"png-master/1": ({"width", "height"}, {"supersampling", "output_path"}),
                          "dome-png/1": ({"projection", "diameter", "fov_deg", "pan", "tilt", "roll"},
-                                        {"output_path", "preserve_360", "preserve_360_profile"})}[args["profile"]]
+                                        {"output_path", "preserve_360", "preserve_360_profile", "raster_policy"})}[args["profile"]]
                 valid = shape[0] <= output.keys() and set(output) <= shape[0] | shape[1]
                 if args["profile"] == "dome-png/1":
-                    valid = valid and _valid_preservation(output)
+                    valid = valid and _valid_preservation(output) and ("raster_policy" not in output
+                        or _valid_raster_policy(output["raster_policy"], "PNG"))
         if not valid:
             raise HextileClientError("Unsupported closed Shader output settings", status_code=422, kind="other")
     for field in ("output_path", "destination_project"):
@@ -1142,7 +1188,7 @@ _SHADER_SEQUENCE_REQUIRED = {
     "start_time", "end_time", "width", "height", "seed", "output",
 }
 _SHADER_SEQUENCE_OPTIONAL = {"resource_manifest_hash", "selected_resource_frames",
-                             "supersampling", "folder_export", "publication_mode", "input_capture_id"}
+                             "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy"}
 
 
 def _native_folder_intent(value: Any) -> bool:
@@ -1258,6 +1304,9 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
         encoding = storage.get("encoding")
         if type(encoding) is dict and encoding.get("format") in {"PNG", "JPG"}:
             safe["encoding"] = {"format": encoding["format"], "quality_if_jpg": encoding.get("quality_if_jpg")}
+            if (encoding["format"] == "PNG" and type(encoding.get("png_compress_level")) is int
+                    and encoding["png_compress_level"] in {0, 6}):
+                safe["encoding"]["png_compress_level"] = encoding["png_compress_level"]
         out["storage"] = safe
     settings = data.get("accepted_settings")
     if type(settings) is dict and len(settings) <= 20:
@@ -1295,6 +1344,13 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
         if _native_folder_intent(destination):
             safe_settings["destination_intent"] = {"format": destination["format"],
                                                     "quality_if_jpg": destination.get("quality_if_jpg")}
+            policy = settings.get("raster_policy")
+            if (data.get("producer") == "shader" and _valid_raster_policy(policy, destination["format"])
+                    and settings.get("raster_profiles") == _RASTER_PROFILES):
+                safe_settings.update(raster_policy=dict(policy), raster_profiles=dict(_RASTER_PROFILES))
+                if ("raster_execution" in data and _valid_raster_evidence({
+                        "raster_policy": policy, "raster_execution": data["raster_execution"]}, destination["format"])):
+                    out["raster_execution"] = data["raster_execution"]
         out["accepted_settings"] = safe_settings
     return out
 
@@ -1383,6 +1439,9 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
     if (mode not in (None, "deferred")
             or (mode == "deferred") != (folder is None)
             or (folder is not None and not _native_folder_intent(folder))):
+        refuse()
+    if "raster_policy" in body and (mode == "deferred" or folder is None
+            or not _valid_raster_policy(body["raster_policy"], folder["format"])):
         refuse()
     scale = body.get("supersampling", 1.0)
     if (type(scale) not in (int, float) or not math.isfinite(scale)
@@ -1958,7 +2017,7 @@ class Client:
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,
                                sequence_inputs: bool = False, preview_inspector: bool = False,
-                               preservation: bool = False) -> None:
+                               preservation: bool = False, raster_policy: bool = False) -> None:
         """New native semantics require an explicitly advertised peer contract."""
         try:
             capabilities = self.get_capabilities()
@@ -1974,6 +2033,8 @@ class Client:
                 or preview_inspector and (type(native.get("shader_preview")) is not dict
                     or native["shader_preview"].get("profile") != "shader-export-preview/2")
                 or still_profile is not None and still_profile not in native["stills"]
+                or raster_policy and (type(native.get("shader_raster_policy")) is not dict
+                    or native["shader_raster_policy"].get("profile") != "shader-raster-policy/1")
                 or preservation and (type(native.get("shader_dome_preservation")) is not dict
                     or native["shader_dome_preservation"].get("field") != "preserve_360"
                     or type(native["shader_dome_preservation"].get("profiles")) is not list
@@ -2480,7 +2541,7 @@ class Client:
         validate_shader_sequence_request(body)
         if (body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1
                 or 'input_capture_id' in body or 'preserve_360' in body.get('output', {})):
-            self._require_native_render(sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}))
+            self._require_native_render(sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}), raster_policy='raster_policy' in body)
         path = "/api/shaders/sequences/preflight" if preflight else "/api/shaders/sequences"
         try:
             data = self.post_json(path, dict(body),
@@ -2502,7 +2563,7 @@ class Client:
         validate_shader_sequence_request(request)
         if request.get("folder_export") is None:
             raise HextileClientError("Inspection needs a selected Shader destination", kind="other", status_code=422)
-        self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}))
+        self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}), raster_policy='raster_policy' in request)
         try:
             data = self.post_json("/api/shaders/sequences/inspect", {"request": dict(request)},
                                   headers={"X-Hextile-Project-Witness": request["project_context_witness"]},
@@ -2702,7 +2763,7 @@ class Client:
             if (request.get("folder_export") is None or type(args["inspection_fingerprint"]) is not str
                     or _WORKSPACE_DIGEST.fullmatch(args["inspection_fingerprint"]) is None):
                 raise HextileClientError("Continue requires the inspected Shader destination", kind="other", status_code=422)
-            self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}))
+            self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}), raster_policy='raster_policy' in request)
             suffix, body = "continue", {"request": dict(request), "inspection_fingerprint": args["inspection_fingerprint"]}
             headers = {"X-Hextile-Project-Witness": request["project_context_witness"]}
         elif action in {"cancel_export", "retry_export"} and set(args) == {"sequence_id", "action", "attempt_id"}:
@@ -5282,9 +5343,10 @@ class Client:
                 or operation == "preflight" and (args.get("allow_unpreviewed_revision") is True
                     or args.get("profile") == "shader-linear-rgba-exr/1"
                     and args["output"].get("projection", "equirectangular") != "equirectangular")
-                or operation == "preflight" and "preserve_360" in args.get("output", {})):
+                or operation == "preflight" and ({"preserve_360", "raster_policy"} & args.get("output", {}).keys())):
             self._require_native_render(still_profile=args["profile"],
-                preservation="preserve_360" in args.get("output", {}))
+                preservation="preserve_360" in args.get("output", {}),
+                raster_policy="raster_policy" in args.get("output", {}))
         try:
             result = self.request_json("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
         except HextileClientError as exc:
@@ -5298,7 +5360,8 @@ class Client:
     def request_shader_preview(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("preview", args)
         self._require_native_render(preview_inspector=True,
-            preservation="preserve_360" in args.get("output", {}))
+            preservation="preserve_360" in args.get("output", {}),
+            raster_policy="raster_policy" in args.get("output", {}))
         return self._shader_output_post("preview", args, "/api/shaders/agent-operations/output/preview")
 
     def capture_shader_sequence_input(self, args: Mapping[str, Any]) -> dict:

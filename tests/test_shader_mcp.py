@@ -2414,3 +2414,73 @@ def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls()
                      "human Fractal grant", "session selected and follow_ready", "Follow and whole-source"):
         assert obsolete not in catalog_text
     assert all("lease_id" not in row["inputSchema"].get("properties", {}) for row in TOOLS + SHADER_EXTENSION_TOOLS)
+
+
+@pytest.mark.parametrize('level,processing', [(0, 'auto'), (6, 'cpu')])
+def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatch, level, processing):
+    from hextile_client import _native_sequence_fields, _shader_output_receipt, _RASTER_PROFILES
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    schemas = {row['name']: row['inputSchema'] for row in SHADER_EXTENSION_TOOLS}
+    key = '7e720fa5-192b-47da-a705-ab3b5ddc979e'
+    digest = 'sha256:' + 'a' * 64
+    policy = {'profile': 'shader-raster-policy/1', 'processing': processing, 'png_compress_level': level}
+    preview_policy = {key: value for key, value in policy.items() if key != 'png_compress_level'}
+    owner = {'request_id': key, 'shader': {'origin': 'user', 'shaderId': 'aurora'},
+        'project_context_witness': 'w', 'base': {'kind': 'saved', 'working_revision': 1,
+        'document_hash': digest, 'source_hash': digest}, 'studio_surface_id': 'surface', 'expected_edit_sequence': 1}
+    output = {'projection': 'equirectangular', 'width': 2048, 'height': 1024, 'encoding': 'png',
+              'output_path': 'D:/Stills/policy.png', 'raster_policy': policy}
+    args = {**owner, 'profile': 'shader-raster-still/1', 'output': output}
+    schema = schemas['shader_preflight_still_export']
+    jsonschema.validate(args, schema)
+    preview = {**owner, 'mode': 'still', 'width': 2048, 'height': 1024, 'output': {
+        'projection': 'equirectangular', 'pan': 0, 'tilt': 0, 'roll': 0, 'raster_policy': preview_policy}}
+    jsonschema.validate(preview, schemas['shader_request_preview'])
+    for invalid in [None, {**policy, 'png_compress_level': True}, {**policy, 'extra': True}]:
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**args, 'output': {**output, 'raster_policy': invalid}}, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**preview, 'output': {**preview['output'], 'raster_policy': policy}},
+                            schemas['shader_request_preview'])
+    client = Client()
+    caps = _inspector_capabilities()
+    caps['native_render']['stills'] = {'shader-raster-still/1': {}}
+    monkeypatch.setattr(client, 'get_capabilities', lambda: caps)
+    post = mock.Mock(return_value={'request_id': key, 'state': 'pending'})
+    monkeypatch.setattr(client, 'request_json', post)
+    with pytest.raises(HextileClientError) as old_peer:
+        client.preflight_shader_still(args)
+    assert old_peer.value.status_code == 501 and not post.called
+    caps['native_render']['shader_raster_policy'] = {'profile': 'shader-raster-policy/1'}
+    client.preflight_shader_still(args)
+    assert post.call_args.args[2]['output']['raster_policy'] == policy
+    execution = {'profile': policy['profile'], 'requested_processing': processing, 'actual_processing': 'cpu',
+        'reason': 'forced_cpu' if processing == 'cpu' else 'gpu_unqualified', 'profiles': _RASTER_PROFILES}
+    ready = {**_inspector_ready(key), 'raster_policy': preview_policy, 'raster_execution': execution}
+    assert _shader_output_receipt('get_preview', {'request_id': key}, ready) == ready
+    for changed in (None, {**execution, 'actual_processing': 'gpu'}, {**execution, 'secret': 'private'},
+                    {**execution, 'profiles': {**_RASTER_PROFILES, 'area': 'unknown/1'}}):
+        with pytest.raises(HextileClientError):
+            _shader_output_receipt('get_preview', {'request_id': key}, {**ready, 'raster_execution': changed})
+    job = {'job_id': 'b' * 32, 'state': 'completed', 'progress': 1,
+           'idempotency_key': key, 'output': {key: value for key, value in output.items() if key != 'output_path'}}
+    job['output'].update(file='policy.png', raster_execution=execution)
+    result = {'request_id': key, 'profile': args['profile'], 'job': job,
+              'state': 'completed', 'output_name': 'policy.png', 'output_path': output['output_path']}
+    assert _shader_output_receipt('get_job', args, result) == result
+    with pytest.raises(HextileClientError):
+        _shader_output_receipt('get_job', args, {**result, 'job': {**job,
+            'output': {**job['output'], 'raster_execution': None}}})
+    pending = {key: ready[key] for key in ('request_id', 'state', 'status', 'progress', 'error', 'raster_policy')}
+    pending.update(state='pending', status='running', raster_execution=None)
+    assert _shader_output_receipt('get_preview', {'request_id': key}, pending) == pending
+    settings = {'destination_intent': {'destination_folder': 'D:/Stills', 'format': 'PNG', 'quality_if_jpg': None},
+                'raster_policy': policy, 'raster_profiles': _RASTER_PROFILES}
+    projected = _native_sequence_fields({'producer': 'shader', 'accepted_settings': settings,
+        'raster_execution': execution, 'storage': {'layout': 'direct', 'ownership': 'generated',
+        'encoding': {'format': 'PNG', 'quality_if_jpg': None, 'png_compress_level': level}}})
+    assert projected['accepted_settings']['raster_policy'] == policy
+    assert projected['accepted_settings']['raster_profiles'] == _RASTER_PROFILES
+    assert projected['raster_execution'] == execution
+    assert projected['storage']['encoding']['png_compress_level'] == level
+    assert 'destination_folder' not in projected['accepted_settings']['destination_intent']

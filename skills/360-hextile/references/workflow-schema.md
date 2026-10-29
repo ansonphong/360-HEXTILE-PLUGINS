@@ -96,6 +96,27 @@ The existing control tool's `continue` action adds `inspection_fingerprint` and
 the same immutable request. The fingerprint is an optimistic check, never source
 or write authority. Keep original request/job/run/attempt IDs on uncertain replies.
 
+Shader RGB policy requires `native_render.shader_raster_policy.profile` equal to
+`shader-raster-policy/1`. New supported PNG requests should explicitly send
+`raster_policy:{"profile":"shader-raster-policy/1","processing":"auto","png_compress_level":0}`;
+compression On selects 6. Both levels decode identically within a processing path.
+Use `processing:"cpu"` for the maintained compatibility path. JPG and native RGB
+Preview accept only profile/processing (no PNG level). Put policy at the top
+level of a direct Sequence request, or inside `output` for Preview and raster
+Still/Dome preflight. Policy is excluded from deferred Sequence, PNG master,
+linear EXR and Fractal. Omission retains legacy CPU/PNG6 identities and recovery;
+never add policy when replaying an original request that omitted it.
+
+Bounded status retains admitted `raster_policy`, arithmetic `raster_profiles`
+and effective `raster_execution` where applicable. Preview/Still execution is
+pending (`null`) until available; completed new-policy output needs a checked
+receipt. Sequence accepted settings carry policy/profiles and storage encoding
+carries the selected PNG level. Static support does not mean GPU acceleration:
+D1 reports CPU with `forced_cpu` or `gpu_unqualified`; later GPU keys require
+actual qualification against the retained-source maximum 1/255 RGB error bound.
+Compression does not change RGB Preview identity; processing does. Progress,
+Stop, Continue and unknown-outcome recovery keep the same original native IDs.
+
 For Shader still preflight, `shader-raster-still/1` output chooses projection,
 `encoding:"png"|"jpg"`, exact `output_path` and native geometry. Equirectangular
 widths1024/2048/4096 have half-height; Dome uses native diameter/FOV/pose. Raster
