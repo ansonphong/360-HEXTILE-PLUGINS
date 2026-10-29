@@ -605,6 +605,20 @@ def test_native_shader_direct_inspect_continue_and_observed_stop(capture_id) -> 
     assert folder["destination_folder"] not in json.dumps(inspected)
 
 
+def test_native_saved_frame_estimate_projection_drops_untrusted_fields():
+    from hextile_client import _native_sequence_fields
+    estimate = {"profile": "shader-render-estimate/1", "basis": "saved_frames", "approximate": True,
+                "frame_count": 24, "remaining_frames": 17, "total_ms": 26000,
+                "remaining_ms": 17000, "sample_count": 7, "includes_output": True}
+    data = {"producer": "shader", "render_estimate": estimate}
+    assert _native_sequence_fields(data)["render_estimate"] == estimate
+    for patch in ({"total_ms": float("inf")}, {"remaining_frames": 25}, {"sample_count": True},
+                  {"private_lease": "hidden"}, {"basis": "preview"}):
+        assert _native_sequence_fields({**data, "render_estimate": {**estimate, **patch}})["render_estimate"] is None
+    assert _native_sequence_fields({**data, "render_estimate": None})["render_estimate"] is None
+    assert "render_estimate" not in _native_sequence_fields({"producer": "shader"})
+
+
 def test_native_render_new_semantics_require_advertised_contract() -> None:
     body = {"shader_ref": {"origin": "user", "id": "known"},
             "project_context_witness": "w", "working_revision": 1,

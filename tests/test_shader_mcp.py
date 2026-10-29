@@ -350,6 +350,37 @@ def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_rec
     assert malformed.value.receipt == {"request_id": request_id}
 
 
+def test_native_preview_timing_and_estimate_are_bounded_and_original_request_bound(monkeypatch):
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    sample = {"start_time": {"num": "0", "den": "1"}, "end_time": {"num": "1", "den": "1"},
+              "frame_rate": {"num": 24, "den": 1}, "frame_count": 24, "index": 0}
+    timing = {"profile": "shader-render-timing/1", "startup_ms": 2000,
+              "frame_work_ms": 500, "history_replay_ms": 0, "history_frame_count": 0}
+    estimate = {"profile": "shader-render-estimate/1", "basis": "preview", "approximate": True,
+                "frame_count": 24, "remaining_frames": 24, "total_ms": 14000,
+                "remaining_ms": 14000, "sample_count": 1, "includes_output": False}
+    ready = {**_inspector_ready(request_id), "mode": "sequence", "sample": sample,
+             "timing": timing, "estimate": estimate}
+    args = {"request_id": request_id, "shader": {"origin": "user", "shaderId": "aurora"},
+            "project_context_witness": "w"}
+    client = Client("http://127.0.0.1:9")
+    monkeypatch.setattr(client, "request_json", lambda *a, **kw: ready)
+    assert client.get_shader_preview(args) == ready
+    for patch in ({"timing": {**timing, "frame_work_ms": float("nan")}},
+                  {"timing": {**timing, "startup_ms": True}},
+                  {"timing": {**timing, "path": "private"}},
+                  {"estimate": {**estimate, "total_ms": 48000, "remaining_ms": 48000}},
+                  {"estimate": {**estimate, "frame_count": 25}},
+                  {"estimate": {**estimate, "includes_output": True}},
+                  {"estimate": {**estimate, "basis": "saved_frames"}}):
+        monkeypatch.setattr(client, "request_json", lambda *a, row={**ready, **patch}, **kw: row)
+        with pytest.raises(HextileClientError):
+            client.get_shader_preview(args)
+    old = {key: value for key, value in ready.items() if key not in {"timing", "estimate"}}
+    monkeypatch.setattr(client, "request_json", lambda *a, **kw: old)
+    assert "estimate" not in client.get_shader_preview(args)
+
+
 def test_known_shader_output_job_recovers_through_disabled_mcp_proxy(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     calls = []

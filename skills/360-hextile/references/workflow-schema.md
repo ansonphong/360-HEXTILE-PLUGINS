@@ -58,6 +58,30 @@ at 512 px per side/1 MiB. It never replaces the native full-resolution raster.
 freeze. `released:false,status:"cancel_pending",cleanup:"pending"` keeps the
 original owner until cleanup is confirmed; it is not permission to start anew.
 
+When advertised under `native_render.shader_preview.timing` and `.estimate`,
+completed preview metadata also carries optional `timing` (`shader-render-timing/1`)
+and `estimate` (`shader-render-estimate/1`). Timing separates native `startup_ms`,
+selected `frame_work_ms`, prior `history_replay_ms` and `history_frame_count`.
+The processing duration is the sum of these three times; animation `time` remains
+the sampled timeline position. Sequence estimates use setup once plus exact frame
+count times selected-frame work. History replay is not multiplied. They are
+approximate, based on one preview, and exclude process launch, preview transfer,
+file encoding and destination writing. Frame complexity can change over time.
+Still previews have timing but no sequence estimate. Missing/null evidence means
+unavailable; never assume zero or launch a benchmark to obtain it.
+
+The local inspector can rescale this native linear model for End-only count
+changes while source, inputs, output/SS, Start and FPS still match and the measured
+sample remains inside the interval. Other changes require a matching new preview;
+Auto off still requires Refresh. The estimate never changes image currentness.
+Direct Shader sequence status may expose `render_estimate` with
+`basis:"saved_frames"`, `includes_output:true`, bounded sample count and approximate
+`remaining_ms`. It uses current-run saved-frame throughput including encoding and
+writing; `total_ms` describes the current run, not cumulative resumed attempts.
+Startup, replay, pause, interruption and insufficient evidence yield unavailable.
+New runs reset measurement history; cancellation and original-request recovery
+continue through existing native controls. No new mutation or GPU job is added.
+
 Shader sequence input includes the saved identity/hashes/Project witness, exact
 rational interval/FPS/count, dimensions, seed, output and optional hundredth
 `supersampling`1.00–2.00. Direct output carries

@@ -229,6 +229,31 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
             and width in {1024, 2048, 4096, 8192} and _native_pose(output) and _valid_preservation(output))
 
 
+def _valid_render_timing(value: Any) -> bool:
+    return (type(value) is dict and set(value) == {
+        "profile", "startup_ms", "frame_work_ms", "history_replay_ms", "history_frame_count"}
+        and value["profile"] == "shader-render-timing/1"
+        and all(type(value[key]) is int and 0 <= value[key] <= 3_600_000
+                for key in ("startup_ms", "frame_work_ms", "history_replay_ms"))
+        and type(value["history_frame_count"]) is int and 0 <= value["history_frame_count"] < 2 ** 31)
+
+
+def _valid_render_estimate(value: Any) -> bool:
+    """Validate bounded native evidence; the proxy never estimates GPU cost."""
+    return (type(value) is dict and set(value) == {
+        "profile", "basis", "approximate", "frame_count", "remaining_frames",
+        "total_ms", "remaining_ms", "sample_count", "includes_output"}
+        and value["profile"] == "shader-render-estimate/1"
+        and value["basis"] in ("preview", "saved_frames") and value["approximate"] is True
+        and type(value["frame_count"]) is int and 1 <= value["frame_count"] <= 10_000
+        and type(value["remaining_frames"]) is int and 0 <= value["remaining_frames"] <= value["frame_count"]
+        and all(type(value[key]) is int and 0 <= value[key] <= 36_003_600_000
+                for key in ("total_ms", "remaining_ms"))
+        and value["remaining_ms"] <= value["total_ms"]
+        and type(value["sample_count"]) is int and 0 <= value["sample_count"] <= 10_000
+        and type(value["includes_output"]) is bool)
+
+
 def _valid_preview_receipt(result: dict) -> bool:
     common = {"request_id", "state", "status", "progress", "error"}
     if not common <= result.keys() or result["status"] not in {
@@ -248,8 +273,23 @@ def _valid_preview_receipt(result: dict) -> bool:
     fields = {"width", "height", "stride", "size", "sha256", "format", "profile", "mode", "supersampling",
               "physical_width", "physical_height", "index", "time", "frame_rate", "sample", "output",
               "document_hash", "source_hash", "resource_manifest_hash"}
-    if result["state"] != "ready" or set(result) != common | fields or result["status"] != "completed":
+    optional = {"timing", "estimate"}
+    if (result["state"] != "ready" or set(result) - optional != common | fields
+            or result["status"] != "completed"):
         return False
+    timing, estimate = result.get("timing"), result.get("estimate")
+    if timing is not None and not _valid_render_timing(timing):
+        return False
+    if estimate is not None:
+        if (not _valid_render_estimate(estimate) or not _valid_render_timing(timing)
+                or estimate["basis"] != "preview" or estimate["includes_output"]
+                or estimate["sample_count"] != 1 or timing["frame_work_ms"] <= 0
+                or result.get("mode") != "sequence" or type(result.get("sample")) is not dict
+                or estimate["frame_count"] != result["sample"].get("frame_count")
+                or estimate["remaining_frames"] != estimate["frame_count"]
+                or estimate["remaining_ms"] != estimate["total_ms"]
+                or estimate["total_ms"] != timing["startup_ms"] + estimate["frame_count"] * timing["frame_work_ms"]):
+            return False
     if (type(result["output"]) is not dict or not _valid_preview_selection({
             **{key: result[key] for key in ("mode", "width", "height")}, "sequence_sample": result["sample"],
             "output": {**result["output"], "supersampling": result["supersampling"]}})
@@ -1116,6 +1156,11 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
     observation = _native_observation(data.get("render_observation"))
     if observation is not None:
         out["render_observation"] = observation
+    if data.get("producer") == "shader" and "render_estimate" in data:
+        estimate = data["render_estimate"]
+        # Keep unavailable explicit, and never expose arbitrary nested fields.
+        out["render_estimate"] = (dict(estimate) if _valid_render_estimate(estimate)
+                                  and estimate["basis"] == "saved_frames" else None)
     receipt = data.get("continuation_receipt")
     if type(receipt) is dict and len(receipt) <= 8:
         projected = {}
