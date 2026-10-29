@@ -36,6 +36,10 @@ SEQUENCE_TOOLS = (
     "start_sequence",
     "get_sequence",
     "list_sequences",
+    "rename_sequence",
+    "set_sequence_lifecycle",
+    "set_sequence_tags",
+    "get_sequence_tags",
     "stop_sequence",
 )
 
@@ -235,6 +239,50 @@ def test_mcp_tools_list_includes_sequence_names() -> None:
     names = [t["name"] for t in resp["result"]["tools"]]
     for name in SEQUENCE_TOOLS:
         assert name in names
+
+
+@pytest.mark.parametrize(('tool', 'args', 'method', 'suffix', 'body'), [
+    ('rename_sequence', {'name': '  A new name  '}, 'PATCH', 'name', {'name': 'A new name'}),
+    ('set_sequence_lifecycle', {'status': 'archived'}, 'PATCH', 'status', {'status': 'archived'}),
+    ('set_sequence_tags', {'tag_ids': ['tag_a', 'tag_b']}, 'PUT', 'tags', ['tag_a', 'tag_b']),
+])
+def test_sequence_metadata_tools_use_native_operations(tool, args, method, suffix, body):
+    seen = {}
+    recorder = _recorder(seen, {'sequence_id': 'seq/a b', 'name': 'A new name'})
+    def opener(request, timeout=None):
+        return _Resp() if '/api/agent/events' in request.full_url else recorder(request, timeout)
+    server = HextileMcpServer(client=Client(base_url=BASE, opener=opener))
+    result = server.call_tool(tool, {'sequence_id': 'seq/a b', **args})
+    assert not result.get('isError')
+    assert seen['method'] == method
+    assert seen['url'].endswith(f'/api/sequences/seq%2Fa%20b/{suffix}')
+    assert json.loads(seen['data']) == body
+    listed = server.handle_rpc({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}})
+    definition = next(t for t in listed['result']['tools'] if t['name'] == tool)
+    assert definition['annotations']['readOnlyHint'] is False
+    jsonschema.validate({'sequence_id': 'seq/a b', **args}, definition['inputSchema'])
+
+
+@pytest.mark.parametrize(('tool', 'args'), [
+    ('rename_sequence', {'name': '   '}),
+    ('rename_sequence', {'name': 'x' * 121}),
+    ('set_sequence_lifecycle', {'status': 'deleted'}),
+    ('set_sequence_tags', {'tag_ids': 'tag_a'}),
+])
+def test_sequence_metadata_tools_reject_invalid_values_without_http(tool, args):
+    seen = {}
+    def opener(request, timeout=None):
+        if '/api/agent/events' not in request.full_url:
+            seen['url'] = request.full_url
+        return _Resp()
+    result = HextileMcpServer(client=Client(base_url=BASE, opener=opener)).call_tool(tool, {'sequence_id': 'seq_test', **args})
+    assert result.get('isError') and not seen
+
+
+def test_sequence_tag_read_recovers_selected_ids_without_mutation():
+    seen = {}
+    assert _client(seen, {'tags': [{'tag_id': 'tag_a'}]}).get_sequence_tags('seq/a')['tags'][0]['tag_id'] == 'tag_a'
+    assert seen['method'] == 'GET' and seen['url'].endswith('/api/sequences/seq%2Fa/tags')
 
 
 def test_shader_render_export_mcp_tool_chain() -> None:

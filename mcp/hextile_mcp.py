@@ -93,6 +93,10 @@ TOOL_NAMES = (
     "get_sequence",
     "list_sequences",
     "stop_sequence",
+    "rename_sequence",
+    "set_sequence_lifecycle",
+    "set_sequence_tags",
+    "get_sequence_tags",
     "preflight_batch",
     "get_batch_preflight",
     "start_batch",
@@ -187,6 +191,7 @@ _READ_ONLY = frozenset(
         "get_guide",
         "get_sequence",
         "list_sequences",
+        "get_sequence_tags",
         "get_batch_preflight",
         "list_batches",
         "get_batch",
@@ -242,6 +247,9 @@ _MUTATING = frozenset(
         "create_sequence",
         "start_sequence",
         "stop_sequence",
+        "rename_sequence",
+        "set_sequence_lifecycle",
+        "set_sequence_tags",
         "preflight_batch",
         "start_batch",
         "pause_batch",
@@ -1796,6 +1804,37 @@ TOOLS: list[dict[str, Any]] = [
         required=["sequence_id"],
     ),
     _tool_def(
+        "rename_sequence",
+        "Rename only a sequence's display metadata; preserve frozen recipes, paths and render ownership. "
+        "After an uncertain reply, read get_sequence with this same ID before retrying.",
+        {"sequence_id": {"type": "string", "minLength": 1},
+         "name": {"type": "string", "minLength": 1, "maxLength": 120}},
+        required=["sequence_id", "name"],
+    ),
+    _tool_def(
+        "set_sequence_lifecycle",
+        "Archive, move to Trash or restore the named sequence via the native library operation. "
+        "No files are deleted. Recover an uncertain reply with get_sequence/list_sequences.",
+        {"sequence_id": {"type": "string", "minLength": 1},
+         "status": {"type": "string", "enum": ["active", "archived", "trashed"]}},
+        required=["sequence_id", "status"],
+    ),
+    _tool_def(
+        "set_sequence_tags",
+        "Replace the named sequence's tag selection with existing tag IDs. Include the favorite "
+        "tag ID to keep it selected. Recover an uncertain reply with get_sequence_tags.",
+        {"sequence_id": {"type": "string", "minLength": 1},
+         "tag_ids": {"type": "array", "maxItems": 256,
+                     "items": {"type": "string", "minLength": 1, "maxLength": 128}}},
+        required=["sequence_id", "tag_ids"],
+    ),
+    _tool_def(
+        "get_sequence_tags",
+        "Read the named sequence's selected tags and recover an uncertain set_sequence_tags reply.",
+        {"sequence_id": {"type": "string", "minLength": 1}},
+        required=["sequence_id"],
+    ),
+    _tool_def(
         "preflight_batch",
         "Create a Batch preflight (POST /api/batch-workflows/preflight). "
         "Returns promptly; poll get_batch_preflight for spec_hash and issues. "
@@ -3101,7 +3140,8 @@ def _activity_subject(name: str, args: Mapping[str, Any], payload: Any = None) -
         kind, value = "run", args.get("run_id")
     elif name in {"generate_seed", "get_seed_job", "cancel_seed"}:
         kind, value = "seed", args.get("request_id") if name == "generate_seed" else args.get("job_id")
-    elif name in {"get_sequence", "start_sequence", "stop_sequence", "control_shader_sequence"}:
+    elif name in {"get_sequence", "start_sequence", "stop_sequence", "control_shader_sequence",
+                  "rename_sequence", "set_sequence_lifecycle", "set_sequence_tags", "get_sequence_tags"}:
         kind, value = "sequence", args.get("sequence_id")
     elif name == "create_sequence" and isinstance(payload, Mapping):
         kind, value = "sequence", payload.get("sequence_id")
@@ -3276,6 +3316,10 @@ class HextileMcpServer:
             "start_sequence": self._start_sequence,
             "get_sequence": self._get_sequence,
             "list_sequences": self._list_sequences,
+            "rename_sequence": self._rename_sequence,
+            "set_sequence_lifecycle": self._set_sequence_lifecycle,
+            "set_sequence_tags": self._set_sequence_tags,
+            "get_sequence_tags": self._get_sequence_tags,
             "stop_sequence": self._stop_sequence,
             "preflight_batch": self._preflight_batch,
             "get_batch_preflight": self._get_batch_preflight,
@@ -4914,6 +4958,18 @@ class HextileMcpServer:
                 "sequence_id is required", status_code=None, kind="other"
             )
         return self.client.stop_sequence(str(sequence_id))
+
+    def _rename_sequence(self, args: dict[str, Any]) -> Any:
+        return self.client.rename_sequence(args.get('sequence_id'), args.get('name'))
+
+    def _set_sequence_lifecycle(self, args: dict[str, Any]) -> Any:
+        return self.client.set_sequence_lifecycle(args.get('sequence_id'), args.get('status'))
+
+    def _set_sequence_tags(self, args: dict[str, Any]) -> Any:
+        return self.client.set_sequence_tags(args.get('sequence_id'), args.get('tag_ids'))
+
+    def _get_sequence_tags(self, args: dict[str, Any]) -> Any:
+        return self.client.get_sequence_tags(args.get('sequence_id'))
 
     def _preflight_batch(self, args: dict[str, Any]) -> Any:
         for key in ("idempotency_key", "workflow", "input", "output"):

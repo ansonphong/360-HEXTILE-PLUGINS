@@ -3877,6 +3877,39 @@ class Client:
             params={"lifecycle_status": status},
         )
 
+    def rename_sequence(self, sequence_id: str, name: str) -> Any:
+        """Metadata-only rename; GET this same sequence after an uncertain reply."""
+        if type(name) is not str or not 1 <= len(name.strip()) <= 120:
+            raise HextileClientError('name must contain 1–120 characters', kind='other')
+        sid = self._sequence_metadata_id(sequence_id)
+        return self.request_json('PATCH', f'/api/sequences/{sid}/name', {'name': name.strip()})
+
+    def set_sequence_lifecycle(self, sequence_id: str, status: str) -> Any:
+        """Archive, trash or restore using the same checked native UI operation."""
+        if status not in ('active', 'archived', 'trashed'):
+            raise HextileClientError('status must be active, archived or trashed', kind='other')
+        sid = self._sequence_metadata_id(sequence_id)
+        return self.request_json('PATCH', f'/api/sequences/{sid}/status', {'status': status})
+
+    def set_sequence_tags(self, sequence_id: str, tag_ids: list[str]) -> Any:
+        """Replace the tag selection, including any favorite tag explicitly kept."""
+        if (type(tag_ids) is not list or len(tag_ids) > 256
+                or any(type(tag) is not str or not tag or len(tag) > 128 for tag in tag_ids)):
+            raise HextileClientError('tag_ids must be a bounded list of tag IDs', kind='other')
+        sid = self._sequence_metadata_id(sequence_id)
+        # The native tags endpoint takes a JSON array rather than an object.
+        return self.request_json('PUT', f'/api/sequences/{sid}/tags', tag_ids)  # type: ignore[arg-type]
+
+    def get_sequence_tags(self, sequence_id: str) -> Any:
+        sid = self._sequence_metadata_id(sequence_id)
+        return self.get_json(f'/api/sequences/{sid}/tags')
+
+    @staticmethod
+    def _sequence_metadata_id(sequence_id: str) -> str:
+        if type(sequence_id) is not str or not sequence_id.strip():
+            raise HextileClientError('sequence_id is required', kind='other')
+        return urllib.parse.quote(sequence_id, safe='')
+
     def stop_sequence(self, sequence_id: str) -> Any:
         """POST /api/sequences/{sequence_id}/stop."""
         sid = urllib.parse.quote(sequence_id, safe="")
