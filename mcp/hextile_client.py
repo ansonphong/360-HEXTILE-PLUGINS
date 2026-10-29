@@ -235,7 +235,8 @@ def _valid_render_timing(value: Any) -> bool:
         and value["profile"] == "shader-render-timing/1"
         and all(type(value[key]) is int and 0 <= value[key] <= 3_600_000
                 for key in ("startup_ms", "frame_work_ms", "history_replay_ms"))
-        and type(value["history_frame_count"]) is int and 0 <= value["history_frame_count"] < 2 ** 31)
+        and type(value["history_frame_count"]) is int and 0 <= value["history_frame_count"] < 2 ** 31
+        and (value["history_frame_count"] != 0 or value["history_replay_ms"] == 0))
 
 
 def _valid_render_estimate(value: Any) -> bool:
@@ -310,6 +311,8 @@ def _valid_preview_receipt(result: dict) -> bool:
     physical_height = math.ceil(result["height"] * result["supersampling"])
     if (result["physical_height"] != physical_height or result["physical_width"] !=
             (physical_height * 2 if result["output"]["projection"] == "equirectangular" else physical_height)):
+        return False
+    if timing is not None and timing["history_frame_count"] > result["index"]:
         return False
     if result["mode"] == "sequence":
         sample = result["sample"]
@@ -1160,7 +1163,7 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
         estimate = data["render_estimate"]
         # Keep unavailable explicit, and never expose arbitrary nested fields.
         out["render_estimate"] = (dict(estimate) if _valid_render_estimate(estimate)
-                                  and estimate["basis"] == "saved_frames" else None)
+                                  and estimate["basis"] == "saved_frames" and estimate["includes_output"] else None)
     receipt = data.get("continuation_receipt")
     if type(receipt) is dict and len(receipt) <= 8:
         projected = {}
