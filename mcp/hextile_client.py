@@ -1344,13 +1344,20 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
         if _native_folder_intent(destination):
             safe_settings["destination_intent"] = {"format": destination["format"],
                                                     "quality_if_jpg": destination.get("quality_if_jpg")}
-            policy = settings.get("raster_policy")
-            if (data.get("producer") == "shader" and _valid_raster_policy(policy, destination["format"])
-                    and settings.get("raster_profiles") == _RASTER_PROFILES):
-                safe_settings.update(raster_policy=dict(policy), raster_profiles=dict(_RASTER_PROFILES))
-                if ("raster_execution" in data and _valid_raster_evidence({
-                        "raster_policy": policy, "raster_execution": data["raster_execution"]}, destination["format"])):
-                    out["raster_execution"] = data["raster_execution"]
+        # Shader recipe settings have no destination_intent. The frozen direct
+        # storage encoding is authoritative; folder_export is the older fallback.
+        encoding = data.get("storage", {}).get("encoding") if type(data.get("storage")) is dict else None
+        format = encoding.get("format") if type(encoding) is dict else None
+        if format not in ("PNG", "JPG"):
+            folder = data.get("folder_export")
+            format = folder.get("format") if type(folder) is dict else None
+        policy = settings.get("raster_policy")
+        if (data.get("producer") == "shader" and format in ("PNG", "JPG") and _valid_raster_policy(policy, format)
+                and settings.get("raster_profiles") == _RASTER_PROFILES):
+            safe_settings.update(raster_policy=dict(policy), raster_profiles=dict(_RASTER_PROFILES))
+            if ("raster_execution" in data and _valid_raster_evidence({
+                    "raster_policy": policy, "raster_execution": data["raster_execution"]}, format)):
+                out["raster_execution"] = data["raster_execution"]
         out["accepted_settings"] = safe_settings
     return out
 

@@ -2474,8 +2474,7 @@ def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatc
     pending = {key: ready[key] for key in ('request_id', 'state', 'status', 'progress', 'error', 'raster_policy')}
     pending.update(state='pending', status='running', raster_execution=None)
     assert _shader_output_receipt('get_preview', {'request_id': key}, pending) == pending
-    settings = {'destination_intent': {'destination_folder': 'D:/Stills', 'format': 'PNG', 'quality_if_jpg': None},
-                'raster_policy': policy, 'raster_profiles': _RASTER_PROFILES}
+    settings = {'raster_policy': policy, 'raster_profiles': _RASTER_PROFILES}
     projected = _native_sequence_fields({'producer': 'shader', 'accepted_settings': settings,
         'raster_execution': execution, 'storage': {'layout': 'direct', 'ownership': 'generated',
         'encoding': {'format': 'PNG', 'quality_if_jpg': None, 'png_compress_level': level}}})
@@ -2483,4 +2482,9 @@ def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatc
     assert projected['accepted_settings']['raster_profiles'] == _RASTER_PROFILES
     assert projected['raster_execution'] == execution
     assert projected['storage']['encoding']['png_compress_level'] == level
-    assert 'destination_folder' not in projected['accepted_settings']['destination_intent']
+    assert 'destination_intent' not in projected['accepted_settings']
+    for pending in [None, execution]:
+        live = _native_sequence_fields({'producer': 'shader', 'accepted_settings': settings,
+            'raster_execution': pending, 'folder_export': {'format': 'PNG'}})
+        assert live['accepted_settings']['raster_policy'] == policy
+        assert live['raster_execution'] == pending
