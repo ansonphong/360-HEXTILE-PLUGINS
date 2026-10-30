@@ -111,15 +111,17 @@ Bounded status retains admitted `raster_policy`, arithmetic `raster_profiles`
 and effective `raster_execution` where applicable. Preview/Still execution is
 pending (`null`) until available; completed new-policy output needs a checked
 receipt. Sequence accepted settings carry policy/profiles and storage encoding
-carries the selected PNG level. Static support does not mean GPU acceleration:
-D1 reports CPU with `forced_cpu` or `gpu_unqualified`. A completed automatic
-job may instead carry one closed receipt whose `actual_processing` is
-`retained_native`, `retained_native_with_cpu_repair`, or `cpu` with reason
-`dense_cpu_fallback` or `cpu_fallback`. Its `gpu_qualified` and
-`production_activated` flags are false until hardware qualification and a
-separate production activation. An `actual_processing` of `gpu`, a true flag,
-or any extra key is not evidence. Later qualification still requires the
-retained-source maximum 1/255 RGB error bound.
+carries the selected PNG level. Static support does not mean every job used the GPU.
+Discovery advertises `gpu_qualified` and `production_activated` from the live
+gates. Those gates qualify `preview` and `direct_sequence`. Dome, preserve-360,
+history, and EXR stay on the CPU path. A pending receipt is still CPU with
+`forced_cpu` or `gpu_unqualified`. A completed automatic job carries one closed
+receipt whose `actual_processing` is `retained_native`,
+`retained_native_with_cpu_repair`, or `cpu` with reason `dense_cpu_fallback`
+or `cpu_fallback`. A native pair may set both flags true only for an admitted
+qualified job. A CPU outcome keeps both flags false. An `actual_processing`
+of `gpu` or any extra key is not evidence. The retained-source maximum is
+still 1/255 RGB.
 Compression does not change RGB Preview identity; processing does. Progress,
 Stop, Continue and unknown-outcome recovery keep the same original native IDs.
 
