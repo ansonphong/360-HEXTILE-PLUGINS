@@ -58,6 +58,10 @@ TOOL_NAMES = (
     "list_workflows",
     "get_workflow",
     "get_capabilities",
+    "get_config_schema",
+    "list_processors",
+    "get_processor_schema",
+    "get_plugin_catalog",
     "describe_image",
     "get_live_context",
     "apply_config_delta",
@@ -172,6 +176,10 @@ _READ_ONLY = frozenset(
         "list_workflows",
         "get_workflow",
         "get_capabilities",
+        "get_config_schema",
+        "list_processors",
+        "get_processor_schema",
+        "get_plugin_catalog",
         "get_live_context",
         "validate_config",
         "get_status",
@@ -1234,6 +1242,33 @@ TOOLS: list[dict[str, Any]] = [
         "get_capabilities",
         "Handshake: GET /api/workflows/capabilities "
         "(workflow_api_version + features).",
+        {},
+    ),
+    _tool_def(
+        "get_config_schema",
+        "Read owned workflow config model names, or one model's JSON schema. "
+        "Optional model is a class name such as PromptSettings; PromptSettings uses the wire field global. "
+        "This is not the current config, not /api/config, and not validate_config.",
+        {"model": {"type": "string", "minLength": 1, "maxLength": 128,
+                   "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"}},
+    ),
+    _tool_def(
+        "list_processors",
+        "Read processor identity, display, type, channel, surface, and admission metadata. "
+        "Does not load, unload, or admit a model.",
+        {},
+    ),
+    _tool_def(
+        "get_processor_schema",
+        "Read one processor UI schema by pipeline_id. Does not validate or unload.",
+        {"pipeline_id": {"type": "string", "minLength": 1, "maxLength": 128,
+                         "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"}},
+        ["pipeline_id"],
+    ),
+    _tool_def(
+        "get_plugin_catalog",
+        "Read plugin metadata, availability, dependencies, and operations. "
+        "Does not start CREATE or animation and does not register jobs.",
         {},
     ),
     _tool_def(
@@ -3291,6 +3326,13 @@ def _err_result(payload: Any) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
+def _closed_tool_args(args: Any, allowed: frozenset[str]) -> dict[str, Any]:
+    """Reject a non-object or an unexpected key before any native request."""
+    if type(args) is not dict or not set(args) <= allowed:
+        raise HextileClientError("Unexpected arguments", kind="other", status_code=422)
+    return args
+
+
 class HextileMcpServer:
     def __init__(
         self,
@@ -3310,6 +3352,10 @@ class HextileMcpServer:
             "list_workflows": self._list_workflows,
             "get_workflow": self._get_workflow,
             "get_capabilities": self._get_capabilities,
+            "get_config_schema": self._get_config_schema,
+            "list_processors": self._list_processors,
+            "get_processor_schema": self._get_processor_schema,
+            "get_plugin_catalog": self._get_plugin_catalog,
             "describe_image": self._describe_image,
             "get_live_context": self._get_live_context,
             "apply_config_delta": self._apply_config_delta,
@@ -3868,6 +3914,29 @@ class HextileMcpServer:
 
     def _get_capabilities(self, _args: dict[str, Any]) -> Any:
         return self.client.get_capabilities()
+
+    def _get_config_schema(self, args: dict[str, Any]) -> Any:
+        args = _closed_tool_args(args, frozenset({"model"}))
+        if "model" in args and type(args["model"]) is not str:
+            raise HextileClientError(
+                "model must be a bounded config model name", kind="other", status_code=422,
+            )
+        return self.client.get_config_schema(args.get("model"))
+
+    def _list_processors(self, args: dict[str, Any]) -> Any:
+        _closed_tool_args(args, frozenset())
+        return self.client.list_processors()
+
+    def _get_processor_schema(self, args: dict[str, Any]) -> Any:
+        args = _closed_tool_args(args, frozenset({"pipeline_id"}))
+        pipeline_id = args.get("pipeline_id")
+        if type(pipeline_id) is not str:
+            raise HextileClientError("pipeline_id is required", kind="other", status_code=422)
+        return self.client.get_processor_schema(pipeline_id)
+
+    def _get_plugin_catalog(self, args: dict[str, Any]) -> Any:
+        _closed_tool_args(args, frozenset())
+        return self.client.get_plugin_catalog()
 
     def _describe_image(self, args: dict[str, Any]) -> Any:
         if set(args) - {"source", "crop"}:

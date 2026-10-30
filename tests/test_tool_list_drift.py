@@ -68,6 +68,10 @@ EXPECTED_TOOLS = (
     "list_workflows",
     "get_workflow",
     "get_capabilities",
+    "get_config_schema",
+    "list_processors",
+    "get_processor_schema",
+    "get_plugin_catalog",
     "describe_image",
     "get_live_context",
     "apply_config_delta",
@@ -281,6 +285,9 @@ def test_open4_annotations_partition() -> None:
     assert not {
         "local_file_write_begin", "local_file_write_append", "local_file_write_abort",
     } & _DESTRUCTIVE
+    assert {
+        "get_config_schema", "list_processors", "get_processor_schema", "get_plugin_catalog",
+    } <= _READ_ONLY
 
 
 _LOCAL_FILE_TOOLS = (
@@ -361,7 +368,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 110 and len(SHADER_EXTENSION_TOOLS) == 47
+    assert len(TOOLS) == 114 and len(SHADER_EXTENSION_TOOLS) == 47
 
 
 def test_trusted_local_file_contract() -> None:

@@ -55,6 +55,10 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 |------|-------------|----------|
 | `call_hextile_api` | Call the configured local native API with GET/POST/PATCH/PUT/DELETE at `/api/...`, or GET `/openapi.json`; optional query/body JSON. Named tools remain preferred. | **yes** |
 | `get_capabilities` | Handshake before a session | no |
+| `get_config_schema` | Read one workflow config model's JSON schema, or the name index when `model` is omitted. PromptSettings uses the wire field `global`. Not the current file, not `/api/config`, and not `validate_config` | no |
+| `list_processors` | Read processor identity and admission metadata. Does not load or unload | no |
+| `get_processor_schema` | Read one processor UI schema by `pipeline_id`. Does not validate or unload | no |
+| `get_plugin_catalog` | Read plugin metadata, availability, dependencies, and operations. Does not start CREATE or animation and returns no private filesystem paths | no |
 | `get_live_context` | Studio snapshot (current owner, doc_generation and live export) | no |
 | `apply_config_delta` | Live delta on the current open file. Never queues | **yes** |
 | `get_guide` | Schema, practices, recipes, website index | no |
@@ -167,6 +171,14 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `local_file_write_abort` | Abort staging; does not publish the target | **yes** |
 | `local_file_write_commit` | Publish staged bytes; create-only, or optimistic expected-SHA check then atomic same-directory publication | **yes** |
 | `local_file_write_status` | Reconcile the original `request_id` after a lost reply, revoke, or MCP OFF | no |
+
+### Config, processor, and plugin discovery
+
+`get_config_schema` reads owned workflow config model names, or one model's JSON schema when `model` is set. PromptSettings exposes the wire field `global`. The index is names only. This is not the current config file, not host settings at `/api/config`, and it does not validate or admit work. `validate_config` remains the semantic check.
+
+`list_processors` and `get_processor_schema` read processor metadata and one native UI schema. They do not load, unload, or validate a pipeline.
+
+`get_plugin_catalog` reads plugin metadata, availability, dependencies, and operations. Disabled and unsupported rows stay disabled and unsupported. It does not start CREATE or animation and does not register jobs.
 
 ### Trusted local files
 

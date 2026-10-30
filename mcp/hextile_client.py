@@ -1617,6 +1617,93 @@ def validate_shader_proposal(body: Mapping[str, Any]) -> None:
         refuse()
 
 
+_DISCOVERY_MAX_BYTES = 256 * 1024
+_CONFIG_MODEL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
+_PIPELINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+_DISCOVERY_DROP = object()
+_DISCOVERY_DROP_KEYS = frozenset({
+    "installed_root", "fixture_root", "token", "secret", "password",
+    "credential", "credentials", "authorization", "cookie", "pixels",
+    "raster", "authority", "api_key", "apikey", "license_key",
+})
+_DISCOVERY_TOKEN_VALUE = re.compile(
+    r"(?i)(?:bearer\s+)?(?:sk-|hf_|ghp_|glpat-|xai-)[A-Za-z0-9_.-]{8,}"
+)
+_PROCESSOR_KEYS = frozenset({
+    "mode_id", "display_name", "short_name", "type", "description", "icon",
+    "release_channel", "product_surface", "fresh_admission", "fresh_admission_reason",
+})
+
+
+def _discovery_filesystem_locator(value: str) -> bool:
+    """Absolute filesystem locators. App routes and relative ids stay."""
+    if value.startswith("\\\\") or value.startswith("file:"):
+        return True
+    if re.match(r"^[A-Za-z]:[\\/]", value):
+        return True
+    return value.startswith("/") and not (
+        value.startswith("/create/") or value.startswith("/api/") or value in {"/create", "/api"}
+    )
+
+
+def _project_discovery_public(value: Any) -> Any:
+    if type(value) is dict:
+        projected = {}
+        for key, child in value.items():
+            if type(key) is not str or key.lower() in _DISCOVERY_DROP_KEYS:
+                continue
+            safe = _project_discovery_public(child)
+            if safe is _DISCOVERY_DROP:
+                continue
+            projected[key] = safe
+        return projected
+    if type(value) is list:
+        return [
+            item for child in value
+            if (item := _project_discovery_public(child)) is not _DISCOVERY_DROP
+        ]
+    if type(value) is str:
+        if _discovery_filesystem_locator(value) or _DISCOVERY_TOKEN_VALUE.search(value):
+            return _DISCOVERY_DROP
+        return value
+    if value is None or type(value) in (bool, int, float):
+        return value
+    return _DISCOVERY_DROP
+
+
+def _project_processor_list(value: Any) -> Any:
+    """Identity and admission fields only. Does not invent rows."""
+    if type(value) is not dict or type(value.get("processors")) is not list:
+        raise HextileClientError("Processor list is malformed", kind="other", status_code=502)
+    rows = []
+    for row in value["processors"]:
+        if type(row) is not dict or type(row.get("mode_id")) is not str:
+            raise HextileClientError("Processor list is malformed", kind="other", status_code=502)
+        safe = {}
+        for key, child in row.items():
+            if key not in _PROCESSOR_KEYS:
+                continue
+            if type(child) is str and (
+                _discovery_filesystem_locator(child) or _DISCOVERY_TOKEN_VALUE.search(child)
+            ):
+                continue
+            safe[key] = child
+        if "mode_id" not in safe:
+            raise HextileClientError("Processor list is malformed", kind="other", status_code=502)
+        rows.append(safe)
+    return {"processors": rows}
+
+
+def _project_plugin_catalog(value: Any) -> Any:
+    """Metadata, availability, dependencies, and operations. No private locators."""
+    if type(value) is not dict or type(value.get("packages")) is not list:
+        raise HextileClientError("Plugin catalog is malformed", kind="other", status_code=502)
+    projected = _project_discovery_public(value)
+    if type(projected) is not dict or type(projected.get("packages")) is not list:
+        raise HextileClientError("Plugin catalog is malformed", kind="other", status_code=502)
+    return projected
+
+
 class Client:
     """Sync HTTP wrapper around local APP routes (stdlib urllib)."""
 
