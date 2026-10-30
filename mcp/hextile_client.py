@@ -117,19 +117,28 @@ def _valid_raster_policy(value: Any, format: str | None) -> bool:
 
 
 def _closed_native_execution(policy: Mapping[str, Any], execution: Any) -> bool:
-    """Completed automatic receipt. Both flags stay false until a reviewed gate change."""
+    """Completed automatic receipt. Flags are that job's bools.
+
+    A request cannot set them. A CPU outcome cannot claim either flag. A native
+    pair may carry true or false so a stored receipt stays readable after the
+    production gates change.
+    """
     if type(execution) is not dict or set(execution) != {
             "profile", "requested_processing", "actual_processing", "reason", "profiles",
             "gpu_qualified", "production_activated", "repair_fraction"}:
         return False
     fraction = execution["repair_fraction"]
+    qualified = execution["gpu_qualified"]
+    activated = execution["production_activated"]
     if (policy.get("processing") != "auto" or execution["requested_processing"] != "auto"
             or execution["profile"] != policy["profile"] or execution["profiles"] != _RASTER_PROFILES
-            or execution["gpu_qualified"] is not False or execution["production_activated"] is not False
+            or type(qualified) is not bool or type(activated) is not bool
             or isinstance(fraction, bool) or type(fraction) not in (int, float)
             or not math.isfinite(fraction) or not 0 <= fraction <= 1):
         return False
     pair = (execution["actual_processing"], execution["reason"])
+    if pair[0] == "cpu" and (qualified or activated):
+        return False
     if pair == ("retained_native", "unreviewed"):
         return fraction == 0
     if pair == ("retained_native_with_cpu_repair", "cpu_repair"):

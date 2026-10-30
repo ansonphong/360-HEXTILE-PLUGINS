@@ -2471,8 +2471,17 @@ def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatc
     else:
         with pytest.raises(HextileClientError):
             _shader_output_receipt('get_preview', {'request_id': key}, {**ready, 'raster_execution': native_execution})
-    for forged in ({**native_execution, 'gpu_qualified': True}, {**native_execution, 'production_activated': True},
-                   {**native_execution, 'actual_processing': 'gpu'}, {**native_execution, 'secret': True}):
+    stored_native = {**native_execution, 'gpu_qualified': True, 'production_activated': True}
+    if processing == 'auto':
+        stored_ready = {**ready, 'raster_execution': stored_native}
+        assert _shader_output_receipt('get_preview', {'request_id': key}, stored_ready) == stored_ready
+    else:
+        with pytest.raises(HextileClientError):
+            _shader_output_receipt('get_preview', {'request_id': key}, {**ready, 'raster_execution': stored_native})
+    for forged in ({**native_execution, 'actual_processing': 'cpu', 'reason': 'cpu_fallback', 'gpu_qualified': True},
+                   {**native_execution, 'actual_processing': 'gpu'},
+                   {**native_execution, 'gpu_qualified': 'yes'},
+                   {**native_execution, 'secret': True}):
         with pytest.raises(HextileClientError):
             _shader_output_receipt('get_preview', {'request_id': key}, {**ready, 'raster_execution': forged})
     job = {'job_id': 'b' * 32, 'state': 'completed', 'progress': 1,
@@ -2506,6 +2515,10 @@ def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatc
             'raster_execution': native_execution, 'storage': {'layout': 'direct', 'ownership': 'generated',
             'encoding': {'format': 'PNG', 'quality_if_jpg': None, 'png_compress_level': level}}})
         assert native_projected['raster_execution'] == native_execution
+        stored_projected = _native_sequence_fields({'producer': 'shader', 'accepted_settings': settings,
+            'raster_execution': stored_native, 'storage': {'layout': 'direct', 'ownership': 'generated',
+            'encoding': {'format': 'PNG', 'quality_if_jpg': None, 'png_compress_level': level}}})
+        assert stored_projected['raster_execution'] == stored_native
     else:
         dropped = _native_sequence_fields({'producer': 'shader', 'accepted_settings': settings,
             'raster_execution': native_execution, 'folder_export': {'format': 'PNG'}})
