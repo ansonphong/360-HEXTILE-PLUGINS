@@ -558,7 +558,7 @@ def test_long_native_preference_strings_roundtrip() -> None:
     assert _native(calls)[1]["body"] == changes
 
 
-def test_selected_null_is_forwarded_and_the_snapshot_stays_non_null() -> None:
+def test_selected_null_preserves_native_partial_update_behavior() -> None:
     mixed = {"show_chat_icon": False, "vision_mode": None, "export_filename_prefix": None}
     every_null = {
         "show_chat_icon": None,
@@ -577,10 +577,18 @@ def test_selected_null_is_forwarded_and_the_snapshot_stays_non_null() -> None:
     assert mixed_result["vision_mode"] == snapshot["vision_mode"]
     assert mixed_result["export_filename_prefix"] == ""
     assert None not in mixed_result.values()
-    null_result = _payload(server.call_tool("update_app_preferences", {"changes": every_null}))
-    assert _native(calls)[1]["body"] == every_null
-    assert None not in null_result.values()
-    assert null_result["tile_history_keep_n"] == 0
+    assert len(_native(calls)) == 1
+
+    null_server, _null_client, null_calls = _server({
+        ("PATCH", "/api/settings"): (400, b'{"detail":"No settings to update"}'),
+    })
+    null_result = null_server.call_tool("update_app_preferences", {"changes": every_null})
+    assert null_result["isError"] is True
+    null_error = _payload(null_result)
+    assert null_error["status_code"] == 400
+    assert null_error["error"] == "No settings to update"
+    assert len(_native(null_calls)) == 1
+    assert _native(null_calls)[0]["body"] == every_null
 
 
 def test_success_false_license_is_not_current_entitlement() -> None:
