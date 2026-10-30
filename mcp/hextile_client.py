@@ -1816,9 +1816,9 @@ _PREFERENCE_ENUMS = {
     "torch_compile_mode": frozenset({"default", "reduce-overhead", "max-autotune"}),
     "sd35_quantization": frozenset({"none", "fp8", "nf4"}),
 }
-_PREFERENCE_STRING_LIMITS = {"default_pipeline": 128, "export_filename_prefix": 256}
+_PREFERENCE_STRINGS = frozenset({"default_pipeline", "export_filename_prefix"})
 _PREFERENCE_UPDATE_FIELDS = frozenset(
-    (*_PREFERENCE_BOOLS, *_PREFERENCE_ENUMS, *_PREFERENCE_STRING_LIMITS, "tile_history_keep_n")
+    (*_PREFERENCE_BOOLS, *_PREFERENCE_ENUMS, *_PREFERENCE_STRINGS, "tile_history_keep_n")
 )
 _STATUS_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 _CLEAR_ERROR_CODES = frozenset({"protected", "live_owner", "os_error"})
@@ -1841,6 +1841,9 @@ def _finite_number(value: Any) -> bool:
 
 
 def _preference_value(key: str, value: Any, *, write: bool) -> Any:
+    """Selected null is forwarded unchanged. Native ignores it and does not clear."""
+    if write and value is None:
+        return None
     if value is None:
         raise HextileClientError(f"{key} cannot be null", kind="other", status_code=422)
     if key in _PREFERENCE_BOOLS:
@@ -1848,12 +1851,11 @@ def _preference_value(key: str, value: Any, *, write: bool) -> Any:
             raise HextileClientError(f"{key} must be a boolean", kind="other", status_code=422)
         return value
     if key in _PREFERENCE_ENUMS:
-        if value not in _PREFERENCE_ENUMS[key]:
+        if type(value) is not str or value not in _PREFERENCE_ENUMS[key]:
             raise HextileClientError(f"{key} is not a supported value", kind="other", status_code=422)
         return value
-    if key in _PREFERENCE_STRING_LIMITS:
-        limit = _PREFERENCE_STRING_LIMITS[key]
-        if type(value) is not str or (key == "default_pipeline" and not value) or len(value) > limit or _status_private_text(value):
+    if key in _PREFERENCE_STRINGS:
+        if type(value) is not str or (key == "default_pipeline" and value == "") or _status_private_text(value):
             raise HextileClientError(f"{key} is not a supported value", kind="other", status_code=422)
         return value
     if key == "tile_history_keep_n":
@@ -1866,7 +1868,7 @@ def _preference_value(key: str, value: Any, *, write: bool) -> Any:
 
 
 def _preference_changes(value: Any) -> dict[str, Any]:
-    """Closed nonempty partial object. Explicit null is not a native clear."""
+    """Closed nonempty partial object. Selected null is forwarded, not a clear."""
     if type(value) is not dict or not value or not set(value) <= _PREFERENCE_UPDATE_FIELDS:
         raise HextileClientError(
             "changes must be a nonempty partial preferences object", kind="other", status_code=422,
@@ -1886,14 +1888,15 @@ def _project_preferences(payload: Any) -> dict[str, Any]:
         except HextileClientError as exc:
             raise _discovery_malformed("Preferences are malformed") from exc
     effective = payload.get("effective_default_pipeline")
-    if type(effective) is not str or not effective or len(effective) > 128 or _status_private_text(effective):
+    if type(effective) is not str or not effective or _status_private_text(effective):
         raise _discovery_malformed("Preferences are malformed")
     projected["effective_default_pipeline"] = effective
     return projected
 
 
 def _project_bucket(row: Any) -> dict[str, Any]:
-    if type(row) is not dict or _STATUS_TOKEN.fullmatch(str(row.get("name") or "")) is None:
+    name = row.get("name") if type(row) is dict else None
+    if type(name) is not str or _STATUS_TOKEN.fullmatch(name) is None:
         raise _discovery_malformed("Cache bucket is malformed")
     display = row.get("display_name")
     protection = row.get("protection")
@@ -1907,7 +1910,7 @@ def _project_bucket(row: Any) -> dict[str, Any]:
     ):
         raise _discovery_malformed("Cache bucket is malformed")
     return {
-        "name": row["name"],
+        "name": name,
         "display_name": display,
         "size_mb": size,
         "file_count": count,
@@ -1933,7 +1936,7 @@ def _project_storage_summary(payload: Any) -> dict[str, Any]:
         bucket = _project_bucket(row)
         location = row.get("location")
         relocatable = row.get("relocatable")
-        if location not in {"root", "external"} or type(relocatable) is not bool:
+        if type(location) is not str or location not in {"root", "external"} or type(relocatable) is not bool:
             raise _discovery_malformed("Storage summary is malformed")
         item = {**bucket, "relocatable": relocatable, "location": location}
         if "children" in row and row["children"] is not None:
@@ -1960,13 +1963,36 @@ def _project_cache_buckets(payload: Any) -> dict[str, Any]:
     return {"buckets": [_project_bucket(row) for row in buckets], "total_size_mb": total}
 
 
+# Whole-token substitutes for unstructured clear text. Discovery detectors stay prefix checks.
+_PUBLIC_URL = re.compile(r"(?i)https?://[^\s\"']+")
+_STATUS_FILE_URI = re.compile(r"(?i)file:(?://|\\\\|/|[A-Za-z]:)[^\s\"']*")
+_STATUS_UNC = re.compile(r"\\\\[^\s\"']*")
+_STATUS_WIN = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/][^\s\"']*")
+_STATUS_POSIX = re.compile(
+    r"(?i)(?<![A-Za-z0-9._~:-])(?<!https:/)(?<!http:/)"
+    r"/(?!create(?:/|[^A-Za-z0-9._~-]|$)|api(?:/|[^A-Za-z0-9._~-]|$))"
+    r"[^\s\"']+"
+)
+_STATUS_PATH_TAIL = re.compile(r"(?<=[A-Za-z0-9._~-])(?:/|\\)[^\s\"']+")
+_URL_SLOT = re.compile(r"\x00(\d+)\x00")
+
+
 def _redact_status_text(value: str) -> str:
+    """Hide a full private locator or secret. Keep benign text and public URLs."""
     redacted = _DISCOVERY_TOKEN_VALUE.sub("[secret]", value)
-    redacted = _EMBEDDED_FILE_URI.sub("[path]", redacted)
-    redacted = _EMBEDDED_WIN_DRIVE.sub("[path]", redacted)
-    redacted = redacted.replace("\\\\", "[path]")
-    redacted = _EMBEDDED_POSIX.sub("[path]", redacted)
-    redacted = redacted.strip()
+    urls: list[str] = []
+
+    def _hold(match: re.Match[str]) -> str:
+        urls.append(match.group(0))
+        return f"\x00{len(urls) - 1}\x00"
+
+    redacted = _PUBLIC_URL.sub(_hold, redacted)
+    redacted = _STATUS_FILE_URI.sub("[path]", redacted)
+    redacted = _STATUS_UNC.sub("[path]", redacted)
+    redacted = _STATUS_WIN.sub("[path]", redacted)
+    redacted = _STATUS_POSIX.sub("[path]", redacted)
+    redacted = _STATUS_PATH_TAIL.sub("[path]", redacted)
+    redacted = _URL_SLOT.sub(lambda match: urls[int(match.group(1))], redacted).strip()
     if not redacted or _status_private_text(redacted):
         return "clear failed"
     return redacted
@@ -1993,7 +2019,7 @@ def _project_clear_result(payload: Any) -> dict[str, Any]:
         reason = item.get("reason") if type(item) is dict else None
         if (
             type(bucket) is not str or _STATUS_TOKEN.fullmatch(bucket) is None
-            or code not in _CLEAR_ERROR_CODES
+            or type(code) is not str or code not in _CLEAR_ERROR_CODES
             or type(reason) is not str or not reason or len(reason) > 180 or _status_private_text(reason)
         ):
             raise _discovery_malformed("Cache clear result is malformed")
@@ -2005,7 +2031,7 @@ def _project_clear_result(payload: Any) -> dict[str, Any]:
 
 def _project_license_status(payload: Any) -> dict[str, Any]:
     data = payload.get("data") if type(payload) is dict else None
-    if type(payload) is not dict or type(payload.get("success")) is not bool or type(data) is not dict or "error" in data:
+    if type(payload) is not dict or payload.get("success") is not True or type(data) is not dict or "error" in data:
         raise _discovery_malformed("License status is malformed")
     required = ("activated", "tier", "dev_override", "access_state", "access_source", "features")
     if any(key not in data for key in required):

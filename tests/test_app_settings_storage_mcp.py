@@ -213,6 +213,13 @@ def test_status_tools_agree_on_names_schema_and_annotations() -> None:
     changes = update["inputSchema"]["properties"]["changes"]
     assert changes["additionalProperties"] is False
     assert changes["minProperties"] == 1
+    pipeline = changes["properties"]["default_pipeline"]["anyOf"][0]
+    prefix = changes["properties"]["export_filename_prefix"]["anyOf"][0]
+    assert pipeline == {"type": "string", "minLength": 1}
+    assert prefix == {"type": "string"}
+    assert "maxLength" not in json.dumps(changes)
+    for schema in changes["properties"].values():
+        assert {"type": "null"} in schema["anyOf"]
     assert "output_folder" not in changes["properties"]
     assert "bypass" not in changes["properties"]
     assert "force" not in changes["properties"]
@@ -270,13 +277,14 @@ def test_preference_update_sends_only_the_partial_object(changes: dict[str, Any]
     {"tile_history_keep_n": 1.5},
     {"tile_history_keep_n": True},
     {"tile_history_keep_n": -1},
-    {"tile_history_keep_n": None},
     {"mcp_enabled": 0},
     {"mcp_enabled": "false"},
     {"vision_mode": "always"},
+    {"vision_mode": ["resident"]},
+    {"vision_mode": {"mode": "resident"}},
     {"default_pipeline": ""},
-    {"default_pipeline": "x" * 129},
-    {"export_filename_prefix": "y" * 257},
+    {"default_pipeline": "/home/uniqueposix/pipe"},
+    {"mcp_enabled": ["no"]},
     {"output_folder": _SECRET},
     {"creator": {"email": "person@example.com"}},
 ])
@@ -510,3 +518,182 @@ def test_mcp_disable_is_one_native_patch_and_cannot_bypass_revoke() -> None:
     assert _native(blocked_calls) == [{
         "method": "PATCH", "path": "/api/settings", "query": "", "body": {"mcp_enabled": True},
     }]
+
+
+_LONG_PREFIX = "p" * 257
+_LONG_PIPELINE = "q" * 129
+_PRIVATE_COMPONENTS = (
+    "uniqueposix",
+    "uniquewin",
+    "uniquewinfwd",
+    "uniqueunc",
+    "uniquefile",
+    "uniquesecretvalue12",
+)
+
+
+def test_long_native_preference_strings_roundtrip() -> None:
+    native = _preferences(
+        default_pipeline=_LONG_PIPELINE,
+        export_filename_prefix=_LONG_PREFIX,
+        effective_default_pipeline=_LONG_PIPELINE,
+    )
+    server, client, calls = _server({
+        ("GET", "/api/settings"): (200, json.dumps(native).encode()),
+        ("PATCH", "/api/settings"): (200, json.dumps(native).encode()),
+    })
+    read = client.get_app_preferences()
+    assert read["default_pipeline"] == _LONG_PIPELINE
+    assert read["export_filename_prefix"] == _LONG_PREFIX
+    assert read["effective_default_pipeline"] == _LONG_PIPELINE
+    changes = {"default_pipeline": _LONG_PIPELINE, "export_filename_prefix": _LONG_PREFIX}
+    updated = _payload(server.call_tool("update_app_preferences", {"changes": changes}))
+    assert updated["default_pipeline"] == _LONG_PIPELINE
+    assert updated["export_filename_prefix"] == _LONG_PREFIX
+    assert _native(calls)[1]["body"] == changes
+
+
+def test_selected_null_is_forwarded_and_the_snapshot_stays_non_null() -> None:
+    mixed = {"show_chat_icon": False, "vision_mode": None, "export_filename_prefix": None}
+    every_null = {
+        "show_chat_icon": None,
+        "vision_mode": None,
+        "default_pipeline": None,
+        "export_filename_prefix": None,
+        "tile_history_keep_n": None,
+    }
+    snapshot = _preferences(show_chat_icon=False)
+    server, _client, calls = _server({
+        ("PATCH", "/api/settings"): (200, json.dumps(snapshot).encode()),
+    })
+    mixed_result = _payload(server.call_tool("update_app_preferences", {"changes": mixed}))
+    assert _native(calls)[0]["body"] == mixed
+    assert mixed_result["show_chat_icon"] is False
+    assert mixed_result["vision_mode"] == snapshot["vision_mode"]
+    assert mixed_result["export_filename_prefix"] == ""
+    assert None not in mixed_result.values()
+    null_result = _payload(server.call_tool("update_app_preferences", {"changes": every_null}))
+    assert _native(calls)[1]["body"] == every_null
+    assert None not in null_result.values()
+    assert null_result["tile_history_keep_n"] == 0
+
+
+def test_success_false_license_is_not_current_entitlement() -> None:
+    denied = _license()
+    denied["success"] = False
+    denied["message"] = "/home/uniqueposix/license uniquesecretvalue12"
+    denied["data"]["machine_id"] = "uniqueidentity"
+    denied["data"]["email"] = "uniqueidentity@example.com"
+    server, _client, calls = _server({
+        ("GET", "/api/license/status"): (200, json.dumps(denied).encode()),
+    })
+    result = server.call_tool("get_license_status", {})
+    text = _text(result)
+    assert result["isError"] is True
+    assert _payload(result)["status_code"] == 502
+    assert "License status is malformed" in text
+    for secret in ("uniqueposix", "uniquesecretvalue12", "uniqueidentity", "machine_id"):
+        assert secret not in text
+    assert len(_native(calls)) == 1
+
+
+def test_typed_bucket_names_are_malformed() -> None:
+    numeric_top = _buckets()
+    numeric_top["buckets"][0]["name"] = 12
+    numeric_top["buckets"][0]["path"] = "/home/uniqueposix/cache"
+    bool_top = _buckets()
+    bool_top["buckets"][0]["name"] = True
+    bool_top["buckets"][0]["path"] = "/home/uniqueposix/cache"
+    numeric_child = _storage()
+    numeric_child["classes"][0]["children"][0]["name"] = 7
+    numeric_child["classes"][0]["children"][0]["path"] = "/home/uniqueposix/child"
+    bool_child = _storage()
+    bool_child["classes"][0]["children"][0]["name"] = False
+    bool_child["classes"][0]["children"][0]["path"] = "/home/uniqueposix/child"
+    cases = (
+        ("/api/cache/stats", numeric_top, "get_cache_buckets"),
+        ("/api/cache/stats", bool_top, "get_cache_buckets"),
+        ("/api/storage", numeric_child, "get_storage_summary"),
+        ("/api/storage", bool_child, "get_storage_summary"),
+    )
+    for path, payload, tool in cases:
+        server, _client, calls = _server({("GET", path): (200, json.dumps(payload).encode())})
+        result = server.call_tool(tool, {})
+        assert result["isError"] is True
+        assert _payload(result)["status_code"] == 502
+        assert "uniqueposix" not in _text(result)
+        assert "TypeError" not in _text(result)
+        assert len(_native(calls)) == 1
+
+
+def test_unhashable_clear_code_is_not_a_success() -> None:
+    payload = {
+        "cleared": [],
+        "skipped_protected": [],
+        "errors": ["postprocess: /home/uniqueposix/cache"],
+        "error_details": [{
+            "bucket": "postprocess", "code": ["os_error"], "reason": "clear failed",
+        }],
+    }
+    server, _client, calls = _server({
+        ("POST", "/api/cache/clear"): (200, json.dumps(payload).encode()),
+    })
+    result = server.call_tool("clear_disposable_cache", {})
+    assert result["isError"] is True
+    assert "uniqueposix" not in _text(result)
+    assert "unhashable" not in _text(result)
+    assert "TypeError" not in _text(result)
+    assert len(_native(calls)) == 1
+
+
+def test_unhashable_storage_location_is_malformed() -> None:
+    payload = _storage()
+    payload["classes"][0]["location"] = ["root"]
+    payload["classes"][0]["path"] = "/home/uniqueposix/class"
+    server, _client, _calls = _server({
+        ("GET", "/api/storage"): (200, json.dumps(payload).encode()),
+    })
+    result = server.call_tool("get_storage_summary", {})
+    assert result["isError"] is True
+    assert _payload(result)["status_code"] == 502
+    assert "uniqueposix" not in _text(result)
+    assert "TypeError" not in _text(result)
+
+
+def test_legacy_clear_text_hides_full_locator_components() -> None:
+    public = "https://360hextile.com/docs/cache"
+    errors = [
+        "protected bucket has no clear path",
+        "Permission denied: /home/uniqueposix/cache",
+        "Permission denied: C:\\Users\\uniquewin\\cache",
+        "Permission denied: C:/Users/uniquewinfwd/cache",
+        "Permission denied: \\\\server\\uniqueunc\\cache",
+        "Permission denied: file:///home/uniquefile/cache",
+        f"refused {public} see /home/uniqueposix/nested",
+        "token sk-uniquesecretvalue12",
+        "[path]ome/uniqueposix/cache",
+        f"see {public}",
+    ]
+    server, client, _calls = _server({
+        ("POST", "/api/cache/clear"): (200, json.dumps({
+            "cleared": ["inspect_tiles"],
+            "skipped_protected": [],
+            "errors": errors,
+        }).encode()),
+    })
+    direct = client.clear_disposable_cache()
+    via = server.call_tool("clear_disposable_cache", {})
+    assert via["isError"] is True
+    body = _payload(via)
+    assert direct == body
+    assert len(body["errors"]) == len(errors)
+    assert all(set(item) == {"reported"} for item in body["errors"])
+    rendered = json.dumps(body)
+    for component in _PRIVATE_COMPONENTS:
+        assert component not in rendered
+    reported = [item["reported"] for item in body["errors"]]
+    assert "protected bucket has no clear path" in reported
+    assert any(item.startswith("Permission denied:") for item in reported)
+    assert public in rendered
+    assert f"refused {public} see [path]" in reported
+    assert f"see {public}" in reported

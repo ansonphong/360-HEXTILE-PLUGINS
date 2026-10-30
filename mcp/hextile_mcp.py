@@ -1213,7 +1213,14 @@ _HOTKEY_BINDINGS = {"type": "array", "items": _HOTKEY_BINDING, "maxItems": 8}
 _HOTKEY_ID = {"type": "string", "minLength": 1, "maxLength": 128}
 _HOTKEY_REVISION = {"type": "string", "minLength": 1, "maxLength": 128,
                     "description": "Exact revision returned by the latest Hotkeys read."}
-_PREFERENCE_BOOL = {"type": "boolean"}
+_PREFERENCE_BOOL = {"anyOf": [{"type": "boolean"}, {"type": "null"}]}
+
+
+def _null_ok(schema: dict[str, Any]) -> dict[str, Any]:
+    """Selected null is forwarded. Native ignores it and does not clear the field."""
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
 _PREFERENCE_CHANGES = {
     "type": "object",
     "additionalProperties": False,
@@ -1226,19 +1233,21 @@ _PREFERENCE_CHANGES = {
         "create_fractal_enabled": _PREFERENCE_BOOL,
         "create_shader_enabled": _PREFERENCE_BOOL,
         "edit_sd15_enabled": _PREFERENCE_BOOL,
-        "vision_mode": {"enum": ["auto", "resident", "on_demand"]},
+        "vision_mode": _null_ok({"enum": ["auto", "resident", "on_demand"]}),
         "hdr_import_rolloff": _PREFERENCE_BOOL,
-        "default_pipeline": {"type": "string", "minLength": 1, "maxLength": 128},
+        "default_pipeline": _null_ok({"type": "string", "minLength": 1}),
         "show_chat_icon": _PREFERENCE_BOOL,
         "open_folder_on_complete": _PREFERENCE_BOOL,
         "export_sequential_naming": _PREFERENCE_BOOL,
-        "export_filename_prefix": {"type": "string", "maxLength": 256},
-        "tile_history_keep_n": {"anyOf": [{"type": "integer", "minimum": 0}, {"const": "all"}]},
-        "navigate_to_render_on_start": {"enum": ["none", "renders_list", "render_details"]},
+        "export_filename_prefix": _null_ok({"type": "string"}),
+        "tile_history_keep_n": {"anyOf": [
+            {"type": "integer", "minimum": 0}, {"const": "all"}, {"type": "null"},
+        ]},
+        "navigate_to_render_on_start": _null_ok({"enum": ["none", "renders_list", "render_details"]}),
         "torch_compile_enabled": _PREFERENCE_BOOL,
-        "torch_compile_mode": {"enum": ["default", "reduce-overhead", "max-autotune"]},
+        "torch_compile_mode": _null_ok({"enum": ["default", "reduce-overhead", "max-autotune"]}),
         "sage_attention_enabled": _PREFERENCE_BOOL,
-        "sd35_quantization": {"enum": ["none", "fp8", "nf4"]},
+        "sd35_quantization": _null_ok({"enum": ["none", "fp8", "nf4"]}),
         "patterns_favorites_per_project": _PREFERENCE_BOOL,
         "post_process_favorites_per_project": _PREFERENCE_BOOL,
         "color_swatches_favorites_per_project": _PREFERENCE_BOOL,
