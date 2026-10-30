@@ -1673,6 +1673,8 @@ class Client:
         timeout: Optional[float] = None,
         params: Optional[Mapping[str, Any]] = None,
         headers: Optional[Mapping[str, str]] = None,
+        max_bytes: Optional[int] = None,
+        too_large_code: str = "schema_too_large",
     ) -> Any:
         """HTTP JSON request. Raises HextileClientError on failure."""
         url = self._url(path)
@@ -1704,7 +1706,14 @@ class Client:
             else:
                 resp_cm = urllib.request.urlopen(req, timeout=to)
             with resp_cm as resp:
-                raw = resp.read()
+                raw = resp.read() if max_bytes is None else resp.read(max_bytes + 1)
+                if max_bytes is not None and len(raw) > max_bytes:
+                    raise HextileClientError(
+                        too_large_code,
+                        status_code=413,
+                        body=json.dumps({"code": too_large_code}),
+                        kind="other",
+                    )
                 code = getattr(resp, "status", None) or resp.getcode()
                 if not raw:
                     return None
@@ -1850,8 +1859,13 @@ class Client:
         timeout: Optional[float] = None,
         params: Optional[Mapping[str, Any]] = None,
         headers: Optional[Mapping[str, str]] = None,
+        max_bytes: Optional[int] = None,
+        too_large_code: str = "schema_too_large",
     ) -> Any:
-        return self.request_json("GET", path, timeout=timeout, params=params, headers=headers)
+        return self.request_json(
+            "GET", path, timeout=timeout, params=params, headers=headers,
+            max_bytes=max_bytes, too_large_code=too_large_code,
+        )
 
     def post_json(
         self,
@@ -2052,6 +2066,42 @@ class Client:
     def get_capabilities(self) -> Any:
         """GET /api/workflows/capabilities."""
         return self.get_json("/api/workflows/capabilities")
+
+    def get_config_schema(self, model: Optional[str] = None) -> Any:
+        """GET /api/workflows/config-schema. Names, or one model schema. No current config."""
+        if model is not None and (type(model) is not str or _CONFIG_MODEL_NAME.fullmatch(model) is None):
+            raise HextileClientError("model must be a bounded config model name", kind="other", status_code=422)
+        return self.get_json(
+            "/api/workflows/config-schema",
+            params=None if model is None else {"model": model},
+            max_bytes=_DISCOVERY_MAX_BYTES,
+        )
+
+    def list_processors(self) -> Any:
+        """GET /api/processors. Metadata only; does not load or unload."""
+        payload = self.get_json(
+            "/api/processors", max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large",
+        )
+        return _project_processor_list(payload)
+
+    def get_processor_schema(self, pipeline_id: str) -> Any:
+        """GET /api/processors/{id}/schema. Native schema, or schema_too_large. No validate/unload."""
+        if type(pipeline_id) is not str or _PIPELINE_ID.fullmatch(pipeline_id) is None:
+            raise HextileClientError("pipeline_id is required", kind="other", status_code=422)
+        quoted = urllib.parse.quote(pipeline_id, safe="")
+        payload = self.get_json(
+            f"/api/processors/{quoted}/schema", max_bytes=_DISCOVERY_MAX_BYTES,
+        )
+        if type(payload) is not dict:
+            raise HextileClientError("Processor schema is not an object", kind="other", status_code=502)
+        return payload
+
+    def get_plugin_catalog(self) -> Any:
+        """GET /api/plugins/catalog. Metadata, availability, dependencies, and operations."""
+        payload = self.get_json(
+            "/api/plugins/catalog", max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large",
+        )
+        return _project_plugin_catalog(payload)
 
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,
