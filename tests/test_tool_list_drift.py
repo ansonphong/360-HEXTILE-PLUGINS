@@ -72,6 +72,12 @@ EXPECTED_TOOLS = (
     "list_processors",
     "get_processor_schema",
     "get_plugin_catalog",
+    "get_app_preferences",
+    "update_app_preferences",
+    "get_storage_summary",
+    "get_cache_buckets",
+    "clear_disposable_cache",
+    "get_license_status",
     "describe_image",
     "get_live_context",
     "apply_config_delta",
@@ -288,6 +294,12 @@ def test_open4_annotations_partition() -> None:
     assert {
         "get_config_schema", "list_processors", "get_processor_schema", "get_plugin_catalog",
     } <= _READ_ONLY
+    assert {
+        "get_app_preferences", "get_storage_summary", "get_cache_buckets", "get_license_status",
+    } <= _READ_ONLY
+    assert {"update_app_preferences", "clear_disposable_cache"} <= _MUTATING
+    assert "clear_disposable_cache" in _DESTRUCTIVE
+    assert "update_app_preferences" not in _DESTRUCTIVE
 
 
 _LOCAL_FILE_TOOLS = (
@@ -368,7 +380,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 118 and len(SHADER_EXTENSION_TOOLS) == 47
+    assert len(TOOLS) == 124 and len(SHADER_EXTENSION_TOOLS) == 47
 
 
 def test_trusted_local_file_contract() -> None:

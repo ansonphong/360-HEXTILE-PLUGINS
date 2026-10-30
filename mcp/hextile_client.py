@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_S = 30.0
@@ -1789,6 +1789,324 @@ def _project_plugin_catalog(value: Any) -> Any:
     return projected
 
 
+_PREFERENCE_BOOLS = (
+    "mcp_enabled",
+    "create_pattern_enabled",
+    "create_360_lora_enabled",
+    "create_outpaint_enabled",
+    "create_fractal_enabled",
+    "create_shader_enabled",
+    "edit_sd15_enabled",
+    "show_chat_icon",
+    "open_folder_on_complete",
+    "export_sequential_naming",
+    "torch_compile_enabled",
+    "sage_attention_enabled",
+    "patterns_favorites_per_project",
+    "post_process_favorites_per_project",
+    "color_swatches_favorites_per_project",
+    "worlds_favorites_per_project",
+    "error_reporting_enabled",
+    "telemetry_enabled",
+    "hdr_import_rolloff",
+)
+_PREFERENCE_ENUMS = {
+    "vision_mode": frozenset({"auto", "resident", "on_demand"}),
+    "navigate_to_render_on_start": frozenset({"none", "renders_list", "render_details"}),
+    "torch_compile_mode": frozenset({"default", "reduce-overhead", "max-autotune"}),
+    "sd35_quantization": frozenset({"none", "fp8", "nf4"}),
+}
+_PREFERENCE_STRING_LIMITS = {"default_pipeline": 128, "export_filename_prefix": 256}
+_PREFERENCE_UPDATE_FIELDS = frozenset(
+    (*_PREFERENCE_BOOLS, *_PREFERENCE_ENUMS, *_PREFERENCE_STRING_LIMITS, "tile_history_keep_n")
+)
+_STATUS_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
+_CLEAR_ERROR_CODES = frozenset({"protected", "live_owner", "os_error"})
+_SETTINGS_UNKNOWN = (
+    "Preference update outcome is unknown. Reread the selected preferences. Do not replay the change."
+)
+_CACHE_UNKNOWN = (
+    "Cache clear outcome is unknown. Rereading bucket status cannot prove this clear. Do not replay it."
+)
+
+
+def _status_private_text(value: str) -> bool:
+    return bool(_discovery_filesystem_locator(value) or _DISCOVERY_TOKEN_VALUE.search(value))
+
+
+def _finite_number(value: Any) -> bool:
+    if type(value) is int:
+        return True
+    return type(value) is float and math.isfinite(value)
+
+
+def _preference_value(key: str, value: Any, *, write: bool) -> Any:
+    if value is None:
+        raise HextileClientError(f"{key} cannot be null", kind="other", status_code=422)
+    if key in _PREFERENCE_BOOLS:
+        if type(value) is not bool:
+            raise HextileClientError(f"{key} must be a boolean", kind="other", status_code=422)
+        return value
+    if key in _PREFERENCE_ENUMS:
+        if value not in _PREFERENCE_ENUMS[key]:
+            raise HextileClientError(f"{key} is not a supported value", kind="other", status_code=422)
+        return value
+    if key in _PREFERENCE_STRING_LIMITS:
+        limit = _PREFERENCE_STRING_LIMITS[key]
+        if type(value) is not str or (key == "default_pipeline" and not value) or len(value) > limit or _status_private_text(value):
+            raise HextileClientError(f"{key} is not a supported value", kind="other", status_code=422)
+        return value
+    if key == "tile_history_keep_n":
+        if type(value) is int and value >= 0:
+            return value
+        if value == "all" or (not write and type(value) is str and value and len(value) <= 32 and not _status_private_text(value)):
+            return value
+        raise HextileClientError("tile_history_keep_n is not a supported value", kind="other", status_code=422)
+    raise HextileClientError("Unexpected preference field", kind="other", status_code=422)
+
+
+def _preference_changes(value: Any) -> dict[str, Any]:
+    """Closed nonempty partial object. Explicit null is not a native clear."""
+    if type(value) is not dict or not value or not set(value) <= _PREFERENCE_UPDATE_FIELDS:
+        raise HextileClientError(
+            "changes must be a nonempty partial preferences object", kind="other", status_code=422,
+        )
+    return {key: _preference_value(key, item, write=True) for key, item in value.items()}
+
+
+def _project_preferences(payload: Any) -> dict[str, Any]:
+    if type(payload) is not dict or "error" in payload:
+        raise _discovery_malformed("Preferences are malformed")
+    projected = {}
+    for key in _PREFERENCE_UPDATE_FIELDS:
+        if key not in payload:
+            raise _discovery_malformed("Preferences are malformed")
+        try:
+            projected[key] = _preference_value(key, payload[key], write=False)
+        except HextileClientError as exc:
+            raise _discovery_malformed("Preferences are malformed") from exc
+    effective = payload.get("effective_default_pipeline")
+    if type(effective) is not str or not effective or len(effective) > 128 or _status_private_text(effective):
+        raise _discovery_malformed("Preferences are malformed")
+    projected["effective_default_pipeline"] = effective
+    return projected
+
+
+def _project_bucket(row: Any) -> dict[str, Any]:
+    if type(row) is not dict or _STATUS_TOKEN.fullmatch(str(row.get("name") or "")) is None:
+        raise _discovery_malformed("Cache bucket is malformed")
+    display = row.get("display_name")
+    protection = row.get("protection")
+    count = row.get("file_count")
+    size = row.get("size_mb")
+    if (
+        type(display) is not str or not display or len(display) > 128 or _status_private_text(display)
+        or type(protection) is not str or protection not in {"disposable", "protected", "mixed"}
+        or type(count) is not int or count < 0
+        or not _finite_number(size) or size < 0
+    ):
+        raise _discovery_malformed("Cache bucket is malformed")
+    return {
+        "name": row["name"],
+        "display_name": display,
+        "size_mb": size,
+        "file_count": count,
+        "protection": protection,
+    }
+
+
+def _project_storage_summary(payload: Any) -> dict[str, Any]:
+    disk = payload.get("disk") if type(payload) is dict else None
+    classes = payload.get("classes") if type(payload) is dict else None
+    if type(payload) is not dict or "error" in payload or type(disk) is not dict or type(classes) is not list:
+        raise _discovery_malformed("Storage summary is malformed")
+    free_gb, total_gb = disk.get("free_gb"), disk.get("total_gb")
+    flags = ("is_default", "output_folder_is_default", "configured_root_available", "fallback_active")
+    if not _finite_number(free_gb) or free_gb < 0 or not _finite_number(total_gb) or total_gb < 0:
+        raise _discovery_malformed("Storage summary is malformed")
+    if any(type(payload.get(key)) is not bool for key in flags):
+        raise _discovery_malformed("Storage summary is malformed")
+    projected_classes = []
+    for row in classes:
+        if type(row) is not dict:
+            raise _discovery_malformed("Storage summary is malformed")
+        bucket = _project_bucket(row)
+        location = row.get("location")
+        relocatable = row.get("relocatable")
+        if location not in {"root", "external"} or type(relocatable) is not bool:
+            raise _discovery_malformed("Storage summary is malformed")
+        item = {**bucket, "relocatable": relocatable, "location": location}
+        if "children" in row and row["children"] is not None:
+            children = row["children"]
+            if type(children) is not list:
+                raise _discovery_malformed("Storage summary is malformed")
+            item["children"] = [_project_bucket(child) for child in children]
+        projected_classes.append(item)
+    return {
+        "disk": {"free_gb": free_gb, "total_gb": total_gb},
+        "is_default": payload["is_default"],
+        "output_folder_is_default": payload["output_folder_is_default"],
+        "configured_root_available": payload["configured_root_available"],
+        "fallback_active": payload["fallback_active"],
+        "classes": projected_classes,
+    }
+
+
+def _project_cache_buckets(payload: Any) -> dict[str, Any]:
+    buckets = payload.get("buckets") if type(payload) is dict else None
+    total = payload.get("total_size_mb") if type(payload) is dict else None
+    if type(payload) is not dict or "error" in payload or type(buckets) is not list or not _finite_number(total) or total < 0:
+        raise _discovery_malformed("Cache buckets are malformed")
+    return {"buckets": [_project_bucket(row) for row in buckets], "total_size_mb": total}
+
+
+def _redact_status_text(value: str) -> str:
+    redacted = _DISCOVERY_TOKEN_VALUE.sub("[secret]", value)
+    redacted = _EMBEDDED_FILE_URI.sub("[path]", redacted)
+    redacted = _EMBEDDED_WIN_DRIVE.sub("[path]", redacted)
+    redacted = redacted.replace("\\\\", "[path]")
+    redacted = _EMBEDDED_POSIX.sub("[path]", redacted)
+    redacted = redacted.strip()
+    if not redacted or _status_private_text(redacted):
+        return "clear failed"
+    return redacted
+
+
+def _project_clear_result(payload: Any) -> dict[str, Any]:
+    cleared = payload.get("cleared") if type(payload) is dict else None
+    skipped = payload.get("skipped_protected") if type(payload) is dict else None
+    raw_errors = payload.get("errors") if type(payload) is dict else None
+    if (
+        type(payload) is not dict or "error" in payload
+        or type(cleared) is not list or type(skipped) is not list or type(raw_errors) is not list
+        or any(type(name) is not str or _STATUS_TOKEN.fullmatch(name) is None for name in (*cleared, *skipped))
+        or any(type(item) is not str for item in raw_errors)
+    ):
+        raise _discovery_malformed("Cache clear result is malformed")
+    details = payload.get("error_details", [])
+    if type(details) is not list or len(details) > len(raw_errors):
+        raise _discovery_malformed("Cache clear result is malformed")
+    errors: list[dict[str, str]] = []
+    for item in details:
+        bucket = item.get("bucket") if type(item) is dict else None
+        code = item.get("code") if type(item) is dict else None
+        reason = item.get("reason") if type(item) is dict else None
+        if (
+            type(bucket) is not str or _STATUS_TOKEN.fullmatch(bucket) is None
+            or code not in _CLEAR_ERROR_CODES
+            or type(reason) is not str or not reason or len(reason) > 180 or _status_private_text(reason)
+        ):
+            raise _discovery_malformed("Cache clear result is malformed")
+        errors.append({"bucket": bucket, "code": code, "reason": reason})
+    for item in raw_errors[len(errors):]:
+        errors.append({"reported": _redact_status_text(item)})
+    return {"cleared": list(cleared), "skipped_protected": list(skipped), "errors": errors}
+
+
+def _project_license_status(payload: Any) -> dict[str, Any]:
+    data = payload.get("data") if type(payload) is dict else None
+    if type(payload) is not dict or type(payload.get("success")) is not bool or type(data) is not dict or "error" in data:
+        raise _discovery_malformed("License status is malformed")
+    required = ("activated", "tier", "dev_override", "access_state", "access_source", "features")
+    if any(key not in data for key in required):
+        raise _discovery_malformed("License status is malformed")
+    tier, source, state = data["tier"], data["access_source"], data["access_state"]
+    features = data["features"]
+
+    def _public_token(value: Any, *, allow_none: bool) -> bool:
+        if allow_none and value is None:
+            return True
+        return type(value) is str and bool(value) and len(value) <= 64 and not _status_private_text(value)
+
+    if type(data["activated"]) is not bool or type(data["dev_override"]) is not bool:
+        raise _discovery_malformed("License status is malformed")
+    if not _public_token(tier, allow_none=True) or not _public_token(source, allow_none=True) or not _public_token(state, allow_none=False):
+        raise _discovery_malformed("License status is malformed")
+    if type(features) is not dict or type(features.get("sequences_enabled")) is not bool or type(features.get("max_activations")) is not int:
+        raise _discovery_malformed("License status is malformed")
+    projected_features: dict[str, Any] = {}
+    for key, item in features.items():
+        if type(key) is not str or key.lower() in _DISCOVERY_DROP_KEYS or _status_private_text(key):
+            continue
+        if type(item) is bool or type(item) is int or item is None:
+            projected_features[key] = item
+        elif type(item) is str and item and len(item) <= 64 and not _status_private_text(item):
+            projected_features[key] = item
+        else:
+            raise _discovery_malformed("License status is malformed")
+    if "sequences_enabled" not in projected_features or "max_activations" not in projected_features:
+        raise _discovery_malformed("License status is malformed")
+    projected: dict[str, Any] = {
+        "activated": data["activated"],
+        "tier": tier,
+        "dev_override": data["dev_override"],
+        "access_state": state,
+        "access_source": source,
+        "features": projected_features,
+    }
+    optional_bool = ("machine_changed", "online_validated")
+    optional_count = ("activation_count", "activation_limit")
+    for key in optional_bool:
+        if key not in data:
+            continue
+        if type(data[key]) is not bool:
+            raise _discovery_malformed("License status is malformed")
+        projected[key] = data[key]
+    for key in optional_count:
+        if key not in data:
+            continue
+        if data[key] is not None and (type(data[key]) is not int or data[key] < 0):
+            raise _discovery_malformed("License status is malformed")
+        projected[key] = data[key]
+    if "last_killswitch_check" in data:
+        stamp = data["last_killswitch_check"]
+        if stamp is not None and (type(stamp) is not str or len(stamp) > 64 or _status_private_text(stamp)):
+            raise _discovery_malformed("License status is malformed")
+        projected["last_killswitch_check"] = stamp
+    return projected
+
+
+def _safe_detail(body: Optional[str]) -> Optional[str]:
+    if not body:
+        return None
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        text = body.strip()
+        if text and len(text) <= 180 and not _status_private_text(text):
+            return text
+        return None
+    if type(parsed) is not dict:
+        return None
+    detail = parsed.get("detail")
+    if type(detail) is dict:
+        code = detail.get("code")
+        if type(code) is str and code and len(code) <= 64 and not _status_private_text(code):
+            return code
+        return None
+    if type(detail) is str and detail and len(detail) <= 180 and not _status_private_text(detail):
+        return detail
+    code = parsed.get("code")
+    if type(code) is str and code and len(code) <= 64 and not _status_private_text(code):
+        return code
+    return None
+
+
+def _public_status_error(exc: HextileClientError) -> HextileClientError:
+    """Preserve the native status. Do not echo a private response body."""
+    detail = _safe_detail(exc.body)
+    status = exc.status_code
+    if detail == "mcp_disabled":
+        return HextileClientError(
+            "MCP access is disabled in Settings", status_code=status or 403, kind="mcp_disabled",
+        )
+    if detail:
+        return HextileClientError(detail, status_code=status, kind="http")
+    if status:
+        return HextileClientError(f"HTTP {status}", status_code=status, kind="http")
+    return HextileClientError("Request failed", status_code=status, kind="http")
+
+
 class Client:
     """Sync HTTP wrapper around local APP routes (stdlib urllib)."""
 
@@ -2275,6 +2593,92 @@ class Client:
             "/api/plugins/catalog", max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large",
         )
         return _project_plugin_catalog(payload)
+
+    def _read_status(self, path: str, *, params: Optional[Mapping[str, Any]] = None) -> Any:
+        try:
+            return self.get_json(
+                path, params=params, max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large",
+            )
+        except HextileClientError as exc:
+            if exc.kind == "app_down":
+                raise
+            if exc.kind == "other" and exc.status_code is not None and 200 <= exc.status_code < 300:
+                raise _discovery_malformed("Response is malformed") from exc
+            raise _public_status_error(exc) from exc
+
+    def _write_status(
+        self,
+        method: str,
+        path: str,
+        body: Optional[Mapping[str, Any]],
+        project: Callable[[Any], Any],
+        *,
+        unknown_message: str,
+        unknown_kind: str,
+    ) -> Any:
+        try:
+            payload = self.request_json(
+                method, path, body, max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large",
+            )
+        except http.client.HTTPException as exc:
+            raise HextileClientError(unknown_message, kind=unknown_kind) from exc
+        except HextileClientError as exc:
+            malformed = exc.kind == "other" and exc.status_code is not None and 200 <= exc.status_code < 300
+            oversize = exc.status_code == 413 and exc.kind == "other"
+            if exc.kind == "app_down" or malformed or oversize:
+                raise HextileClientError(
+                    unknown_message, kind=unknown_kind, status_code=exc.status_code,
+                ) from exc
+            raise _public_status_error(exc) from exc
+        try:
+            return project(payload)
+        except HextileClientError as exc:
+            raise HextileClientError(
+                unknown_message, kind=unknown_kind, status_code=exc.status_code,
+            ) from exc
+
+    def get_app_preferences(self) -> Any:
+        """GET /api/settings projected to the safe preference fields."""
+        return _project_preferences(self._read_status("/api/settings"))
+
+    def update_app_preferences(self, changes: Any) -> Any:
+        """PATCH /api/settings with one closed partial object. Never replay an uncertain write."""
+        body = _preference_changes(changes)
+        return self._write_status(
+            "PATCH", "/api/settings", body, _project_preferences,
+            unknown_message=_SETTINGS_UNKNOWN, unknown_kind="settings_outcome_unknown",
+        )
+
+    def get_storage_summary(self, refresh: Any = False) -> Any:
+        """GET /api/storage. Omitted refresh keeps the native memoized scan."""
+        if refresh is False:
+            params = None
+        elif refresh is True:
+            params = {"refresh": "true"}
+        else:
+            raise HextileClientError("refresh must be a boolean", kind="other", status_code=422)
+        return _project_storage_summary(self._read_status("/api/storage", params=params))
+
+    def get_cache_buckets(self) -> Any:
+        """GET /api/cache/stats without cache directory locators."""
+        return _project_cache_buckets(self._read_status("/api/cache/stats"))
+
+    def clear_disposable_cache(self, bucket: Any = None) -> Any:
+        """POST the existing disposable clear route. Do not replay an uncertain clear."""
+        if bucket is None:
+            path = "/api/cache/clear"
+        elif type(bucket) is str and _STATUS_TOKEN.fullmatch(bucket) is not None:
+            path = "/api/cache/clear/" + urllib.parse.quote(bucket, safe="")
+        else:
+            raise HextileClientError("bucket must be a cache bucket name", kind="other", status_code=422)
+        return self._write_status(
+            "POST", path, None, _project_clear_result,
+            unknown_message=_CACHE_UNKNOWN, unknown_kind="cache_outcome_unknown",
+        )
+
+    def get_license_status(self) -> Any:
+        """GET /api/license/status. Current entitlement only; no tier probe."""
+        return _project_license_status(self._read_status("/api/license/status"))
 
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,

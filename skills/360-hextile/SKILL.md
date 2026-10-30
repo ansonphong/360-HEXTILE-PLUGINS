@@ -59,6 +59,12 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `list_processors` | Read processor identity and admission metadata. Does not load or unload | no |
 | `get_processor_schema` | Read one processor UI schema by `pipeline_id`. Does not validate or unload | no |
 | `get_plugin_catalog` | Read plugin metadata, availability, dependencies, and operations. Does not start CREATE or animation and returns no private filesystem paths | no |
+| `get_app_preferences` | Read safe app preferences and effective_default_pipeline. Omits output folder, creator profile, EULA, credentials, and filesystem paths | no |
+| `update_app_preferences` | Patch one nonempty partial of those safe fields. Null does not clear a field. Privacy toggles change only when explicitly selected. Unknown acknowledgement: reread and do not replay. mcp_enabled false uses the native disconnect | **yes** |
+| `get_storage_summary` | Read disk free and total, default and fallback flags, and class identity. refresh defaults to false. No roots or paths | no |
+| `get_cache_buckets` | Read cache bucket identity, display name, size, file count, protection, and total size. No cache directories | no |
+| `clear_disposable_cache` | Clear disposable cache through the native clear routes. Protected buckets and live owners stay refused. Listed errors are not success and must not be replayed | **yes** |
+| `get_license_status` | Read current activation, tier, access state and source, features, and non-secret access flags. No tier argument and no machine id or license key hint | no |
 | `get_live_context` | Studio snapshot (current owner, doc_generation and live export) | no |
 | `apply_config_delta` | Live delta on the current open file. Never queues | **yes** |
 | `get_guide` | Schema, practices, recipes, website index | no |
@@ -179,6 +185,20 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 `list_processors` and `get_processor_schema` read processor metadata and one native UI schema. They do not load, unload, or validate a pipeline.
 
 `get_plugin_catalog` reads plugin metadata, availability, dependencies, and operations. Disabled and unsupported rows stay disabled and unsupported. It does not start CREATE or animation and does not register jobs.
+
+### App preferences, storage, cache, and license
+
+`get_app_preferences` reads the safe preference fields and `effective_default_pipeline`. It omits the output folder, creator profile, EULA, credentials, and filesystem paths.
+
+`update_app_preferences(changes)` sends one nonempty partial object of those safe fields. Null does not clear a field. `error_reporting_enabled` and `telemetry_enabled` change only when the user explicitly selects them. If the acknowledgement is unknown, reread those preferences and do not replay the change. `mcp_enabled` false uses the native switch and its revoke. A disconnected client cannot turn MCP back on.
+
+`get_storage_summary` reads disk free and total, default and fallback flags, and class identity. `refresh` defaults to false and keeps the memoized scan. It returns no configured roots or paths.
+
+`get_cache_buckets` reads bucket identity, display name, size, file count, protection, and total size. It omits cache directories.
+
+`clear_disposable_cache` uses the native clear routes. Omit `bucket` to clear every disposable bucket. Protected buckets and live owners stay refused. A completed response that lists errors is the acknowledgement and is not success; do not replay it. If the acknowledgement is unknown, rereading bucket status cannot prove that clear; do not replay it.
+
+`get_license_status` reads the current activation, tier, access state and source, features, and non-secret access flags. It takes no tier argument and omits machine id, machine name, and license key hint.
 
 ### Trusted local files
 

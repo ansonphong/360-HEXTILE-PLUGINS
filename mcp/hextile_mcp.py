@@ -62,6 +62,12 @@ TOOL_NAMES = (
     "list_processors",
     "get_processor_schema",
     "get_plugin_catalog",
+    "get_app_preferences",
+    "update_app_preferences",
+    "get_storage_summary",
+    "get_cache_buckets",
+    "clear_disposable_cache",
+    "get_license_status",
     "describe_image",
     "get_live_context",
     "apply_config_delta",
@@ -180,6 +186,10 @@ _READ_ONLY = frozenset(
         "list_processors",
         "get_processor_schema",
         "get_plugin_catalog",
+        "get_app_preferences",
+        "get_storage_summary",
+        "get_cache_buckets",
+        "get_license_status",
         "get_live_context",
         "validate_config",
         "get_status",
@@ -234,6 +244,8 @@ _READ_ONLY = frozenset(
 _MUTATING = frozenset(
     {
         "call_hextile_api",
+        "update_app_preferences",
+        "clear_disposable_cache",
         "set_hotkey_bindings",
         "remove_hotkey_binding",
         "restore_hotkey",
@@ -314,6 +326,7 @@ _BATCH_TOOLS = frozenset(
 _DESTRUCTIVE = frozenset(
     {
         "call_hextile_api",
+        "clear_disposable_cache",
         "remove_hotkey_binding",
         "reset_hotkeys",
         "cancel_run",
@@ -1200,6 +1213,40 @@ _HOTKEY_BINDINGS = {"type": "array", "items": _HOTKEY_BINDING, "maxItems": 8}
 _HOTKEY_ID = {"type": "string", "minLength": 1, "maxLength": 128}
 _HOTKEY_REVISION = {"type": "string", "minLength": 1, "maxLength": 128,
                     "description": "Exact revision returned by the latest Hotkeys read."}
+_PREFERENCE_BOOL = {"type": "boolean"}
+_PREFERENCE_CHANGES = {
+    "type": "object",
+    "additionalProperties": False,
+    "minProperties": 1,
+    "properties": {
+        "mcp_enabled": _PREFERENCE_BOOL,
+        "create_pattern_enabled": _PREFERENCE_BOOL,
+        "create_360_lora_enabled": _PREFERENCE_BOOL,
+        "create_outpaint_enabled": _PREFERENCE_BOOL,
+        "create_fractal_enabled": _PREFERENCE_BOOL,
+        "create_shader_enabled": _PREFERENCE_BOOL,
+        "edit_sd15_enabled": _PREFERENCE_BOOL,
+        "vision_mode": {"enum": ["auto", "resident", "on_demand"]},
+        "hdr_import_rolloff": _PREFERENCE_BOOL,
+        "default_pipeline": {"type": "string", "minLength": 1, "maxLength": 128},
+        "show_chat_icon": _PREFERENCE_BOOL,
+        "open_folder_on_complete": _PREFERENCE_BOOL,
+        "export_sequential_naming": _PREFERENCE_BOOL,
+        "export_filename_prefix": {"type": "string", "maxLength": 256},
+        "tile_history_keep_n": {"anyOf": [{"type": "integer", "minimum": 0}, {"const": "all"}]},
+        "navigate_to_render_on_start": {"enum": ["none", "renders_list", "render_details"]},
+        "torch_compile_enabled": _PREFERENCE_BOOL,
+        "torch_compile_mode": {"enum": ["default", "reduce-overhead", "max-autotune"]},
+        "sage_attention_enabled": _PREFERENCE_BOOL,
+        "sd35_quantization": {"enum": ["none", "fp8", "nf4"]},
+        "patterns_favorites_per_project": _PREFERENCE_BOOL,
+        "post_process_favorites_per_project": _PREFERENCE_BOOL,
+        "color_swatches_favorites_per_project": _PREFERENCE_BOOL,
+        "worlds_favorites_per_project": _PREFERENCE_BOOL,
+        "error_reporting_enabled": _PREFERENCE_BOOL,
+        "telemetry_enabled": _PREFERENCE_BOOL,
+    },
+}
 
 
 TOOLS: list[dict[str, Any]] = [
@@ -1269,6 +1316,46 @@ TOOLS: list[dict[str, Any]] = [
         "get_plugin_catalog",
         "Read plugin metadata, availability, dependencies, and operations. "
         "Does not start CREATE or animation and does not register jobs.",
+        {},
+    ),
+    _tool_def(
+        "get_app_preferences",
+        "Read safe app preferences plus effective_default_pipeline. "
+        "Does not return the output folder, creator profile, EULA, credentials, or filesystem paths.",
+        {},
+    ),
+    _tool_def(
+        "update_app_preferences",
+        "Patch one nonempty closed set of safe preferences through the native settings update. "
+        "Null does not clear a field. Privacy toggles change only when explicitly selected. "
+        "mcp_enabled false uses native disconnect. A lost acknowledgement is unknown: reread and do not replay.",
+        {"changes": _PREFERENCE_CHANGES},
+        ["changes"],
+    ),
+    _tool_def(
+        "get_storage_summary",
+        "Read disk free and total, default and fallback flags, and storage class identity. "
+        "refresh defaults to false and keeps the native memoized scan. No folder argument and no roots or paths.",
+        {"refresh": {"type": "boolean"}},
+    ),
+    _tool_def(
+        "get_cache_buckets",
+        "Read cache bucket identity, display name, size, file count, protection, and total size. "
+        "Does not return cache directories.",
+        {},
+    ),
+    _tool_def(
+        "clear_disposable_cache",
+        "Clear disposable cache through the native clear routes. Omit bucket to clear every disposable bucket. "
+        "Protected buckets and live owners stay refused. Errors in a completed response are not success. "
+        "A lost acknowledgement is unknown and must not be replayed.",
+        {"bucket": {"type": "string", "minLength": 1, "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"}},
+    ),
+    _tool_def(
+        "get_license_status",
+        "Read the current license activation, tier, access state and source, features, and non-secret access flags. "
+        "No tier argument, activation, or machine identity.",
         {},
     ),
     _tool_def(
@@ -3332,6 +3419,15 @@ _DISCOVERY_ARGUMENT_KEYS = {
     "get_processor_schema": frozenset({"pipeline_id"}),
     "get_plugin_catalog": frozenset(),
 }
+_CLOSED_ARGUMENT_KEYS = {
+    **_DISCOVERY_ARGUMENT_KEYS,
+    "get_app_preferences": frozenset(),
+    "update_app_preferences": frozenset({"changes"}),
+    "get_storage_summary": frozenset({"refresh"}),
+    "get_cache_buckets": frozenset(),
+    "clear_disposable_cache": frozenset({"bucket"}),
+    "get_license_status": frozenset(),
+}
 
 
 def _closed_tool_args(args: Any, allowed: frozenset[str]) -> dict[str, Any]:
@@ -3364,6 +3460,12 @@ class HextileMcpServer:
             "list_processors": self._list_processors,
             "get_processor_schema": self._get_processor_schema,
             "get_plugin_catalog": self._get_plugin_catalog,
+            "get_app_preferences": self._get_app_preferences,
+            "update_app_preferences": self._update_app_preferences,
+            "get_storage_summary": self._get_storage_summary,
+            "get_cache_buckets": self._get_cache_buckets,
+            "clear_disposable_cache": self._clear_disposable_cache,
+            "get_license_status": self._get_license_status,
             "describe_image": self._describe_image,
             "get_live_context": self._get_live_context,
             "apply_config_delta": self._apply_config_delta,
@@ -3565,7 +3667,7 @@ class HextileMcpServer:
 
         if method == "tools/call":
             name = params.get("name") or ""
-            if name in _DISCOVERY_ARGUMENT_KEYS:
+            if name in _CLOSED_ARGUMENT_KEYS:
                 # Omitted arguments default to {}. Explicit null and non-objects do not.
                 arguments = params["arguments"] if "arguments" in params else {}
             else:
@@ -3636,9 +3738,9 @@ class HextileMcpServer:
                         "MCP is disabled in 360 Hextile Settings. Enable it and retry.",
                         kind="mcp_disabled", status_code=403,
                     )))
-        if name in _DISCOVERY_ARGUMENT_KEYS:
+        if name in _CLOSED_ARGUMENT_KEYS:
             try:
-                _closed_tool_args(arguments, _DISCOVERY_ARGUMENT_KEYS[name])
+                _closed_tool_args(arguments, _CLOSED_ARGUMENT_KEYS[name])
             except HextileClientError as exc:
                 return _err_result(error_payload(exc))
             args = dict(arguments)
@@ -3683,6 +3785,14 @@ class HextileMcpServer:
             header_context = bind_headers(private_headers) if bind_headers else nullcontext()
             with header_context:
                 data = handler(args)
+            if name == "clear_disposable_cache" and isinstance(data, dict) and data.get("errors"):
+                self._emit_activity(
+                    tool=name, call_id=call_id, phase="failed",
+                    error={"kind": "http", "status_code": 200,
+                           "message": "Cache clear did not fully succeed"},
+                    overrides_keys=overrides_keys,
+                )
+                return _err_result(data)
             if name in {"install_model", "repair_model", "cancel_model_download"} and isinstance(data, dict) and data.get("success") is False:
                 self._emit_activity(
                     tool=name, call_id=call_id, phase="failed",
@@ -3956,6 +4066,38 @@ class HextileMcpServer:
     def _get_plugin_catalog(self, args: dict[str, Any]) -> Any:
         _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["get_plugin_catalog"])
         return self.client.get_plugin_catalog()
+
+    def _get_app_preferences(self, args: dict[str, Any]) -> Any:
+        _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["get_app_preferences"])
+        return self.client.get_app_preferences()
+
+    def _update_app_preferences(self, args: dict[str, Any]) -> Any:
+        args = _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["update_app_preferences"])
+        if "changes" not in args:
+            raise HextileClientError(
+                "changes must be a nonempty partial preferences object", kind="other", status_code=422,
+            )
+        return self.client.update_app_preferences(args["changes"])
+
+    def _get_storage_summary(self, args: dict[str, Any]) -> Any:
+        args = _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["get_storage_summary"])
+        if "refresh" in args and type(args["refresh"]) is not bool:
+            raise HextileClientError("refresh must be a boolean", kind="other", status_code=422)
+        return self.client.get_storage_summary(args["refresh"] if "refresh" in args else False)
+
+    def _get_cache_buckets(self, args: dict[str, Any]) -> Any:
+        _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["get_cache_buckets"])
+        return self.client.get_cache_buckets()
+
+    def _clear_disposable_cache(self, args: dict[str, Any]) -> Any:
+        args = _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["clear_disposable_cache"])
+        if "bucket" in args and type(args["bucket"]) is not str:
+            raise HextileClientError("bucket must be a cache bucket name", kind="other", status_code=422)
+        return self.client.clear_disposable_cache(args["bucket"] if "bucket" in args else None)
+
+    def _get_license_status(self, args: dict[str, Any]) -> Any:
+        _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["get_license_status"])
+        return self.client.get_license_status()
 
     def _describe_image(self, args: dict[str, Any]) -> Any:
         if set(args) - {"source", "crop"}:
