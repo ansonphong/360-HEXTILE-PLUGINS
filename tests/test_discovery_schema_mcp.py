@@ -251,6 +251,14 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
             "id": "hextile.shader",
             "label": "Installed in /home/phong/private/plugins",
             "summary": "Installed at C:\\Users\\phong\\private",
+            "site": "Docs https://example.com",
+            "guide": "http://example.com/docs/guide",
+            "portal": "HTTPS://example.com/api/plugins",
+            "blurb": "Docs https://example.com Open /create/shader plugins/shader/plugin.json",
+            "alert": "Docs https://example.com see /home/phong/private/plugins",
+            "alert_win": "Docs https://example.com see C:\\Users\\phong\\private",
+            "alert_unc": "Docs https://example.com \\\\server\\share",
+            "alert_file": "Docs https://example.com file:///home/phong/private",
             "docs": "/api/plugins/catalog",
             "note": "Open /create/shader or /api/plugins/catalog",
             "enabled": False,
@@ -273,7 +281,7 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
     }
     processors = {"processors": [{
         "mode_id": "sdxl",
-        "display_name": "SDXL",
+        "display_name": "Docs https://example.com",
         "type": "tiled",
         "description": "Installed in /home/phong/private/plugins",
         "fresh_admission": False,
@@ -287,7 +295,7 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
     listed = client.list_processors()
     assert listed == {"processors": [{
         "mode_id": "sdxl",
-        "display_name": "SDXL",
+        "display_name": "Docs https://example.com",
         "type": "tiled",
         "fresh_admission": False,
     }]}
@@ -303,6 +311,16 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
     assert "file:" not in encoded
     assert "label" not in got["packages"][0]
     assert "summary" not in got["packages"][0]
+    assert "alert" not in got["packages"][0]
+    assert "alert_win" not in got["packages"][0]
+    assert "alert_unc" not in got["packages"][0]
+    assert "alert_file" not in got["packages"][0]
+    assert got["packages"][0]["site"] == "Docs https://example.com"
+    assert got["packages"][0]["guide"] == "http://example.com/docs/guide"
+    assert got["packages"][0]["portal"] == "HTTPS://example.com/api/plugins"
+    assert got["packages"][0]["blurb"] == (
+        "Docs https://example.com Open /create/shader plugins/shader/plugin.json"
+    )
     assert got["packages"][0]["docs"] == "/api/plugins/catalog"
     assert got["packages"][0]["note"] == "Open /create/shader or /api/plugins/catalog"
     row = got["packages"][0]["contributions"][0]

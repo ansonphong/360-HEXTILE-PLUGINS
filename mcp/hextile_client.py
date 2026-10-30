@@ -1635,11 +1635,14 @@ _PROCESSOR_KEYS = frozenset({
 })
 
 
-_EMBEDDED_WIN_DRIVE = re.compile(r"[A-Za-z]:[\\/]")
+# A drive letter is one letter. The s:/ inside https:// is a scheme separator.
+_EMBEDDED_WIN_DRIVE = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]")
 _EMBEDDED_FILE_URI = re.compile(r"(?i)file:(?://|\\\\|/|[A-Za-z]:)")
-# A slash starts an absolute path unless it is a /create or /api route token.
+# A slash starts an absolute path unless it continues a token, the second slash
+# of http:// or https://, or a /create or /api route. A later locator still matches.
 _EMBEDDED_POSIX = re.compile(
-    r"(?<![A-Za-z0-9._~:-])/(?!create(?:/|[^A-Za-z0-9._~-]|$)|api(?:/|[^A-Za-z0-9._~-]|$))[A-Za-z0-9._~-]"
+    r"(?i)(?<![A-Za-z0-9._~:-])(?<!https:/)(?<!http:/)"
+    r"/(?!create(?:/|[^A-Za-z0-9._~-]|$)|api(?:/|[^A-Za-z0-9._~-]|$))[A-Za-z0-9._~-]"
 )
 _CONFIG_SCHEMA_MARKERS = frozenset({
     "type", "properties", "$ref", "$defs", "allOf", "anyOf", "oneOf",
