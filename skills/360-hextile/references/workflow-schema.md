@@ -114,9 +114,13 @@ receipt. Sequence accepted settings carry policy/profiles and storage encoding
 carries the selected PNG level. Static support does not mean every job used the GPU.
 Discovery advertises `gpu_qualified` and `production_activated` from the live
 gates. Those gates qualify `preview` and `direct_sequence`. Dome, preserve-360,
-history, and EXR stay on the CPU path. A pending receipt is still CPU with
-`forced_cpu` or `gpu_unqualified`. A completed automatic job carries one closed
-receipt whose `actual_processing` is `retained_native`,
+history, and EXR stay on the CPU path.
+While selection is pending, preview and direct sequence publish no execution
+(`raster_execution` null). The immediate 5-key CPU receipt is `forced_cpu`
+for an explicit CPU request and `gpu_unqualified` for an excluded automatic
+job, including a completed dome, preserve-360, history, or EXR job.
+The closed 8-key receipt appears after the resident stream runs or falls
+back. Its `actual_processing` is `retained_native`,
 `retained_native_with_cpu_repair`, or `cpu` with reason `dense_cpu_fallback`
 or `cpu_fallback`. A native pair may set both flags true only for an admitted
 qualified job. A CPU outcome keeps both flags false. An `actual_processing`
