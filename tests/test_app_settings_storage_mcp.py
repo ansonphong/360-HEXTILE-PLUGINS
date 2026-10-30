@@ -425,6 +425,9 @@ def test_malformed_success_hides_private_bodies() -> None:
     assert len(_native(calls)) == 6
 
 
+_LEGACY_CLEAR_REPORTED = "Cache clear reported an error; private details omitted."
+
+
 def test_clear_reports_partial_protected_and_live_owner_without_replay() -> None:
     partial = {
         "cleared": ["inspect_tiles"],
@@ -458,6 +461,7 @@ def test_clear_reports_partial_protected_and_live_owner_without_replay() -> None
     assert partial_result["isError"] is True
     partial_body = _payload(partial_result)
     assert partial_body["cleared"] == ["inspect_tiles"]
+    assert partial_body["skipped_protected"] == ["360_lora_history"]
     assert partial_body["errors"] == [{"bucket": "postprocess", "code": "os_error", "reason": "clear failed"}]
     assert "/home/secret" not in _text(partial_result)
     protected = server.call_tool("clear_disposable_cache", {"bucket": "360_lora_history"})
@@ -469,7 +473,7 @@ def test_clear_reports_partial_protected_and_live_owner_without_replay() -> None
     owned = _payload(server.call_tool("clear_disposable_cache", {"bucket": "batch_work"}))
     assert owned["errors"][0]["code"] == "live_owner"
     legacy_result = _payload(server.call_tool("clear_disposable_cache", {"bucket": "postprocess"}))
-    assert legacy_result["errors"][0]["reported"]
+    assert legacy_result["errors"] == [{"reported": _LEGACY_CLEAR_REPORTED}]
     assert "/home/secret" not in json.dumps(legacy_result)
     assert [item["path"] for item in _native(calls)] == [
         "/api/cache/clear",
@@ -529,6 +533,7 @@ _PRIVATE_COMPONENTS = (
     "uniqueunc",
     "uniquefile",
     "uniquesecretvalue12",
+    "PRIVATE_COMPONENT_SENTINEL",
 )
 
 
@@ -673,11 +678,16 @@ def test_legacy_clear_text_hides_full_locator_components() -> None:
         "token sk-uniquesecretvalue12",
         "[path]ome/uniqueposix/cache",
         f"see {public}",
+        "Permission denied: '/home/example/Folder PRIVATE_COMPONENT_SENTINEL/cache'",
+        "Permission denied: 'C:\\Users\\Example\\Folder PRIVATE_COMPONENT_SENTINEL\\cache'",
+        "Permission denied: '\\\\server\\Folder PRIVATE_COMPONENT_SENTINEL\\cache'",
+        "Permission denied: 'file:///home/example/Folder PRIVATE_COMPONENT_SENTINEL/cache'",
+        "[path] PRIVATE_COMPONENT_SENTINEL[path]",
     ]
     server, client, _calls = _server({
         ("POST", "/api/cache/clear"): (200, json.dumps({
             "cleared": ["inspect_tiles"],
-            "skipped_protected": [],
+            "skipped_protected": ["360_lora_history"],
             "errors": errors,
         }).encode()),
     })
@@ -686,14 +696,13 @@ def test_legacy_clear_text_hides_full_locator_components() -> None:
     assert via["isError"] is True
     body = _payload(via)
     assert direct == body
+    assert body["cleared"] == ["inspect_tiles"]
+    assert body["skipped_protected"] == ["360_lora_history"]
     assert len(body["errors"]) == len(errors)
-    assert all(set(item) == {"reported"} for item in body["errors"])
+    assert body["errors"] == [{"reported": _LEGACY_CLEAR_REPORTED} for _item in errors]
     rendered = json.dumps(body)
     for component in _PRIVATE_COMPONENTS:
         assert component not in rendered
-    reported = [item["reported"] for item in body["errors"]]
-    assert "protected bucket has no clear path" in reported
-    assert any(item.startswith("Permission denied:") for item in reported)
-    assert public in rendered
-    assert f"refused {public} see [path]" in reported
-    assert f"see {public}" in reported
+    assert public not in rendered
+    assert "Permission denied:" not in rendered
+    assert "[path]" not in rendered

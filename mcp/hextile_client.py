@@ -1963,39 +1963,8 @@ def _project_cache_buckets(payload: Any) -> dict[str, Any]:
     return {"buckets": [_project_bucket(row) for row in buckets], "total_size_mb": total}
 
 
-# Whole-token substitutes for unstructured clear text. Discovery detectors stay prefix checks.
-_PUBLIC_URL = re.compile(r"(?i)https?://[^\s\"']+")
-_STATUS_FILE_URI = re.compile(r"(?i)file:(?://|\\\\|/|[A-Za-z]:)[^\s\"']*")
-_STATUS_UNC = re.compile(r"\\\\[^\s\"']*")
-_STATUS_WIN = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/][^\s\"']*")
-_STATUS_POSIX = re.compile(
-    r"(?i)(?<![A-Za-z0-9._~:-])(?<!https:/)(?<!http:/)"
-    r"/(?!create(?:/|[^A-Za-z0-9._~-]|$)|api(?:/|[^A-Za-z0-9._~-]|$))"
-    r"[^\s\"']+"
-)
-_STATUS_PATH_TAIL = re.compile(r"(?<=[A-Za-z0-9._~-])(?:/|\\)[^\s\"']+")
-_URL_SLOT = re.compile(r"\x00(\d+)\x00")
-
-
-def _redact_status_text(value: str) -> str:
-    """Hide a full private locator or secret. Keep benign text and public URLs."""
-    redacted = _DISCOVERY_TOKEN_VALUE.sub("[secret]", value)
-    urls: list[str] = []
-
-    def _hold(match: re.Match[str]) -> str:
-        urls.append(match.group(0))
-        return f"\x00{len(urls) - 1}\x00"
-
-    redacted = _PUBLIC_URL.sub(_hold, redacted)
-    redacted = _STATUS_FILE_URI.sub("[path]", redacted)
-    redacted = _STATUS_UNC.sub("[path]", redacted)
-    redacted = _STATUS_WIN.sub("[path]", redacted)
-    redacted = _STATUS_POSIX.sub("[path]", redacted)
-    redacted = _STATUS_PATH_TAIL.sub("[path]", redacted)
-    redacted = _URL_SLOT.sub(lambda match: urls[int(match.group(1))], redacted).strip()
-    if not redacted or _status_private_text(redacted):
-        return "clear failed"
-    return redacted
+# Unstructured clear text is discarded whole. Parsing it leaks private path components.
+_LEGACY_CLEAR_REPORTED = "Cache clear reported an error; private details omitted."
 
 
 def _project_clear_result(payload: Any) -> dict[str, Any]:
@@ -2024,8 +1993,8 @@ def _project_clear_result(payload: Any) -> dict[str, Any]:
         ):
             raise _discovery_malformed("Cache clear result is malformed")
         errors.append({"bucket": bucket, "code": code, "reason": reason})
-    for item in raw_errors[len(errors):]:
-        errors.append({"reported": _redact_status_text(item)})
+    for _item in raw_errors[len(errors):]:
+        errors.append({"reported": _LEGACY_CLEAR_REPORTED})
     return {"cleared": list(cleared), "skipped_protected": list(skipped), "errors": errors}
 
 
