@@ -3326,6 +3326,14 @@ def _err_result(payload: Any) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
+_DISCOVERY_ARGUMENT_KEYS = {
+    "get_config_schema": frozenset({"model"}),
+    "list_processors": frozenset(),
+    "get_processor_schema": frozenset({"pipeline_id"}),
+    "get_plugin_catalog": frozenset(),
+}
+
+
 def _closed_tool_args(args: Any, allowed: frozenset[str]) -> dict[str, Any]:
     """Reject a non-object or an unexpected key before any native request."""
     if type(args) is not dict or not set(args) <= allowed:
@@ -3557,7 +3565,11 @@ class HextileMcpServer:
 
         if method == "tools/call":
             name = params.get("name") or ""
-            arguments = params.get("arguments") or {}
+            if name in _DISCOVERY_ARGUMENT_KEYS:
+                # Omitted arguments default to {}. Explicit null and non-objects do not.
+                arguments = params["arguments"] if "arguments" in params else {}
+            else:
+                arguments = params.get("arguments") or {}
             meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
             progress_token = meta.get("progressToken")
             operation_id = meta.get("hextile_op")
@@ -3624,11 +3636,18 @@ class HextileMcpServer:
                         "MCP is disabled in 360 Hextile Settings. Enable it and retry.",
                         kind="mcp_disabled", status_code=403,
                     )))
+        if name in _DISCOVERY_ARGUMENT_KEYS:
+            try:
+                _closed_tool_args(arguments, _DISCOVERY_ARGUMENT_KEYS[name])
+            except HextileClientError as exc:
+                return _err_result(error_payload(exc))
+            args = dict(arguments)
+        else:
+            args = dict(arguments) if isinstance(arguments, dict) else {}
+            for key in tuple(args):
+                if key.lower() in _PRIVATE_ARGUMENT_KEYS and "_fractal_" not in name:
+                    args.pop(key, None)
         call_id = str(uuid.uuid4())
-        args = dict(arguments) if isinstance(arguments, dict) else {}
-        for key in tuple(args):
-            if key.lower() in _PRIVATE_ARGUMENT_KEYS and "_fractal_" not in name:
-                args.pop(key, None)
         overrides_keys = _overrides_keys(name, args)
         self._emit_activity(
             tool=name, call_id=call_id, phase="started",
@@ -3916,7 +3935,7 @@ class HextileMcpServer:
         return self.client.get_capabilities()
 
     def _get_config_schema(self, args: dict[str, Any]) -> Any:
-        args = _closed_tool_args(args, frozenset({"model"}))
+        args = _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["get_config_schema"])
         if "model" in args and type(args["model"]) is not str:
             raise HextileClientError(
                 "model must be a bounded config model name", kind="other", status_code=422,
@@ -3924,18 +3943,18 @@ class HextileMcpServer:
         return self.client.get_config_schema(args.get("model"))
 
     def _list_processors(self, args: dict[str, Any]) -> Any:
-        _closed_tool_args(args, frozenset())
+        _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["list_processors"])
         return self.client.list_processors()
 
     def _get_processor_schema(self, args: dict[str, Any]) -> Any:
-        args = _closed_tool_args(args, frozenset({"pipeline_id"}))
+        args = _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["get_processor_schema"])
         pipeline_id = args.get("pipeline_id")
         if type(pipeline_id) is not str:
             raise HextileClientError("pipeline_id is required", kind="other", status_code=422)
         return self.client.get_processor_schema(pipeline_id)
 
     def _get_plugin_catalog(self, args: dict[str, Any]) -> Any:
-        _closed_tool_args(args, frozenset())
+        _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["get_plugin_catalog"])
         return self.client.get_plugin_catalog()
 
     def _describe_image(self, args: dict[str, Any]) -> Any:

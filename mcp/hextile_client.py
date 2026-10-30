@@ -1635,11 +1635,26 @@ _PROCESSOR_KEYS = frozenset({
 })
 
 
+_EMBEDDED_WIN_DRIVE = re.compile(r"[A-Za-z]:[\\/]")
+_EMBEDDED_FILE_URI = re.compile(r"(?i)file:(?://|\\\\|/|[A-Za-z]:)")
+# A slash starts an absolute path unless it is a /create or /api route token.
+_EMBEDDED_POSIX = re.compile(
+    r"(?<![A-Za-z0-9._~:-])/(?!create(?:/|[^A-Za-z0-9._~-]|$)|api(?:/|[^A-Za-z0-9._~-]|$))[A-Za-z0-9._~-]"
+)
+_CONFIG_SCHEMA_MARKERS = frozenset({
+    "type", "properties", "$ref", "$defs", "allOf", "anyOf", "oneOf",
+    "enum", "const", "$schema", "items", "prefixItems",
+})
+
+
 def _discovery_filesystem_locator(value: str) -> bool:
-    """Absolute filesystem locators. App routes and relative ids stay."""
-    if value.startswith("\\\\") or value.startswith("file:"):
+    """Absolute filesystem locators, including those embedded in freeform text.
+
+    Whole-string /create and /api routes and relative ids such as plugins/... stay.
+    """
+    if "\\\\" in value or value.lower().startswith("file:") or _EMBEDDED_FILE_URI.search(value):
         return True
-    if re.match(r"^[A-Za-z]:[\\/]", value):
+    if _EMBEDDED_WIN_DRIVE.search(value) or _EMBEDDED_POSIX.search(value):
         return True
     return value.startswith("/") and not (
         value.startswith("/create/") or value.startswith("/api/") or value in {"/create", "/api"}
@@ -1671,9 +1686,70 @@ def _project_discovery_public(value: Any) -> Any:
     return _DISCOVERY_DROP
 
 
+def _discovery_malformed(message: str) -> HextileClientError:
+    return HextileClientError(message, kind="other", status_code=502)
+
+
+def _require_config_index(payload: Any) -> Any:
+    """Names-only index. Extra native keys stay. Error objects do not pass."""
+    models = payload.get("models") if type(payload) is dict else None
+    if type(payload) is not dict or "error" in payload or type(models) is not list:
+        raise _discovery_malformed("Config schema is malformed")
+    if any(type(name) is not str or _CONFIG_MODEL_NAME.fullmatch(name) is None for name in models):
+        raise _discovery_malformed("Config schema is malformed")
+    return payload
+
+
+def _require_config_page(payload: Any, model: str) -> Any:
+    """Named Pydantic page. Markers are accepted; contents are not re-evaluated."""
+    schema = payload.get("schema") if type(payload) is dict else None
+    if (
+        type(payload) is not dict
+        or "error" in payload
+        or payload.get("model") != model
+        or type(schema) is not dict
+        or "error" in schema
+        or not (_CONFIG_SCHEMA_MARKERS & schema.keys())
+    ):
+        raise _discovery_malformed("Config schema is malformed")
+    return payload
+
+
+def _require_processor_ui_schema(payload: Any, pipeline_id: str) -> Any:
+    """Native UI schema envelope. Dynamic tabs, fields, and conditions stay intact."""
+    capabilities = payload.get("capabilities") if type(payload) is dict else None
+    tabs = payload.get("tabs") if type(payload) is dict else None
+    if (
+        type(payload) is not dict
+        or "error" in payload
+        or payload.get("mode_id") != pipeline_id
+        or type(payload.get("display_name")) is not str
+        or not payload.get("display_name")
+        or type(payload.get("type")) is not str
+        or not payload.get("type")
+        or type(capabilities) is not dict
+        or type(tabs) is not list
+    ):
+        raise _discovery_malformed("Processor schema is malformed")
+    for tab in tabs:
+        fields = tab.get("fields") if type(tab) is dict else None
+        if type(tab) is not dict or type(fields) is not list:
+            raise _discovery_malformed("Processor schema is malformed")
+        for field in fields:
+            if type(field) is not dict or type(field.get("id")) is not str:
+                raise _discovery_malformed("Processor schema is malformed")
+            if "condition" in field and type(field.get("condition")) is not dict:
+                raise _discovery_malformed("Processor schema is malformed")
+    return payload
+
+
 def _project_processor_list(value: Any) -> Any:
     """Identity and admission fields only. Does not invent rows."""
-    if type(value) is not dict or type(value.get("processors")) is not list:
+    if (
+        type(value) is not dict
+        or "error" in value
+        or type(value.get("processors")) is not list
+    ):
         raise HextileClientError("Processor list is malformed", kind="other", status_code=502)
     rows = []
     for row in value["processors"]:
@@ -1696,7 +1772,13 @@ def _project_processor_list(value: Any) -> Any:
 
 def _project_plugin_catalog(value: Any) -> Any:
     """Metadata, availability, dependencies, and operations. No private locators."""
-    if type(value) is not dict or type(value.get("packages")) is not list:
+    packages = value.get("packages") if type(value) is dict else None
+    if (
+        type(value) is not dict
+        or "error" in value
+        or type(packages) is not list
+        or any(type(row) is not dict for row in packages)
+    ):
         raise HextileClientError("Plugin catalog is malformed", kind="other", status_code=502)
     projected = _project_discovery_public(value)
     if type(projected) is not dict or type(projected.get("packages")) is not list:
@@ -2158,11 +2240,14 @@ class Client:
         """GET /api/workflows/config-schema. Names, or one model schema. No current config."""
         if model is not None and (type(model) is not str or _CONFIG_MODEL_NAME.fullmatch(model) is None):
             raise HextileClientError("model must be a bounded config model name", kind="other", status_code=422)
-        return self.get_json(
+        payload = self.get_json(
             "/api/workflows/config-schema",
             params=None if model is None else {"model": model},
             max_bytes=_DISCOVERY_MAX_BYTES,
         )
+        if model is None:
+            return _require_config_index(payload)
+        return _require_config_page(payload, model)
 
     def list_processors(self) -> Any:
         """GET /api/processors. Metadata only; does not load or unload."""
@@ -2179,9 +2264,7 @@ class Client:
         payload = self.get_json(
             f"/api/processors/{quoted}/schema", max_bytes=_DISCOVERY_MAX_BYTES,
         )
-        if type(payload) is not dict:
-            raise HextileClientError("Processor schema is not an object", kind="other", status_code=502)
-        return payload
+        return _require_processor_ui_schema(payload, pipeline_id)
 
     def get_plugin_catalog(self) -> Any:
         """GET /api/plugins/catalog. Metadata, availability, dependencies, and operations."""

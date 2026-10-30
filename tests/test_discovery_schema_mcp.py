@@ -62,14 +62,17 @@ def _server(payloads: dict[tuple[str, str], tuple[int, bytes]]) -> tuple[Hextile
     calls: list[tuple[str, str, str]] = []
 
     def opener(req: Any, timeout: Any = None) -> _Response:
-        path = urllib.parse.urlsplit(req.full_url).path
+        target = urllib.parse.urlsplit(req.full_url)
+        path = target.path
         method = req.get_method()
         calls.append((method, path, req.full_url))
         headers = {key.lower(): value for key, value in req.header_items()}
         assert headers["x-hextile-agent"] == "mcp"
         if path == "/api/agent/events":
             return _Response(b"{}")
-        spec = payloads.get((method, path))
+        spec = payloads.get((method, path, target.query))
+        if spec is None:
+            spec = payloads.get((method, path))
         if spec is None:
             raise AssertionError(f"unexpected {method} {path}")
         status, body = spec
@@ -129,22 +132,58 @@ def test_extra_keys_never_reach_discovery_routes() -> None:
     assert _native_calls(calls) == []
 
 
+def _ui_schema(**overrides: Any) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "mode_id": "sdxl",
+        "display_name": "SDXL",
+        "type": "tiled",
+        "description": "tiled diffusion",
+        "icon": "MagicWand",
+        "product_surface": "dropdown",
+        "capabilities": {
+            "supports_lora": True,
+            "supports_controlnet": True,
+            "supports_sequence": True,
+            "requires_template": True,
+            "supports_post_process": True,
+            "min_resolution": [512, 512],
+            "max_resolution": [2048, 1024],
+        },
+        "tabs": [{
+            "id": "diffusion",
+            "label": "Diffusion",
+            "icon": "Sliders",
+            "fields": [{
+                "id": "steps",
+                "type": "slider",
+                "label": "Steps",
+                "default": 20,
+                "required": True,
+                "condition": {"field": "advanced", "value": True},
+            }],
+        }],
+    }
+    schema.update(overrides)
+    return schema
+
+
 def test_config_schema_query_and_processor_schema_pass_through() -> None:
-    schema = {
+    index = {"models": ["HextileConfig", "PromptSettings"], "revision": 1}
+    page = {
         "model": "PromptSettings",
         "schema": {
-            "properties": {"global": {"type": "string"}},
+            "type": "object",
+            "title": "PromptSettings",
+            "properties": {"global": {"type": "string", "title": "Global"}},
+            "required": ["global"],
             "$defs": {"Inner": {"type": "object"}},
             "$ref": "#/$defs/Inner",
         },
     }
-    processor = {
-        "type": "object",
-        "properties": {"steps": {"$ref": "#/$defs/Steps"}},
-        "$defs": {"Steps": {"type": "integer"}},
-    }
+    processor = _ui_schema()
     server, client, calls = _server({
-        ("GET", "/api/workflows/config-schema"): (200, json.dumps(schema).encode()),
+        ("GET", "/api/workflows/config-schema", ""): (200, json.dumps(index).encode()),
+        ("GET", "/api/workflows/config-schema", "model=PromptSettings"): (200, json.dumps(page).encode()),
         ("GET", "/api/processors/sdxl/schema"): (200, json.dumps(processor).encode()),
         ("GET", "/api/workflows/capabilities"): (200, json.dumps({
             "workflow_api_version": 1,
@@ -155,13 +194,15 @@ def test_config_schema_query_and_processor_schema_pass_through() -> None:
         }).encode()),
     })
     direct = client.get_config_schema("PromptSettings")
-    assert direct == schema
-    assert "global_" not in json.dumps(direct)
+    assert direct == page
+    assert direct["schema"]["properties"]["global"]["title"] == "Global"
+    assert "global_" not in direct["schema"]["properties"]
+    assert "global_" not in direct["schema"].get("required", [])
     listed = server.call_tool("get_config_schema", {})
     assert listed["isError"] is False
-    assert json.loads(listed["content"][0]["text"]) == schema
+    assert json.loads(listed["content"][0]["text"]) == index
     via_tool = server.call_tool("get_config_schema", {"model": "PromptSettings"})
-    assert json.loads(via_tool["content"][0]["text"]) == schema
+    assert json.loads(via_tool["content"][0]["text"]) == page
     queried = [url for method, path, url in calls if path == "/api/workflows/config-schema"]
     assert any("model=PromptSettings" in url for url in queried)
     assert any("model=" not in urllib.parse.urlsplit(url).query for url in queried)
@@ -208,6 +249,10 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
     catalog = {
         "packages": [{
             "id": "hextile.shader",
+            "label": "Installed in /home/phong/private/plugins",
+            "summary": "Installed at C:\\Users\\phong\\private",
+            "docs": "/api/plugins/catalog",
+            "note": "Open /create/shader or /api/plugins/catalog",
             "enabled": False,
             "installed_root": "/mnt/private/plugins/shader",
             "snapshot_digest": "digest-ok",
@@ -219,7 +264,10 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
                 "reason": "unsupported",
                 "animation": {"runtime": "closed", "can_request_sample": False},
             }],
-            "diagnostics": [{"path": "\\\\server\\share\\plugin.json", "reason": "unreadable"}],
+            "diagnostics": [
+                {"path": "\\\\server\\share\\plugin.json", "reason": "unreadable"},
+                {"reason": "Installed in /home/phong/private/plugins"},
+            ],
         }],
         "diagnostics": [{"path": "file:/mnt/private/plugin.json", "reason": "unreadable"}],
     }
@@ -227,8 +275,9 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
         "mode_id": "sdxl",
         "display_name": "SDXL",
         "type": "tiled",
-        "description": "/mnt/private/should-drop",
+        "description": "Installed in /home/phong/private/plugins",
         "fresh_admission": False,
+        "fresh_admission_reason": "see C:\\Users\\phong\\private",
         "weights": "/mnt/private/weights",
     }]}
     server, client, calls = _server({
@@ -247,9 +296,15 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
     got = json.loads(server.call_tool("get_plugin_catalog", {})["content"][0]["text"])
     encoded = json.dumps(got)
     assert "/mnt/private" not in encoded
+    assert "/home/phong/private" not in encoded
+    assert "C:\\Users" not in encoded and "C:\\\\Users" not in encoded
     assert "installed_root" not in encoded
     assert "server" not in encoded
     assert "file:" not in encoded
+    assert "label" not in got["packages"][0]
+    assert "summary" not in got["packages"][0]
+    assert got["packages"][0]["docs"] == "/api/plugins/catalog"
+    assert got["packages"][0]["note"] == "Open /create/shader or /api/plugins/catalog"
     row = got["packages"][0]["contributions"][0]
     assert row["route"] == "/create/shader"
     assert row["source"] == "plugins/shader/plugin.json"
@@ -260,6 +315,7 @@ def test_processor_list_and_plugin_catalog_drop_private_locators() -> None:
     assert got["packages"][0]["snapshot_digest"] == "digest-ok"
     assert got["packages"][0]["capability_key"] == "shader"
     assert got["packages"][0]["diagnostics"][0]["reason"] == "unreadable"
+    assert all("/home/phong" not in json.dumps(item) for item in got["packages"][0]["diagnostics"])
     assert got["diagnostics"][0]["reason"] == "unreadable"
     assert [path for _method, path, _url in _native_calls(calls)] == [
         "/api/processors", "/api/processors", "/api/plugins/catalog",
@@ -280,3 +336,134 @@ def test_master_switch_blocks_discovery_before_the_schema_read(monkeypatch: pyte
     assert result["isError"] is True
     assert calls == ["/api/agent/mcp-status"]
     assert "disabled" in result["content"][0]["text"].lower()
+
+
+def _assert_closed_failure(result: dict[str, Any], secret: str) -> None:
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    payload = json.loads(text)
+    assert payload["status_code"] == 422
+    assert payload["error"] == "Unexpected arguments"
+    assert secret not in text
+
+
+def test_discovery_rejects_private_and_non_object_arguments_before_native_read() -> None:
+    secret = "sk-secretvalue123"
+    server, _client, calls = _server({
+        ("GET", "/api/workflows"): (200, b'[{"id":"quick-scout"}]'),
+        ("GET", "/api/workflows/config-schema", ""): (200, b'{"models":["PromptSettings"]}'),
+        ("GET", "/api/processors"): (200, b'{"processors":[]}'),
+        ("GET", "/api/plugins/catalog"): (200, b'{"packages":[]}'),
+    })
+    for name in _DISCOVERY:
+        for arguments in ([], None, {"token": secret}, {"actor": secret, "operation_id": secret}):
+            _assert_closed_failure(server.call_tool(name, arguments), secret)
+            for wire in (arguments,):
+                response = server.handle_rpc({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": wire},
+                })
+                _assert_closed_failure(response["result"], secret)
+    _assert_closed_failure(
+        server.call_tool("get_config_schema", {"model": "PromptSettings", "token": secret}),
+        secret,
+    )
+    _assert_closed_failure(
+        server.handle_rpc({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "get_processor_schema", "arguments": {"pipeline_id": "sdxl", "token": secret}},
+        })["result"],
+        secret,
+    )
+    assert _native_calls(calls) == []
+
+    omitted = server.handle_rpc({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "get_plugin_catalog"},
+    })
+    assert omitted["result"]["isError"] is False
+    empty = server.handle_rpc({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "list_processors", "arguments": {}},
+    })
+    assert empty["result"]["isError"] is False
+    index = server.call_tool("get_config_schema", {})
+    assert index["isError"] is False
+    assert json.loads(index["content"][0]["text"]) == {"models": ["PromptSettings"]}
+    other = server.call_tool("list_workflows", {"token": secret, "actor": secret})
+    assert other["isError"] is False
+    assert secret not in other["content"][0]["text"]
+    coerced = server.call_tool("list_workflows", [])
+    assert coerced["isError"] is False
+    assert [path for _method, path, _url in _native_calls(calls)] == [
+        "/api/plugins/catalog",
+        "/api/processors",
+        "/api/workflows/config-schema",
+        "/api/workflows",
+        "/api/workflows",
+    ]
+
+
+def test_malformed_discovery_success_is_not_a_schema() -> None:
+    secret = "/home/phong/private/plugins"
+    page = {
+        "model": "PromptSettings",
+        "schema": {"type": "object", "properties": {"global": {"$ref": "#/$defs/Inner"}}},
+    }
+    ui = _ui_schema()
+    cases: list[tuple[str, dict[str, Any], str, Any]] = [
+        ("get_config_schema", {}, "/api/workflows/config-schema", None),
+        ("get_config_schema", {}, "/api/workflows/config-schema", []),
+        ("get_config_schema", {}, "/api/workflows/config-schema", {"error": secret}),
+        ("get_config_schema", {}, "/api/workflows/config-schema", {"models": ["9bad"]}),
+        ("get_config_schema", {"model": "PromptSettings"}, "/api/workflows/config-schema", {"error": secret}),
+        ("get_config_schema", {"model": "PromptSettings"}, "/api/workflows/config-schema", page | {"model": "OtherModel"}),
+        ("get_config_schema", {"model": "PromptSettings"}, "/api/workflows/config-schema",
+         {"model": "PromptSettings", "schema": {"error": secret}}),
+        ("get_processor_schema", {"pipeline_id": "sdxl"}, "/api/processors/sdxl/schema", None),
+        ("get_processor_schema", {"pipeline_id": "sdxl"}, "/api/processors/sdxl/schema", []),
+        ("get_processor_schema", {"pipeline_id": "sdxl"}, "/api/processors/sdxl/schema", {"error": secret}),
+        ("get_processor_schema", {"pipeline_id": "sdxl"}, "/api/processors/sdxl/schema", _ui_schema(mode_id="other")),
+        ("get_processor_schema", {"pipeline_id": "sdxl"}, "/api/processors/sdxl/schema",
+         _ui_schema(tabs=[{"id": "diffusion", "fields": [{"id": "steps", "condition": secret}]}])),
+        ("list_processors", {}, "/api/processors", None),
+        ("list_processors", {}, "/api/processors", []),
+        ("list_processors", {}, "/api/processors", {"error": secret}),
+        ("list_processors", {}, "/api/processors", {"processors": [{"mode_id": "sdxl"}], "error": secret}),
+        ("get_plugin_catalog", {}, "/api/plugins/catalog", None),
+        ("get_plugin_catalog", {}, "/api/plugins/catalog", []),
+        ("get_plugin_catalog", {}, "/api/plugins/catalog", {"error": secret}),
+        ("get_plugin_catalog", {}, "/api/plugins/catalog", {"packages": [secret]}),
+        ("get_plugin_catalog", {}, "/api/plugins/catalog", {"packages": [], "error": secret}),
+    ]
+    for name, args, path, body in cases:
+        server, client, calls = _server({("GET", path): (200, json.dumps(body).encode())})
+        result = server.call_tool(name, args)
+        assert result["isError"] is True, name
+        text = result["content"][0]["text"]
+        assert json.loads(text)["status_code"] == 502
+        assert secret not in text
+        assert [item[1] for item in _native_calls(calls)] == [path]
+        with pytest.raises(HextileClientError) as exc:
+            if name == "get_config_schema":
+                client.get_config_schema(args.get("model"))
+            elif name == "get_processor_schema":
+                client.get_processor_schema(args["pipeline_id"])
+            elif name == "list_processors":
+                client.list_processors()
+            else:
+                client.get_plugin_catalog()
+        assert exc.value.status_code == 502
+        assert secret not in str(exc.value)
+        assert secret not in (exc.value.body or "")
+    positive, direct, _calls = _server({
+        ("GET", "/api/workflows/config-schema", "model=PromptSettings"): (200, json.dumps(page).encode()),
+        ("GET", "/api/processors/sdxl/schema"): (200, json.dumps(ui).encode()),
+    })
+    assert direct.get_config_schema("PromptSettings") == page
+    assert positive.call_tool("get_processor_schema", {"pipeline_id": "sdxl"})["isError"] is False
+    assert json.loads(positive.call_tool("get_processor_schema", {"pipeline_id": "sdxl"})["content"][0]["text"]) == ui
