@@ -847,3 +847,15 @@ def test_upscale_original_receipt_distinguishes_unknown_and_preserves_public_run
         'stopping': False, 'frames_completed': 9, 'latest_frame': 8}
     with pytest.raises(HextileClientError):
         client.upscale_sequence('seq_source', request_id, None, 2, 'x' * 121)
+
+
+def test_upscale_receipt_requires_original_deterministic_child():
+    import uuid
+    request_id = str(uuid.uuid4())
+    for state in ('reserved', 'interrupted', 'accepted'):
+        for child in (None, 'seq_' + 'f' * 32):
+            client = _client({}, {'request_id': request_id, 'state': state, 'sequence_id': child})
+            with pytest.raises(HextileClientError):
+                client.get_sequence_upscale_request(request_id)
+    client = _client({}, {'request_id': request_id, 'state': 'removed'})
+    assert client.get_sequence_upscale_request(request_id) == {'request_id': request_id, 'state': 'removed'}

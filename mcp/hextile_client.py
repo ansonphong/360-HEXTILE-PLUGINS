@@ -4808,6 +4808,8 @@ class Client:
             raise HextileClientError("Invalid sequence upscale receipt", kind="other")
         result = {"request_id": request_id, "state": data["state"]}
         expected = "seq_" + uuid.UUID(request_id).hex
+        if data["state"] in {"reserved", "interrupted", "accepted"} and data.get("sequence_id") != expected:
+            raise HextileClientError("Invalid sequence upscale receipt identity", kind="other")
         if data.get("sequence_id") == expected:
             result["sequence_id"] = expected
         for key in ("scale_factor", "revision", "frames_completed", "frames_failed", "frames_pending", "frames_queued", "total_frames", "latest_frame", "active_frame"):
