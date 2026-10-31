@@ -18,7 +18,17 @@ the actual named render/control tools. Their native input/settings/status
 contracts are described below; metadata never grants admission. Generic
 `create_sequence`/`start_sequence` remain folder upres. APP owns operational
 Standard/Pro access, resources, ownership and publication; unsupported work
-returns its actual native refusal.
+returns its actual native refusal. Optional `render_route` on
+`shader_preflight_still_export`, `shader_export_still`,
+`preflight_shader_sequence`, `render_shader_sequence`, and
+`shader_request_preview` selects `native`, `webgl-raw-float`,
+`webgl-display-native-encode`, `webgl-browser-encode-desktop`, or
+`webgl-browser-encode-backend`. Omit it for native. Discover availability on
+`native_render.render_routes`; a fixture pass is not availability. No mounted
+capable client is `no_capable_client`. The agent does not produce WebGL frames:
+APP delivers mounted `shader_render_produce` and the Workshop claims the grant.
+Read `route`, `producer_state`, and `published_cursor` from the existing status
+tools. Stop and recovery use the original IDs.
 
 ## Credits and sources
 

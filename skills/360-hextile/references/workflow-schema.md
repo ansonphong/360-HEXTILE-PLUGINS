@@ -44,6 +44,19 @@ Native Shader/Fractal rendering uses the named native tools, separate from a
 Workflow document. Require `get_capabilities.native_render.contract` equal to
 `native-render/1`; missing support requires upgrade rather than dropped fields.
 The capability projection gives actual native bounds and supported combinations.
+`native_render.render_routes` lists `native`, `webgl-raw-float`,
+`webgl-display-native-encode`, `webgl-browser-encode-desktop`, and
+`webgl-browser-encode-backend`. The default is native. An omitted `render_route`
+on `shader_preflight_still_export`, `shader_export_still`,
+`preflight_shader_sequence`, `render_shader_sequence`, and
+`shader_request_preview` stays native. A route is available only while that
+discovery row says `available:true`. A qualification fixture does not make it
+available. No mounted capable Workshop refuses with `no_capable_client`; a
+desktop writer without the desktop app refuses with `desktop_only`. The agent
+does not produce frames. APP delivers `shader_render_produce` on the existing
+mounted channel, and the Workshop claims that grant. Status keeps `route`,
+`producer_state`, and `published_cursor` inside the existing projection.
+Cancel and recovery stay on the original request, sequence, run, and attempt IDs.
 
 Full-quality Shader inspection advertises `native_render.shader_preview.profile`
 `shader-export-preview/2`. `shader_request_preview` adds required `mode:"still"|

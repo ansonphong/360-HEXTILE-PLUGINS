@@ -1,0 +1,58 @@
+"""Optional render_route stays native until discovery marks the route available."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "mcp"))
+
+from hextile_client import Client, HextileClientError, _checked_render_route  # noqa: E402
+from hextile_mcp import SHADER_EXTENSION_TOOLS, _SHADER_SEQUENCE_REQUEST  # noqa: E402
+
+NAMES = (
+    "shader_preflight_still_export", "shader_export_still", "shader_request_preview",
+)
+ROUTE = {
+    "profile": "shader-render-route/1",
+    "route": "webgl-display-native-encode",
+}
+
+
+def _tool(name: str) -> dict:
+    return next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == name)
+
+
+def test_named_tools_keep_render_route_optional_and_native_by_omission():
+    for name in NAMES:
+        schema = _tool(name)["inputSchema"]
+        assert "render_route" in schema["properties"]
+        assert "render_route" not in schema["required"]
+        assert "shader_render_produce" in _tool(name)["description"]
+    sequence = _SHADER_SEQUENCE_REQUEST
+    assert "render_route" in sequence["properties"]
+    assert "render_route" not in sequence["required"]
+    assert _checked_render_route(ROUTE)
+    assert _checked_render_route({**ROUTE, "path": "D:/frames/a.png"}) is False
+    browser = {"profile": "shader-render-route/1", "route": "webgl-browser-encode-backend",
+               "browser_codec": {"format": "png"}}
+    assert _checked_render_route(browser)
+    assert _checked_render_route({**browser, "browser_codec": {"format": "jpeg"}}) is False
+
+
+def test_unavailable_webgl_route_refuses_before_a_fixture_can_enable_it():
+    client = Client.__new__(Client)
+    client.get_capabilities = lambda: {"native_render": {
+        "contract": "native-render/1", "sequences": {}, "stills": {},
+        "render_routes": [{"route": "webgl-display-native-encode", "available": False,
+                           "reason": "no_capable_client"}],
+    }}
+    with pytest.raises(HextileClientError) as refused:
+        client._require_native_render(render_route=ROUTE)
+    assert refused.value.status_code == 409
+    assert str(refused.value) == "no_capable_client"
+    client._require_native_render(render_route=None)
+    client._require_native_render(render_route={"profile": "shader-render-route/1", "route": "native"})

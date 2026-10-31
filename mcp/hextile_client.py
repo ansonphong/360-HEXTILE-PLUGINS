@@ -455,7 +455,8 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     and result["released"] is False and result["status"] == "cancel_pending" and result["cleanup"] == "pending"):
                 raise invalid()
         elif operation in {"still", "get_job", "stop_job"}:
-            allowed = {"request_id", "profile", "job", "publication", "state", "output_name", "output_path", "reason"}
+            allowed = {"request_id", "profile", "job", "publication", "state", "output_name", "output_path", "reason",
+                       "route", "producer_state", "published_cursor"}
             if (not {"request_id", "profile", "job"} <= keys or keys - allowed
                     or operation == "still" and "state" not in result
                     or result["profile"] != args["profile"]
@@ -466,7 +467,12 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     or "publication" in result and result["publication"] not in {
                          "unknown", "complete", "failed", "queued", "processing", "completed",
                          "cancelled", "stop_requested", "stopped", "Interrupted"}
-                    or "output_name" in result and type(result["output_name"]) is not str):
+                    or "output_name" in result and type(result["output_name"]) is not str
+                    or "route" in result and result["route"] not in _RENDER_ROUTE_NAMES
+                    or "producer_state" in result and (type(result["producer_state"]) is not str
+                        or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", result["producer_state"]) is None)
+                    or "published_cursor" in result and (type(result["published_cursor"]) is not int
+                        or result["published_cursor"] < 0)):
                 raise invalid()
             job = result["job"]
             if type(job) is not dict:
@@ -662,9 +668,9 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
         "sequence_input": (_OUTPUT_OWNER, set()),
-        "preview": (_OUTPUT_OWNER | {"output", "mode", "width", "height"}, {"sequence_sample"}),
-        "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision"}),
-        "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, set()),
+        "preview": (_OUTPUT_OWNER | {"output", "mode", "width", "height"}, {"sequence_sample", "render_route"}),
+        "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision", "render_route"}),
+        "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, {"render_route"}),
         "get_preview": (common, {"image"}),
         "release_preview": (common, set()),
         "get_job": (common | {"profile"}, set()),
@@ -675,6 +681,8 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     required, optional = fields[operation]
     if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
         raise HextileClientError("Expected closed Shader output arguments", status_code=422, kind="other")
+    if "render_route" in args and not _checked_render_route(args["render_route"]):
+        raise HextileClientError("Expected a closed render_route", status_code=422, kind="other")
     _native_shader_args("state", {key: args[key] for key in ("shader", "project_context_witness")})
     for key in ("request_id", "preflight_request_id"):
         if key in args:
@@ -1220,7 +1228,35 @@ _SHADER_SEQUENCE_REQUIRED = {
     "start_time", "end_time", "width", "height", "seed", "output",
 }
 _SHADER_SEQUENCE_OPTIONAL = {"resource_manifest_hash", "selected_resource_frames",
-                             "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy"}
+                             "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy",
+                             "render_route"}
+_RENDER_ROUTE_NAMES = {
+    "native", "webgl-raw-float", "webgl-display-native-encode",
+    "webgl-browser-encode-desktop", "webgl-browser-encode-backend",
+}
+_BROWSER_ROUTES = {"webgl-browser-encode-desktop", "webgl-browser-encode-backend"}
+
+
+def _checked_render_route(value: Any) -> bool:
+    """Closed route record. Absent on the request means native and is not this object."""
+    if type(value) is not dict or value.get("profile") != "shader-render-route/1":
+        return False
+    route = value.get("route")
+    if route not in _RENDER_ROUTE_NAMES:
+        return False
+    browser = route in _BROWSER_ROUTES
+    if set(value) != ({"profile", "route", "browser_codec"} if browser else {"profile", "route"}):
+        return False
+    if not browser:
+        return True
+    codec = value["browser_codec"]
+    if type(codec) is not dict or codec.get("format") not in ("png", "jpeg"):
+        return False
+    if codec["format"] == "png":
+        return set(codec) == {"format"}
+    quality = codec.get("jpeg_quality")
+    return (set(codec) == {"format", "jpeg_quality"} and type(quality) in (int, float)
+            and not isinstance(quality, bool) and 0.50 <= float(quality) <= 1.00)
 
 
 def _native_folder_intent(value: Any) -> bool:
@@ -1472,6 +1508,8 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
 
     if (not isinstance(body, Mapping) or not _SHADER_SEQUENCE_REQUIRED <= set(body)
             or set(body) - _SHADER_SEQUENCE_REQUIRED - _SHADER_SEQUENCE_OPTIONAL):
+        refuse()
+    if "render_route" in body and not _checked_render_route(body["render_route"]):
         refuse()
     mode = body.get("publication_mode")
     folder = body.get("folder_export")
@@ -2678,7 +2716,8 @@ class Client:
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,
                                sequence_inputs: bool = False, preview_inspector: bool = False,
-                               preservation: bool = False, raster_policy: bool = False) -> None:
+                               preservation: bool = False, raster_policy: bool = False,
+                               render_route: Mapping[str, Any] | None = None) -> None:
         """New native semantics require an explicitly advertised peer contract."""
         try:
             capabilities = self.get_capabilities()
@@ -2708,6 +2747,14 @@ class Client:
                     "static_frame": True, "animated_sample": True}):
             raise HextileClientError("Native render contract unavailable on this APP peer",
                                      kind="other", status_code=501)
+        if render_route is None or render_route.get("route") == "native":
+            return
+        rows = native.get("render_routes")
+        match = next((row for row in rows if isinstance(row, Mapping) and row.get("route") == render_route["route"]),
+                     None) if isinstance(rows, list) else None
+        if not isinstance(match, Mapping) or match.get("available") is not True:
+            reason = match.get("reason") if isinstance(match, Mapping) and type(match.get("reason")) is str else "no_capable_client"
+            raise HextileClientError(reason, kind="other", status_code=409)
 
     def describe_image(self, body: Mapping[str, Any]) -> Any:
         """Ask APP to caption one exact local source; never open image bytes here."""
@@ -3200,9 +3247,11 @@ class Client:
 
     def _shader_sequence_post(self, body: Mapping[str, Any], *, preflight: bool) -> dict[str, Any]:
         validate_shader_sequence_request(body)
+        route = body.get("render_route") if isinstance(body.get("render_route"), Mapping) else None
         if (body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1
-                or 'input_capture_id' in body or 'preserve_360' in body.get('output', {})):
-            self._require_native_render(sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}), raster_policy='raster_policy' in body)
+                or 'input_capture_id' in body or 'preserve_360' in body.get('output', {})
+                or route is not None):
+            self._require_native_render(sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}), raster_policy='raster_policy' in body, render_route=route)
         path = "/api/shaders/sequences/preflight" if preflight else "/api/shaders/sequences"
         try:
             data = self.post_json(path, dict(body),
@@ -3266,6 +3315,13 @@ class Client:
             result["attempt_id"] = data["attempt_id"]
         elif data.get("attempt_id") is None and "attempt_id" in data:
             result["attempt_id"] = None
+        route = data.get("render_route")
+        if isinstance(route, Mapping) and route.get("route") in _RENDER_ROUTE_NAMES and route.get("profile") == "shader-render-route/1":
+            result["route"] = route["route"]
+        elif type(data.get("route")) is str and data["route"] in _RENDER_ROUTE_NAMES:
+            result["route"] = data["route"]
+        if type(data.get("producer_state")) is str and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", data["producer_state"]):
+            result["producer_state"] = data["producer_state"]
         for key in ("frame_count", "width", "height", "published_cursor", "frames_pending",
                     "frames_queued", "frames_processing", "frames_completed", "frames_failed", "attempt_revision"):
             if type(data.get(key)) is int and data[key] >= 0:
@@ -6240,14 +6296,17 @@ class Client:
 
     def _shader_output_post(self, operation: str, args: Mapping[str, Any], path: str) -> dict:
         _shader_output_args(operation, args)
+        route = args.get("render_route") if isinstance(args.get("render_route"), Mapping) else None
         if ((operation in {"preflight", "still"} and args.get("profile") == "shader-raster-still/1")
                 or operation == "preflight" and (args.get("allow_unpreviewed_revision") is True
                     or args.get("profile") == "shader-linear-rgba-exr/1"
                     and args["output"].get("projection", "equirectangular") != "equirectangular")
-                or operation == "preflight" and ({"preserve_360", "raster_policy"} & args.get("output", {}).keys())):
-            self._require_native_render(still_profile=args["profile"],
+                or operation == "preflight" and ({"preserve_360", "raster_policy"} & args.get("output", {}).keys())
+                or route is not None):
+            self._require_native_render(still_profile=args.get("profile") if operation in {"preflight", "still"} else None,
                 preservation="preserve_360" in args.get("output", {}),
-                raster_policy="raster_policy" in args.get("output", {}))
+                raster_policy="raster_policy" in args.get("output", {}),
+                render_route=route)
         try:
             result = self.request_json("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
         except HextileClientError as exc:
@@ -6262,7 +6321,8 @@ class Client:
         _shader_output_args("preview", args)
         self._require_native_render(preview_inspector=True,
             preservation="preserve_360" in args.get("output", {}),
-            raster_policy="raster_policy" in args.get("output", {}))
+            raster_policy="raster_policy" in args.get("output", {}),
+            render_route=args.get("render_route") if isinstance(args.get("render_route"), Mapping) else None)
         return self._shader_output_post("preview", args, "/api/shaders/agent-operations/output/preview")
 
     def capture_shader_sequence_input(self, args: Mapping[str, Any]) -> dict:

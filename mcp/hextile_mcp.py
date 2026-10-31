@@ -814,6 +814,18 @@ _NATIVE_FOLDER_INTENT["allOf"] = [
      "then": {"required": ["quality_if_jpg"], "properties": {"quality_if_jpg": {"type": "integer"}}},
      "else": {"properties": {"quality_if_jpg": {"type": "null"}}}},
 ]
+_RENDER_ROUTES = (
+    "native", "webgl-raw-float", "webgl-display-native-encode",
+    "webgl-browser-encode-desktop", "webgl-browser-encode-backend",
+)
+_RENDER_ROUTE = _shader_closed({
+    "profile": {"const": "shader-render-route/1"},
+    "route": {"enum": list(_RENDER_ROUTES)},
+    "browser_codec": _shader_closed({
+        "format": {"enum": ["png", "jpeg"]},
+        "jpeg_quality": {"type": "number", "minimum": 0.5, "maximum": 1},
+    }, ("jpeg_quality",)),
+}, ("browser_codec",))
 _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "input_capture_id": {"type": "string", "pattern": r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
     "shader_ref": _shader_closed({"origin": {"enum": ["builtin", "user", "project"]},
@@ -843,7 +855,8 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "output": _SHADER_SEQUENCE_OUTPUT,
     "folder_export": {"oneOf": [_NATIVE_FOLDER_INTENT, {"type": "null"}]},
     "publication_mode": {"oneOf": [{"const": "deferred"}, {"type": "null"}]},
-}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy"))
+    "render_route": _RENDER_ROUTE,
+}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy", "render_route"))
 _SHADER_SEQUENCE_REQUEST["allOf"] = [
     {"if": {"properties": {"publication_mode": {"const": "deferred"}}, "required": ["publication_mode"]},
      "then": {"properties": {"folder_export": {"type": "null"}}},
@@ -2558,7 +2571,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "preflight_shader_sequence",
      "description": "Check a confirmed saved Shader revision and exact rational native interval without queuing. "
                     "Use the returned deterministic sequence_id and request_hash for uncertain render recovery. "
-                    "Direct PNG/JPG uses folder_export; explicit deferred keeps its managed native master.",
+                    "Direct PNG/JPG uses folder_export; explicit deferred keeps its managed native master. "
+                    "Absent render_route stays native. A WebGL route delivers shader_render_produce to the mounted Workshop.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("preflight_shader_sequence")},
     {"name": "inspect_shader_sequence_output",
@@ -2568,7 +2582,8 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Queue only the exact saved Shader request already preflighted, with its caller-known "
                     "idempotency_key and confirmed revision. On an uncertain reply, GET the known sequence_id "
                     "and compare request_hash; unknown 404 is an unknown outcome, never blind repost. "
-                    "Direct output uses its selected folder and encoding; explicit deferred retains the legacy master.",
+                    "Direct output uses its selected folder and encoding; explicit deferred retains the legacy master. "
+                    "Absent render_route stays native. The agent does not produce frames; shader_render_produce is claimed by the mounted Workshop.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("render_shader_sequence")},
     _tool_def("get_shader_sequence",
@@ -2934,11 +2949,12 @@ SHADER_EXTENSION_TOOLS = [
               ["project_context_witness"]),
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_request_preview", "Request shader-export-preview/2 at the selected full dimensions and supersampling. Still freezes the completed frame; Sequence evaluates the exact end-exclusive rational sample and native replay. Requires advertised native limits and the private clean saved mounted Capture owner. Recover the original operation ID; never repost under a new ID.",
+    _tool_def("shader_request_preview", "Request shader-export-preview/2 at the selected full dimensions and supersampling. Still freezes the completed frame; Sequence evaluates the exact end-exclusive rational sample and native replay. Requires advertised native limits and the private clean saved mounted Capture owner. Recover the original operation ID; never repost under a new ID. Absent render_route stays native. A WebGL route is delivered as shader_render_produce to the mounted Workshop; this tool does not produce frames.",
               {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT, "mode": {"enum": ["still", "sequence"]},
                "width": {"type": "integer", "minimum": 4, "maximum": 16384},
                "height": {"type": "integer", "minimum": 2, "maximum": 8192},
-               "sequence_sample": _PREVIEW_SAMPLE}, _OUTPUT_OWNER_REQUIRED + ["output", "mode", "width", "height"]),
+               "sequence_sample": _PREVIEW_SAMPLE, "render_route": _RENDER_ROUTE},
+              _OUTPUT_OWNER_REQUIRED + ["output", "mode", "width", "height"]),
     _tool_def("shader_capture_sequence_input", "Freeze camera pose and persistent toggles from the current completed Shader frame for offline sequences; no GPU work or private input bytes. Recover the original ticket with shader_get_operation (asset scope). Once applied, pass the same request_id as input_capture_id to sequence preflight/render. Continue uses its stored recipe without a fresh capture.",
               _OUTPUT_OWNER, _OUTPUT_OWNER_REQUIRED),
     _tool_def("shader_get_preview", "Read actual full-resolution dimensions, selected supersampling, exact sample and native progress by original request ID. Completed metadata may include native timing (setup/frame/history separately) and an approximate sequence estimate based on one preview, excluding encoding/writing and process launch/transport. Missing timing means unavailable; no benchmark renders are started. Image true opts in to a labeled reduced display attachment (max512px/side,1MiB), not source-pixel quality. The native inspector retains the full-quality RGB raster. Pixels never enter text JSON.",
@@ -2947,13 +2963,13 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_release_preview", "Cancel/release this original inspector, including a queued capture or resource freeze, without starting new work. A cancel_pending result retains the same request ID until cleanup is confirmed; it does not stop an accepted export Sequence.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_preflight_still_export", "Preflight one native PNG/JPG raster, PNG master, linear EXR, or Dome profile using the mounted completed frame; no GPU start.",
+    _tool_def("shader_preflight_still_export", "Preflight one native PNG/JPG raster, PNG master, linear EXR, or Dome profile using the mounted completed frame; no GPU start. Absent render_route stays native. WebGL admission delivers shader_render_produce to the mounted Workshop.",
               {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT,
-               "allow_unpreviewed_revision": {"type": "boolean"}},
+               "allow_unpreviewed_revision": {"type": "boolean"}, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["profile", "output"]),
-    _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting.",
+    _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting. Absent render_route stays native. The agent does not produce WebGL frames; the mounted Workshop claims shader_render_produce.",
               {**_OUTPUT_OWNER, "preflight_request_id": _NATIVE_SHADER_REQUEST_ID,
-               "profile": _OUTPUT_PROFILE},
+               "profile": _OUTPUT_PROFILE, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["preflight_request_id", "profile"]),
     _tool_def("shader_get_output_job", "Read a native still job by original UUID and Project witness without starting GPU work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
