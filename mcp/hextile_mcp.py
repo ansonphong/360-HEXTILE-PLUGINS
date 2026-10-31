@@ -486,6 +486,8 @@ def _tool_def(
     }
     if required:
         schema["required"] = required
+    if name == "upscale_sequence":
+        schema["oneOf"] = [{"required": ["project"]}, {"required": ["scope_witness"]}]
     return {
         "name": name,
         "description": description,
@@ -1961,9 +1963,10 @@ TOOLS: list[dict[str, Any]] = [
               {"source_id": {"type": "string", "minLength": 1},
                "request_id": {"type": "string", "format": "uuid"},
                "project": {"type": ["string", "null"]},
+               "scope_witness": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Opaque scope from inspect_sequence_upscale"},
                "scale_factor": {"type": "integer", "enum": [2, 4]},
                "name": {"type": "string", "minLength": 1, "maxLength": 120}},
-              required=["source_id", "request_id", "project", "scale_factor"]),
+              required=["source_id", "request_id", "scale_factor"]),
     _tool_def("get_sequence_upscale_request", "Recover the original sequence upscale request by its UUID.",
               {"request_id": {"type": "string", "format": "uuid"}}, required=["request_id"]),
     _tool_def(
@@ -3477,7 +3480,7 @@ _DISCOVERY_ARGUMENT_KEYS = {
 _CLOSED_ARGUMENT_KEYS = {
     **_DISCOVERY_ARGUMENT_KEYS,
     "inspect_sequence_upscale": frozenset({"source_id"}),
-    "upscale_sequence": frozenset({"source_id", "request_id", "project", "scale_factor", "name"}),
+    "upscale_sequence": frozenset({"source_id", "request_id", "project", "scope_witness", "scale_factor", "name"}),
     "get_sequence_upscale_request": frozenset({"request_id"}),
     "get_app_preferences": frozenset(),
     "update_app_preferences": frozenset({"changes"}),
@@ -5291,10 +5294,12 @@ class HextileMcpServer:
         return self.client.inspect_sequence_upscale(args.get("source_id"))
 
     def _upscale_sequence(self, args: dict[str, Any]) -> Any:
-        if "project" not in args:
-            raise HextileClientError("project is required", kind="other", status_code=422)
+        if (("project" in args) == ("scope_witness" in args)
+                or "scope_witness" in args and args["scope_witness"] is None):
+            raise HextileClientError("Provide project or scope_witness", kind="other", status_code=422)
         return self.client.upscale_sequence(args.get("source_id"), args.get("request_id"), args.get("project"),
-                                            args.get("scale_factor"), args.get("name"))
+                                            args.get("scale_factor"), args.get("name"),
+                                            **({"scope_witness": args["scope_witness"]} if "scope_witness" in args else {}))
 
     def _get_sequence_upscale_request(self, args: dict[str, Any]) -> Any:
         return self.client.get_sequence_upscale_request(args.get("request_id"))

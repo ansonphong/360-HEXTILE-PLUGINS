@@ -4722,7 +4722,7 @@ class Client:
             raise HextileClientError("request_id must be a canonical UUID", kind="other", status_code=422)
         return value
 
-    def _require_sequence_upscale(self) -> None:
+    def _require_sequence_upscale(self, *, require_scope: bool = False) -> None:
         try:
             capabilities = self.get_capabilities()
         except HextileClientError as exc:
@@ -4730,8 +4730,9 @@ class Client:
                 raise HextileClientError("Sequence upscale is unavailable on this APP version", kind="other", status_code=501) from exc
             raise self._upscale_refusal(exc) from exc
         feature = capabilities.get("sequence_upscale") if isinstance(capabilities, dict) else None
-        if not isinstance(feature, dict) or not feature.get("version"):
-            raise HextileClientError("Sequence upscale is unavailable on this APP version", kind="other", status_code=501)
+        if (not isinstance(feature, dict) or not feature.get("version")
+                or require_scope and feature.get("scope_witness_version") != 1):
+            raise HextileClientError("Sequence upscale scope discovery is unavailable on this APP version", kind="other", status_code=501)
 
     @staticmethod
     def _upscale_refusal(exc: HextileClientError) -> HextileClientError:
@@ -4748,14 +4749,16 @@ class Client:
 
     def inspect_sequence_upscale(self, source_id: str) -> Any:
         sid = self._sequence_metadata_id(source_id)
-        self._require_sequence_upscale()
+        self._require_sequence_upscale(require_scope=True)
         try:
             data = self.get_json(f"/api/sequences/{sid}/upscale", max_bytes=_DISCOVERY_MAX_BYTES)
         except HextileClientError as exc:
             raise self._upscale_refusal(exc) from exc
-        if not isinstance(data, dict) or type(data.get("eligible")) is not bool:
+        if (not isinstance(data, dict) or type(data.get("eligible")) is not bool
+                or type(data.get("scope_witness")) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", data["scope_witness"]) is None):
             raise HextileClientError("Invalid sequence upscale inspection", kind="other")
-        result = {key: data[key] for key in ("eligible", "name", "frame_count", "width", "height", "source_sequence_id", "model_available") if key in data}
+        result = {key: data[key] for key in ("eligible", "name", "frame_count", "width", "height", "source_sequence_id", "model_available", "scope_witness") if key in data}
         rate = data.get("frame_rate")
         if isinstance(rate, dict) and type(rate.get("num")) is int and type(rate.get("den")) is int:
             result["frame_rate"] = {"num": rate["num"], "den": rate["den"]}
@@ -4767,15 +4770,18 @@ class Client:
         return result
 
     def upscale_sequence(self, source_id: str, request_id: str, project: Optional[str],
-                         scale_factor: int, name: Optional[str] = None) -> Any:
+                         scale_factor: int, name: Optional[str] = None, *, scope_witness: Optional[str] = None) -> Any:
         sid = self._sequence_metadata_id(source_id)
         self._upscale_request_id(request_id)
         if (type(scale_factor) is not int or scale_factor not in (2, 4)
                 or project is not None and (type(project) is not str or not project or len(project) > 4096)
-                or name is not None and (type(name) is not str or not 1 <= len(name) <= 120)):
+                or name is not None and (type(name) is not str or not 1 <= len(name) <= 120)
+                or scope_witness is not None and (project is not None or type(scope_witness) is not str
+                                                   or re.fullmatch(r"[0-9a-f]{64}", scope_witness) is None)):
             raise HextileClientError("Invalid sequence upscale request", kind="other", status_code=422)
-        self._require_sequence_upscale()
-        body = {"request_id": request_id, "project": project, "scale_factor": scale_factor}
+        self._require_sequence_upscale(require_scope=scope_witness is not None)
+        body = {"request_id": request_id, "scale_factor": scale_factor}
+        body["scope_witness" if scope_witness is not None else "project"] = scope_witness if scope_witness is not None else project
         if name is not None:
             body["name"] = name
         try:

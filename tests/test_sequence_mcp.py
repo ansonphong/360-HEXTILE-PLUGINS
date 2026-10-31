@@ -779,12 +779,12 @@ def test_sequence_upscale_admission_recovery_and_unsupported_peer():
     def opener(req, timeout=None):
         seen.append((req.get_method(), req.full_url, json.loads(req.data) if req.data else None))
         if req.full_url.endswith('/capabilities'):
-            return _Resp({'sequence_upscale': {'version': 1, 'scales': [2, 4]}})
+            return _Resp({'sequence_upscale': {'version': 1, 'scope_witness_version': 1, 'scales': [2, 4]}})
         if '/upscale-requests/' in req.full_url:
             return _Resp({'request_id': request_id, 'state': 'accepted', 'sequence_id': sid,
                           'project': 'C:/private', 'request_hash': 'private'})
         if req.get_method() == 'GET':
-            return _Resp({'eligible': True, 'frame_count': 2, 'frame_rate': {'num': 30000, 'den': 1001},
+            return _Resp({'eligible': True, 'scope_witness': 'c' * 64, 'frame_count': 2, 'frame_rate': {'num': 30000, 'den': 1001},
                           'scales': [{'scale_factor': 2, 'width': 20, 'height': 10, 'eligible': True}],
                           'source_path': 'C:/private'})
         return _Resp({'sequence_id': sid, 'source_path': 'C:/private', 'scale_factor': 2, 'run_id': 'a' * 32, 'frame_rate': {'num': 30000, 'den': 1001}})
@@ -905,3 +905,34 @@ def test_sequence_list_preserves_public_derived_and_legacy_metadata():
     assert payload['tags'] == ['tag_a'] and payload['is_favorite'] is True and payload['sequence_type_id'] == 'legacy'
     assert payload['derivation']['source_sequence_id'] == 'seq_parent' and payload['upscale']['revision'] == 1
     assert payload['source_available'] is True and 'private' not in json.dumps(payload)
+
+
+def test_upscale_scope_discovery_and_create_never_exposes_project_locator():
+    import uuid
+    request_id = str(uuid.uuid4())
+    sid = 'seq_' + uuid.UUID(request_id).hex
+    token = 'a' * 64
+    seen = []
+    def opener(req, timeout=None):
+        seen.append((req.full_url, json.loads(req.data) if req.data else None))
+        if req.full_url.endswith('/capabilities'):
+            return _Resp({'sequence_upscale': {'version': 1, 'scope_witness_version': 1}})
+        if req.get_method() == 'GET':
+            return _Resp({'eligible': True, 'scope_witness': token, 'project': 'C:/private'})
+        return _Resp({'sequence_id': sid, 'project': 'C:/private'})
+    client = Client(base_url=BASE, opener=opener)
+    inspected = client.inspect_sequence_upscale('seq_source')
+    assert inspected == {'eligible': True, 'scope_witness': token}
+    assert client.upscale_sequence('seq_source', request_id, None, 2, scope_witness=token)['sequence_id'] == sid
+    assert seen[-1][1] == {'request_id': request_id, 'scale_factor': 2, 'scope_witness': token}
+    server = HextileMcpServer(client=client)
+    listed = server.handle_rpc({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}})
+    schema = next(tool['inputSchema'] for tool in listed['result']['tools'] if tool['name'] == 'upscale_sequence')
+    body = {'source_id': 'seq_source', 'request_id': request_id, 'scale_factor': 2, 'scope_witness': token}
+    jsonschema.validate(body, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**body, 'project': None}, schema)
+    assert server.call_tool('upscale_sequence', {**body, 'project': None})['isError']
+    with pytest.raises(HextileClientError) as old:
+        _client({}, {'sequence_upscale': {'version': 1}}).inspect_sequence_upscale('seq_source')
+    assert old.value.status_code == 501
