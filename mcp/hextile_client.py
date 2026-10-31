@@ -4712,6 +4712,24 @@ class Client:
         sid = urllib.parse.quote(sequence_id, safe="")
         return self.get_json(f"/api/sequences/{sid}")
 
+    def list_sequence_frames(self, sequence_id: str, page: int = 1, page_size: int = 50) -> Any:
+        """Read one bounded page without exposing source locators or private hashes."""
+        if type(page) is not int or page < 1 or type(page_size) is not int or not 1 <= page_size <= 100:
+            raise HextileClientError("page must be positive and page_size must be 1–100", kind="other", status_code=422)
+        sid = self._sequence_metadata_id(sequence_id)
+        data = self.get_json(f"/api/sequences/{sid}/frames", params={"page": page, "page_size": page_size})
+        if not isinstance(data, dict) or not isinstance(data.get("frames"), list) or len(data["frames"]) > page_size:
+            raise HextileClientError("Invalid sequence frame page", kind="other")
+        frames = []
+        for frame in data["frames"]:
+            if not isinstance(frame, dict) or type(frame.get("index")) is not int or not isinstance(frame.get("status"), str):
+                raise HextileClientError("Invalid sequence frame page", kind="other")
+            item = {"index": frame["index"], "status": frame["status"]}
+            if frame.get("output_file") and frame["status"] == "completed":
+                item["output_handle"] = f"/api/sequences/{sid}/frame-output/{frame['index']}"
+            frames.append(item)
+        return {key: data[key] for key in ("page", "page_size", "total_frames", "total_pages") if key in data} | {"frames": frames}
+
     def list_sequences(self, lifecycle_status: str = "active") -> Any:
         """GET /api/sequences/?lifecycle_status= (default active)."""
         status = lifecycle_status or "active"

@@ -102,6 +102,7 @@ TOOL_NAMES = (
     "start_sequence",
     "get_sequence",
     "list_sequences",
+    "list_sequence_frames",
     "stop_sequence",
     "rename_sequence",
     "set_sequence_lifecycle",
@@ -209,6 +210,7 @@ _READ_ONLY = frozenset(
         "get_guide",
         "get_sequence",
         "list_sequences",
+        "list_sequence_frames",
         "get_sequence_tags",
         "get_batch_preflight",
         "list_batches",
@@ -1935,6 +1937,14 @@ TOOLS: list[dict[str, Any]] = [
         },
     ),
     _tool_def(
+        "list_sequence_frames",
+        "Read one bounded page of sequence frame states and output handles.",
+        {"sequence_id": {"type": "string", "minLength": 1},
+         "page": {"type": "integer", "minimum": 1, "default": 1},
+         "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+        required=["sequence_id"],
+    ),
+    _tool_def(
         "stop_sequence",
         "Stop a running sequence (POST /api/sequences/{id}/stop). "
         "Status → cancelled. Destructive. Not cancel_run.",
@@ -3509,6 +3519,7 @@ class HextileMcpServer:
             "start_sequence": self._start_sequence,
             "get_sequence": self._get_sequence,
             "list_sequences": self._list_sequences,
+            "list_sequence_frames": self._list_sequence_frames,
             "rename_sequence": self._rename_sequence,
             "set_sequence_lifecycle": self._set_sequence_lifecycle,
             "set_sequence_tags": self._set_sequence_tags,
@@ -5221,6 +5232,9 @@ class HextileMcpServer:
         return self.client.list_sequences(
             str(args.get("lifecycle_status") or "active")
         )
+
+    def _list_sequence_frames(self, args: dict[str, Any]) -> Any:
+        return self.client.list_sequence_frames(args.get("sequence_id"), args.get("page", 1), args.get("page_size", 50))
 
     def _stop_sequence(self, args: dict[str, Any]) -> Any:
         sequence_id = args.get("sequence_id")

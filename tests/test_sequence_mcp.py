@@ -36,6 +36,7 @@ SEQUENCE_TOOLS = (
     "start_sequence",
     "get_sequence",
     "list_sequences",
+    "list_sequence_frames",
     "rename_sequence",
     "set_sequence_lifecycle",
     "set_sequence_tags",
@@ -708,3 +709,23 @@ def test_native_render_new_semantics_require_advertised_contract() -> None:
     native = {"contract": "native-render/1", "sequences": {}, "stills": {},
               "still_capture": capture}
     assert _client({}, {"native_render": native}).get_capabilities()["native_render"]["still_capture"] == capture
+
+
+def test_sequence_frame_page_is_bounded_and_redacts_private_data():
+    seen = {}
+    client = _client(seen, {'page': 1, 'page_size': 2, 'total_frames': 2, 'total_pages': 1,
+                            'frames': [{'index': 0, 'status': 'completed', 'output_file': 'output/a.png',
+                                        'source_file': 'C:/private/a.png', 'content_sha256': 'secret'},
+                                       {'index': 1, 'status': 'failed', 'error_message': 'C:/private'}]})
+    result = client.list_sequence_frames('seq_a', page_size=2)
+    assert result['frames'] == [{'index': 0, 'status': 'completed',
+                                'output_handle': '/api/sequences/seq_a/frame-output/0'},
+                               {'index': 1, 'status': 'failed'}]
+    assert seen['url'].endswith('/api/sequences/seq_a/frames?page=1&page_size=2')
+    for page, size in ((0, 2), (1, 101), (True, 2)):
+        with pytest.raises(HextileClientError):
+            client.list_sequence_frames('seq_a', page, size)
+    response = HextileMcpServer(client=client).handle_rpc(
+        {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}})
+    tools = {tool['name']: tool for tool in response['result']['tools']}
+    jsonschema.validate({'sequence_id': 'seq_a', 'page_size': 100}, tools['list_sequence_frames']['inputSchema'])
