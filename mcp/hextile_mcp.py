@@ -38,7 +38,6 @@ from hextile_client import (  # noqa: E402
     validate_shader_proposal,
     validate_shader_doctor,
     validate_shader_workspace,
-    _native_sequence_fields,
 )
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -5286,12 +5285,7 @@ class HextileMcpServer:
         data = self.client.list_sequences(str(args.get("lifecycle_status") or "active"))
         if not isinstance(data, list):
             raise HextileClientError("Invalid sequence list", kind="other")
-        keys = ("sequence_id", "name", "status", "lifecycle_status", "total_frames",
-                "frames_completed", "frames_failed", "pipeline", "created_at", "producer",
-                "frame_count", "width", "height", "ownership_live", "storage_available")
-        return [{**{key: item[key] for key in keys if key in item},
-                 **(_native_sequence_fields(item) if item.get("producer") in ("shader", "fractal") else {})}
-                for item in data if isinstance(item, dict)]
+        return [Client._sequence_public_fields(item) for item in data if isinstance(item, dict)]
 
     def _inspect_sequence_upscale(self, args: dict[str, Any]) -> Any:
         return self.client.inspect_sequence_upscale(args.get("source_id"))

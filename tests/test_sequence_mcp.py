@@ -859,3 +859,49 @@ def test_upscale_receipt_requires_original_deterministic_child():
                 client.get_sequence_upscale_request(request_id)
     client = _client({}, {'request_id': request_id, 'state': 'removed'})
     assert client.get_sequence_upscale_request(request_id) == {'request_id': request_id, 'state': 'removed'}
+
+
+def test_upscale_post_invalid_json_preserves_original_request():
+    import uuid
+    request_id = str(uuid.uuid4())
+    class BadResponse(_Resp):
+        def read(self, size=-1):
+            return b'{"private":"C:/secret"'
+    def opener(req, timeout=None):
+        return _Resp({'sequence_upscale': {'version': 1}}) if req.full_url.endswith('/capabilities') else BadResponse()
+    with pytest.raises(HextileClientError) as exc:
+        Client(base_url=BASE, opener=opener).upscale_sequence('seq_source', request_id, None, 2)
+    assert exc.value.kind == 'sequence_upscale_outcome_unknown'
+    assert exc.value.receipt == {'request_id': request_id}
+    assert 'secret' not in str(exc.value)
+
+
+def test_sequence_reads_and_controls_redact_private_http_errors():
+    def opener(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 409, 'conflict', None, io.BytesIO(
+            b'{"detail":{"code":"storage_unavailable","metadata_path":"C:/private/secret"}}'))
+    client = Client(base_url=BASE, opener=opener)
+    for operation in (lambda: client.get_sequence_summary('seq_a'),
+                      lambda: client.list_sequence_frames('seq_a'),
+                      lambda: client.resume_sequence('seq_a', 'a' * 32)):
+        with pytest.raises(HextileClientError) as exc:
+            operation()
+        assert exc.value.status_code == 409 and exc.value.receipt == {'code': 'storage_unavailable'}
+        assert 'private' not in str(exc.value) and exc.value.body is None
+
+
+def test_sequence_list_preserves_public_derived_and_legacy_metadata():
+    sid = 'seq_' + 'a' * 32
+    client = _client({}, [{'sequence_id': sid, 'status': 'processing', 'frame_rate': {'num': 30000, 'den': 1001},
+                           'tags': ['tag_a'], 'is_favorite': True, 'sequence_type_id': 'legacy',
+                           'derivation': {'operation': 'upscale', 'source_sequence_id': 'seq_parent',
+                                          'scale_factor': 2, 'model': 'realesrgan-x4plus',
+                                          'execution_mode': 'raw', 'source_manifest_digest': 'private'},
+                           'upscale': {'run_id': 'b' * 32, 'revision': 1, 'phase': 'saving'},
+                           'source_available': True, 'metadata_path': 'C:/private'}])
+    result = HextileMcpServer(client=client).call_tool('list_sequences', {})
+    payload = json.loads(result['content'][0]['text'])[0]
+    assert payload['frame_rate'] == {'num': 30000, 'den': 1001}
+    assert payload['tags'] == ['tag_a'] and payload['is_favorite'] is True and payload['sequence_type_id'] == 'legacy'
+    assert payload['derivation']['source_sequence_id'] == 'seq_parent' and payload['upscale']['revision'] == 1
+    assert payload['source_available'] is True and 'private' not in json.dumps(payload)

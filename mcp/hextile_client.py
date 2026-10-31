@@ -4728,7 +4728,7 @@ class Client:
         except HextileClientError as exc:
             if exc.status_code == 404:
                 raise HextileClientError("Sequence upscale is unavailable on this APP version", kind="other", status_code=501) from exc
-            raise
+            raise self._upscale_refusal(exc) from exc
         feature = capabilities.get("sequence_upscale") if isinstance(capabilities, dict) else None
         if not isinstance(feature, dict) or not feature.get("version"):
             raise HextileClientError("Sequence upscale is unavailable on this APP version", kind="other", status_code=501)
@@ -4781,7 +4781,7 @@ class Client:
         try:
             data = self.post_json(f"/api/sequences/{sid}/upscale", body, timeout=LONG_OPERATION_TIMEOUT_S)
         except HextileClientError as exc:
-            if exc.status_code is None or exc.status_code >= 500:
+            if exc.status_code is None or not 400 <= exc.status_code < 500:
                 raise HextileClientError("Sequence upscale outcome unknown; recover using the same request_id.",
                                          kind="sequence_upscale_outcome_unknown", receipt={"request_id": request_id}) from exc
             raise self._upscale_refusal(exc) from exc
@@ -4827,18 +4827,29 @@ class Client:
     def get_sequence_summary(self, sequence_id: str) -> Any:
         """Read bounded sequence metadata, projecting only public operational fields."""
         sid = self._sequence_metadata_id(sequence_id)
-        data = self.get_json(f"/api/sequences/{sid}", params={"include_frames": "false"},
-                             max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large")
+        try:
+            data = self.get_json(f"/api/sequences/{sid}", params={"include_frames": "false"},
+                                 max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large")
+        except HextileClientError as exc:
+            raise self._upscale_refusal(exc) from exc
         if not isinstance(data, dict) or data.get("sequence_id") != sequence_id or not isinstance(data.get("status"), str):
             raise HextileClientError("Invalid sequence summary", kind="other")
+        return self._sequence_public_fields(data)
+
+    @staticmethod
+    def _sequence_public_fields(data: Mapping[str, Any]) -> dict[str, Any]:
         keys = ("sequence_id", "name", "status", "lifecycle_status", "total_frames", "frames_pending",
                 "frames_queued", "frames_processing", "frames_completed", "frames_failed", "current_frame_index",
                 "frame_rate", "frame_count", "width", "height", "producer", "run_id", "run_revision",
-                "published_cursor", "ownership_live", "created_at", "started_at", "completed_at")
+                "published_cursor", "ownership_live", "created_at", "started_at", "completed_at",
+                "pipeline", "storage_available", "sequence_type_id", "is_favorite")
         result = {key: data[key] for key in keys if key in data and key != "frame_rate"}
         rate = data.get("frame_rate")
         if isinstance(rate, dict) and type(rate.get("num")) is int and type(rate.get("den")) is int:
             result["frame_rate"] = {"num": rate["num"], "den": rate["den"]}
+        tags = data.get("tags")
+        if isinstance(tags, list) and len(tags) <= 256 and all(type(tag) is str and len(tag) <= 128 for tag in tags):
+            result["tags"] = list(tags)
         if data.get("producer") in ("shader", "fractal"):
             result.update(_native_sequence_fields(data))
         derivation = data.get("derivation")
@@ -4877,7 +4888,10 @@ class Client:
         if type(run_id) is not str or re.fullmatch(r"[0-9a-f]{32}", run_id) is None:
             raise HextileClientError("run_id must be the accepted 32-hex run identity", kind="other", status_code=422)
         sid = self._sequence_metadata_id(sequence_id)
-        return self.post_json(f"/api/sequences/{sid}/{action}", {"run_id": run_id})
+        try:
+            return self.post_json(f"/api/sequences/{sid}/{action}", {"run_id": run_id})
+        except HextileClientError as exc:
+            raise self._upscale_refusal(exc) from exc
 
     def resume_sequence(self, sequence_id: str, run_id: str) -> Any:
         return self._sequence_run_action(sequence_id, run_id, "resume")
@@ -4890,8 +4904,11 @@ class Client:
         if type(page) is not int or page < 1 or type(page_size) is not int or not 1 <= page_size <= 100:
             raise HextileClientError("page must be positive and page_size must be 1–100", kind="other", status_code=422)
         sid = self._sequence_metadata_id(sequence_id)
-        data = self.get_json(f"/api/sequences/{sid}/frames", params={"page": page, "page_size": page_size},
-                             max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large")
+        try:
+            data = self.get_json(f"/api/sequences/{sid}/frames", params={"page": page, "page_size": page_size},
+                                 max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large")
+        except HextileClientError as exc:
+            raise self._upscale_refusal(exc) from exc
         if not isinstance(data, dict) or not isinstance(data.get("frames"), list) or len(data["frames"]) > page_size:
             raise HextileClientError("Invalid sequence frame page", kind="other")
         frames = []
@@ -4907,10 +4924,10 @@ class Client:
     def list_sequences(self, lifecycle_status: str = "active") -> Any:
         """GET /api/sequences/?lifecycle_status= (default active)."""
         status = lifecycle_status or "active"
-        return self.get_json(
-            "/api/sequences/",
-            params={"lifecycle_status": status},
-        )
+        try:
+            return self.get_json("/api/sequences/", params={"lifecycle_status": status})
+        except HextileClientError as exc:
+            raise self._upscale_refusal(exc) from exc
 
     def rename_sequence(self, sequence_id: str, name: str) -> Any:
         """Metadata-only rename; GET this same sequence after an uncertain reply."""
