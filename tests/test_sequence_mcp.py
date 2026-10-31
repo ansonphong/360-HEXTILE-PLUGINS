@@ -787,10 +787,10 @@ def test_sequence_upscale_admission_recovery_and_unsupported_peer():
             return _Resp({'eligible': True, 'frame_count': 2, 'frame_rate': {'num': 30000, 'den': 1001},
                           'scales': [{'scale_factor': 2, 'width': 20, 'height': 10, 'eligible': True}],
                           'source_path': 'C:/private'})
-        return _Resp({'sequence_id': sid, 'source_path': 'C:/private'})
+        return _Resp({'sequence_id': sid, 'source_path': 'C:/private', 'scale_factor': 2, 'run_id': 'a' * 32, 'frame_rate': {'num': 30000, 'den': 1001}})
     client = Client(base_url=BASE, opener=opener)
     assert client.inspect_sequence_upscale('seq_source')['frame_rate'] == {'num': 30000, 'den': 1001}
-    assert client.upscale_sequence('seq_source', request_id, 'C:/private', 2) == {'request_id': request_id, 'sequence_id': sid}
+    assert client.upscale_sequence('seq_source', request_id, 'C:/private', 2) == {'request_id': request_id, 'sequence_id': sid, 'scale_factor': 2, 'run_id': 'a' * 32, 'frame_rate': {'num': 30000, 'den': 1001}}
     assert client.get_sequence_upscale_request(request_id) == {'request_id': request_id, 'state': 'accepted', 'sequence_id': sid}
     assert seen[-2][2] == {'request_id': request_id, 'project': 'C:/private', 'scale_factor': 2}
     with pytest.raises(HextileClientError) as exc:

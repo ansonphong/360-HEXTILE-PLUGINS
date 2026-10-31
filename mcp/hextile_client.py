@@ -4789,7 +4789,22 @@ class Client:
         if not isinstance(data, dict) or data.get("sequence_id") != expected:
             raise HextileClientError("Sequence upscale outcome unknown; recover using the same request_id.",
                                      kind="sequence_upscale_outcome_unknown", receipt={"request_id": request_id})
-        return {"sequence_id": expected, "request_id": request_id}
+        result = {"sequence_id": expected, "request_id": request_id}
+        for key in ("scale_factor", "frame_count", "width", "height", "revision", "frames_completed", "frames_failed", "frames_pending", "frames_queued", "total_frames", "latest_frame", "active_frame"):
+            if type(data.get(key)) is int and data[key] >= 0:
+                result[key] = data[key]
+        for key in ("settled", "stopping"):
+            if type(data.get(key)) is bool:
+                result[key] = data[key]
+        for key in ("name", "source_sequence_id", "phase", "state"):
+            if type(data.get(key)) is str and len(data[key]) <= 128:
+                result[key] = data[key]
+        if type(data.get("run_id")) is str and re.fullmatch(r"[0-9a-f]{32}", data["run_id"]):
+            result["run_id"] = data["run_id"]
+        rate = data.get("frame_rate")
+        if isinstance(rate, dict) and type(rate.get("num")) is int and type(rate.get("den")) is int:
+            result["frame_rate"] = {"num": rate["num"], "den": rate["den"]}
+        return result
 
     def get_sequence_upscale_request(self, request_id: str) -> Any:
         self._upscale_request_id(request_id)
