@@ -180,3 +180,5 @@ Mounted Shader parameter controls are live session values, not Workflow fields, 
 ## Saved Sequence upscale
 
 When `get_capabilities` advertises `sequence_upscale`, `inspect_sequence_upscale` checks a saved source. `upscale_sequence` submits a caller-owned UUID, captured Project identity, scale 2 or 4 and optional name to the native operation. The source stays intact. A lost submission reply is resolved with `get_sequence_upscale_request` and the same UUID; do not generate another request. Use bounded `get_sequence` and `list_sequence_frames` reads and the accepted run ID for Stop, Resume and retry. No per-frame workflow loop or private source manifest is needed.
+
+A `reserved` or `interrupted` original-request receipt without a run ID is a reservation awaiting repair. Replay `upscale_sequence` with the same UUID and the same source, Project, scale and name; do not navigate to the child until that replay returns its recovered run. This repairs ownership without automatically starting GPU work.
