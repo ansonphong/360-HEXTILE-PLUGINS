@@ -4833,6 +4833,14 @@ class Client:
             raise HextileClientError("Invalid sequence upscale receipt identity", kind="other")
         if data.get("sequence_id") == expected:
             result["sequence_id"] = expected
+        witness = data.get("scope_witness")
+        if type(witness) is str and re.fullmatch(r"[0-9a-f]{64}", witness):
+            result["scope_witness"] = witness
+            if type(data.get("source_id")) is str and 1 <= len(data["source_id"]) <= 128:
+                result["source_id"] = data["source_id"]
+            name = data.get("requested_name")
+            if name is None or type(name) is str and 1 <= len(name) <= 120:
+                result["requested_name"] = name
         for key in ("scale_factor", "revision", "frames_completed", "frames_failed", "frames_pending", "frames_queued", "total_frames", "latest_frame", "active_frame"):
             if type(data.get(key)) is int and data[key] >= 0:
                 result[key] = data[key]

@@ -933,6 +933,11 @@ def test_upscale_scope_discovery_and_create_never_exposes_project_locator():
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**body, 'project': None}, schema)
     assert server.call_tool('upscale_sequence', {**body, 'project': None})['isError']
+    recovered = _client({}, {'request_id': request_id, 'state': 'interrupted', 'sequence_id': sid,
+                              'scope_witness': token, 'source_id': 'seq_source', 'requested_name': None,
+                              'scale_factor': 2, 'project': 'C:/private'}).get_sequence_upscale_request(request_id)
+    assert recovered['scope_witness'] == token and recovered['source_id'] == 'seq_source'
+    assert recovered['requested_name'] is None and 'C:/private' not in json.dumps(recovered)
     with pytest.raises(HextileClientError) as old:
         _client({}, {'sequence_upscale': {'version': 1}}).inspect_sequence_upscale('seq_source')
     assert old.value.status_code == 501
