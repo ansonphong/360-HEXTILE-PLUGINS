@@ -66,7 +66,7 @@ Clone, patch, POST:
 4. POST the patched object as `create_sequence.config` with `folder_path` (optional `name`).
 5. `start_sequence` then `get_sequence`.
 
-Poll `get_sequence` while status is `queued` or `processing`. Stop and report on `paused` and `incomplete` (`incomplete` is resumable in the app; v1 has no resume MCP tool). Terminal: `completed`, `completed_with_errors`, `failed`, `cancelled`. Request cancellation with `stop_sequence`; top-level `cancelled` alone does not prove active-frame/GPU drain.
+Poll `get_sequence` while status is `queued` or `processing`. Stop and report on `paused` and `incomplete` (for legacy sequences, use the app for resume; derived upscale children use the run-fenced controls below). Terminal: `completed`, `completed_with_errors`, `failed`, `cancelled`. Request cancellation with `stop_sequence`; top-level `cancelled` alone does not prove active-frame/GPU drain.
 
 ## Refuse
 
@@ -75,3 +75,9 @@ Poll `get_sequence` while status is `queued` or `processing`. Stop and report on
 - A `{pipeline, input, upscale}` stub as sequence config (422).
 - A second heavy GPU job unless the user asked to replace the first.
 - Inputs that are not one image file, a folder, or a video with the suffixes above.
+
+## Upscale an existing saved Sequence
+
+Call `get_capabilities` and use this door only when `sequence_upscale` is advertised. Call `inspect_sequence_upscale(source_id)` before starting; report ineligibility. Retain one caller-generated UUID as `request_id`, the captured Project identity, source ID, scale (2 or 4), and optional name. Call `upscale_sequence` with those exact values. It creates a child Sequence and keeps the source intact; do not loop over frames.
+
+If the submission reply is lost, call `get_sequence_upscale_request` with the **same** UUID. Do not invent a replacement UUID while its outcome is unknown. Use `get_sequence` for bounded child status and `list_sequence_frames` for paged frame states/output handles. Keep the accepted `run_id` and pass it to `stop_sequence`, `resume_sequence`, or `retry_sequence_failed_frames`; wait for settlement before new GPU work. Native refusals and unsupported APP versions should be reported, not bypassed with raw HTTP.

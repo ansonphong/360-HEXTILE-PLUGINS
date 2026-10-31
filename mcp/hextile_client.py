@@ -4712,6 +4712,100 @@ class Client:
         sid = urllib.parse.quote(sequence_id, safe="")
         return self.get_json(f"/api/sequences/{sid}")
 
+    @staticmethod
+    def _upscale_request_id(value: str) -> str:
+        try:
+            valid = type(value) is str and str(uuid.UUID(value)) == value
+        except (ValueError, AttributeError):
+            valid = False
+        if not valid:
+            raise HextileClientError("request_id must be a canonical UUID", kind="other", status_code=422)
+        return value
+
+    def _require_sequence_upscale(self) -> None:
+        try:
+            capabilities = self.get_capabilities()
+        except HextileClientError as exc:
+            if exc.status_code == 404:
+                raise HextileClientError("Sequence upscale is unavailable on this APP version", kind="other", status_code=501) from exc
+            raise
+        feature = capabilities.get("sequence_upscale") if isinstance(capabilities, dict) else None
+        if not isinstance(feature, dict) or not feature.get("version"):
+            raise HextileClientError("Sequence upscale is unavailable on this APP version", kind="other", status_code=501)
+
+    @staticmethod
+    def _upscale_refusal(exc: HextileClientError) -> HextileClientError:
+        code = None
+        try:
+            detail = json.loads(exc.body or "{}").get("detail")
+            if isinstance(detail, dict) and type(detail.get("code")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", detail["code"]):
+                code = detail["code"]
+        except (ValueError, AttributeError):
+            pass
+        return HextileClientError("Sequence upscale refused" + (f": {code}" if code else ""),
+                                  status_code=exc.status_code, kind=exc.kind,
+                                  receipt={"code": code} if code else None)
+
+    def inspect_sequence_upscale(self, source_id: str) -> Any:
+        sid = self._sequence_metadata_id(source_id)
+        self._require_sequence_upscale()
+        try:
+            data = self.get_json(f"/api/sequences/{sid}/upscale", max_bytes=_DISCOVERY_MAX_BYTES)
+        except HextileClientError as exc:
+            raise self._upscale_refusal(exc) from exc
+        if not isinstance(data, dict) or type(data.get("eligible")) is not bool:
+            raise HextileClientError("Invalid sequence upscale inspection", kind="other")
+        result = {key: data[key] for key in ("eligible", "name", "frame_count", "width", "height") if key in data}
+        rate = data.get("frame_rate")
+        if isinstance(rate, dict) and type(rate.get("num")) is int and type(rate.get("den")) is int:
+            result["frame_rate"] = {"num": rate["num"], "den": rate["den"]}
+        for key, fields in (("scales", ("scale_factor", "width", "height", "eligible")),
+                            ("reasons", ("code", "count", "frame_index"))):
+            if isinstance(data.get(key), list):
+                result[key] = [{field: item[field] for field in fields if field in item}
+                               for item in data[key][:100] if isinstance(item, dict)]
+        return result
+
+    def upscale_sequence(self, source_id: str, request_id: str, project: Optional[str],
+                         scale_factor: int, name: Optional[str] = None) -> Any:
+        sid = self._sequence_metadata_id(source_id)
+        self._upscale_request_id(request_id)
+        if (type(scale_factor) is not int or scale_factor not in (2, 4)
+                or project is not None and (type(project) is not str or not project or len(project) > 4096)
+                or name is not None and (type(name) is not str or not 1 <= len(name) <= 128)):
+            raise HextileClientError("Invalid sequence upscale request", kind="other", status_code=422)
+        self._require_sequence_upscale()
+        body = {"request_id": request_id, "project": project, "scale_factor": scale_factor}
+        if name is not None:
+            body["name"] = name
+        try:
+            data = self.post_json(f"/api/sequences/{sid}/upscale", body, timeout=LONG_OPERATION_TIMEOUT_S)
+        except HextileClientError as exc:
+            if exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError("Sequence upscale outcome unknown; recover using the same request_id.",
+                                         kind="sequence_upscale_outcome_unknown", receipt={"request_id": request_id}) from exc
+            raise self._upscale_refusal(exc) from exc
+        expected = "seq_" + uuid.UUID(request_id).hex
+        if not isinstance(data, dict) or data.get("sequence_id") != expected:
+            raise HextileClientError("Sequence upscale outcome unknown; recover using the same request_id.",
+                                     kind="sequence_upscale_outcome_unknown", receipt={"request_id": request_id})
+        return {"sequence_id": expected, "request_id": request_id}
+
+    def get_sequence_upscale_request(self, request_id: str) -> Any:
+        self._upscale_request_id(request_id)
+        try:
+            data = self.get_json(f"/api/sequences/upscale-requests/{request_id}", max_bytes=_DISCOVERY_MAX_BYTES)
+        except HextileClientError as exc:
+            raise self._upscale_refusal(exc) from exc
+        if (not isinstance(data, dict) or data.get("request_id") != request_id
+                or data.get("state") not in {"unknown", "reserved", "interrupted", "accepted", "removed"}):
+            raise HextileClientError("Invalid sequence upscale receipt", kind="other")
+        result = {"request_id": request_id, "state": data["state"]}
+        expected = "seq_" + uuid.UUID(request_id).hex
+        if data.get("sequence_id") == expected:
+            result["sequence_id"] = expected
+        return result
+
     def get_sequence_summary(self, sequence_id: str) -> Any:
         """Read bounded sequence metadata, projecting only public operational fields."""
         sid = self._sequence_metadata_id(sequence_id)
@@ -4727,6 +4821,33 @@ class Client:
         rate = data.get("frame_rate")
         if isinstance(rate, dict) and type(rate.get("num")) is int and type(rate.get("den")) is int:
             result["frame_rate"] = {"num": rate["num"], "den": rate["den"]}
+        if data.get("producer") in ("shader", "fractal"):
+            result.update(_native_sequence_fields(data))
+        derivation = data.get("derivation")
+        if isinstance(derivation, dict) and derivation.get("operation") == "upscale":
+            public = {"operation": "upscale"}
+            for key in ("version", "scale"):
+                if type(derivation.get(key)) is int:
+                    public[key] = derivation[key]
+            for key in ("source_sequence_id", "source_name"):
+                if type(derivation.get(key)) is str and len(derivation[key]) <= 128:
+                    public[key] = derivation[key]
+            result["derivation"] = public
+        upscale = data.get("upscale")
+        if isinstance(upscale, dict):
+            public = {}
+            if type(upscale.get("run_id")) is str and re.fullmatch(r"[0-9a-f]{32}", upscale["run_id"]):
+                public["run_id"] = upscale["run_id"]
+            if upscale.get("phase") in ("preparing", "waiting", "upscaling", "saving", "stopping", "stopped", "interrupted"):
+                public["phase"] = upscale["phase"]
+            for key in ("revision", "active_frame", "latest_frame"):
+                if type(upscale.get(key)) is int and upscale[key] >= 0:
+                    public[key] = upscale[key]
+            if type(upscale.get("settled")) is bool:
+                public["settled"] = upscale["settled"]
+            result["upscale"] = public
+        if type(data.get("source_available")) is bool:
+            result["source_available"] = data["source_available"]
         return result
 
     def _sequence_run_action(self, sequence_id: str, run_id: str, action: str) -> Any:

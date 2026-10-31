@@ -38,6 +38,7 @@ from hextile_client import (  # noqa: E402
     validate_shader_proposal,
     validate_shader_doctor,
     validate_shader_workspace,
+    _native_sequence_fields,
 )
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -103,6 +104,9 @@ TOOL_NAMES = (
     "get_sequence",
     "list_sequences",
     "list_sequence_frames",
+    "inspect_sequence_upscale",
+    "upscale_sequence",
+    "get_sequence_upscale_request",
     "resume_sequence",
     "retry_sequence_failed_frames",
     "stop_sequence",
@@ -213,6 +217,8 @@ _READ_ONLY = frozenset(
         "get_sequence",
         "list_sequences",
         "list_sequence_frames",
+        "inspect_sequence_upscale",
+        "get_sequence_upscale_request",
         "get_sequence_tags",
         "get_batch_preflight",
         "list_batches",
@@ -270,6 +276,7 @@ _MUTATING = frozenset(
         "extract_sequence_video",
         "create_sequence",
         "start_sequence",
+        "upscale_sequence",
         "resume_sequence",
         "retry_sequence_failed_frames",
         "stop_sequence",
@@ -351,6 +358,7 @@ _CONTROL_TOOLS = frozenset(
         "get_seed_job",
         "get_logs",
         "get_sequence",
+        "get_sequence_upscale_request",
         "get_shader_sequence",
         "control_shader_sequence",
         "get_fractal_sequence",
@@ -1948,6 +1956,17 @@ TOOLS: list[dict[str, Any]] = [
          "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
         required=["sequence_id"],
     ),
+    _tool_def("inspect_sequence_upscale", "Inspect a saved sequence for native upscale eligibility.",
+              {"source_id": {"type": "string", "minLength": 1}}, required=["source_id"]),
+    _tool_def("upscale_sequence", "Upscale a saved sequence with a caller-owned UUID. Recover uncertain results with get_sequence_upscale_request using the same UUID.",
+              {"source_id": {"type": "string", "minLength": 1},
+               "request_id": {"type": "string", "format": "uuid"},
+               "project": {"type": ["string", "null"]},
+               "scale_factor": {"type": "integer", "enum": [2, 4]},
+               "name": {"type": "string", "minLength": 1, "maxLength": 128}},
+              required=["source_id", "request_id", "project", "scale_factor"]),
+    _tool_def("get_sequence_upscale_request", "Recover the original sequence upscale request by its UUID.",
+              {"request_id": {"type": "string", "format": "uuid"}}, required=["request_id"]),
     _tool_def(
         "resume_sequence", "Resume the exact accepted sequence run.",
         {"sequence_id": {"type": "string", "minLength": 1},
@@ -3458,6 +3477,9 @@ _DISCOVERY_ARGUMENT_KEYS = {
 }
 _CLOSED_ARGUMENT_KEYS = {
     **_DISCOVERY_ARGUMENT_KEYS,
+    "inspect_sequence_upscale": frozenset({"source_id"}),
+    "upscale_sequence": frozenset({"source_id", "request_id", "project", "scale_factor", "name"}),
+    "get_sequence_upscale_request": frozenset({"request_id"}),
     "get_app_preferences": frozenset(),
     "update_app_preferences": frozenset({"changes"}),
     "get_storage_summary": frozenset({"refresh"}),
@@ -3538,6 +3560,9 @@ class HextileMcpServer:
             "get_sequence": self._get_sequence,
             "list_sequences": self._list_sequences,
             "list_sequence_frames": self._list_sequence_frames,
+            "inspect_sequence_upscale": self._inspect_sequence_upscale,
+            "upscale_sequence": self._upscale_sequence,
+            "get_sequence_upscale_request": self._get_sequence_upscale_request,
             "resume_sequence": self._resume_sequence,
             "retry_sequence_failed_frames": self._retry_sequence_failed_frames,
             "rename_sequence": self._rename_sequence,
@@ -3756,7 +3781,10 @@ class HextileMcpServer:
                                     and (name == "get_sequence" or (name == "stop_sequence"
                                          and isinstance(arguments.get("run_id"), str)
                                          and re.fullmatch(r"[0-9a-f]{32}", arguments["run_id"]) is not None)))
-        sequence_recovery = derived_sequence_control or name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
+        original_upscale_recovery = (name == "get_sequence_upscale_request" and isinstance(arguments, dict)
+                                     and isinstance(arguments.get("request_id"), str)
+                                     and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", arguments["request_id"]) is not None)
+        sequence_recovery = derived_sequence_control or original_upscale_recovery or name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
             name in {"control_fractal_sequence", "control_shader_sequence"}
             and isinstance(arguments, dict) and arguments.get("action") in ("stop", "cancel_export")
         )
@@ -5261,7 +5289,21 @@ class HextileMcpServer:
         keys = ("sequence_id", "name", "status", "lifecycle_status", "total_frames",
                 "frames_completed", "frames_failed", "pipeline", "created_at", "producer",
                 "frame_count", "width", "height", "ownership_live", "storage_available")
-        return [{key: item[key] for key in keys if key in item} for item in data if isinstance(item, dict)]
+        return [{**{key: item[key] for key in keys if key in item},
+                 **(_native_sequence_fields(item) if item.get("producer") in ("shader", "fractal") else {})}
+                for item in data if isinstance(item, dict)]
+
+    def _inspect_sequence_upscale(self, args: dict[str, Any]) -> Any:
+        return self.client.inspect_sequence_upscale(args.get("source_id"))
+
+    def _upscale_sequence(self, args: dict[str, Any]) -> Any:
+        if "project" not in args:
+            raise HextileClientError("project is required", kind="other", status_code=422)
+        return self.client.upscale_sequence(args.get("source_id"), args.get("request_id"), args.get("project"),
+                                            args.get("scale_factor"), args.get("name"))
+
+    def _get_sequence_upscale_request(self, args: dict[str, Any]) -> Any:
+        return self.client.get_sequence_upscale_request(args.get("request_id"))
 
     def _list_sequence_frames(self, args: dict[str, Any]) -> Any:
         return self.client.list_sequence_frames(args.get("sequence_id"), args.get("page", 1), args.get("page_size", 50))

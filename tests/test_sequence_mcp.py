@@ -769,3 +769,56 @@ def test_only_derived_summary_and_run_fenced_stop_bypass_disabled_gate():
                        ('resume_sequence', {'sequence_id': sid, 'run_id': run_id}),
                        ('list_sequence_frames', {'sequence_id': sid})]:
         assert server.call_tool(name, args)['isError']
+
+
+def test_sequence_upscale_admission_recovery_and_unsupported_peer():
+    import uuid
+    request_id = str(uuid.uuid4())
+    sid = 'seq_' + uuid.UUID(request_id).hex
+    seen = []
+    def opener(req, timeout=None):
+        seen.append((req.get_method(), req.full_url, json.loads(req.data) if req.data else None))
+        if req.full_url.endswith('/capabilities'):
+            return _Resp({'sequence_upscale': {'version': 1, 'scales': [2, 4]}})
+        if '/upscale-requests/' in req.full_url:
+            return _Resp({'request_id': request_id, 'state': 'accepted', 'sequence_id': sid,
+                          'project': 'C:/private', 'request_hash': 'private'})
+        if req.get_method() == 'GET':
+            return _Resp({'eligible': True, 'frame_count': 2, 'frame_rate': {'num': 30000, 'den': 1001},
+                          'scales': [{'scale_factor': 2, 'width': 20, 'height': 10, 'eligible': True}],
+                          'source_path': 'C:/private'})
+        return _Resp({'sequence_id': sid, 'source_path': 'C:/private'})
+    client = Client(base_url=BASE, opener=opener)
+    assert client.inspect_sequence_upscale('seq_source')['frame_rate'] == {'num': 30000, 'den': 1001}
+    assert client.upscale_sequence('seq_source', request_id, 'C:/private', 2) == {'request_id': request_id, 'sequence_id': sid}
+    assert client.get_sequence_upscale_request(request_id) == {'request_id': request_id, 'state': 'accepted', 'sequence_id': sid}
+    assert seen[-2][2] == {'request_id': request_id, 'project': 'C:/private', 'scale_factor': 2}
+    with pytest.raises(HextileClientError) as exc:
+        _client({}, {}).inspect_sequence_upscale('seq_source')
+    assert exc.value.status_code == 501
+
+
+def test_upscale_lost_reply_retains_original_request_and_safe_status():
+    import uuid
+    request_id = str(uuid.uuid4())
+    sid = 'seq_' + uuid.UUID(request_id).hex
+    def opener(req, timeout=None):
+        if req.full_url.endswith('/capabilities'):
+            return _Resp({'sequence_upscale': {'version': 1}})
+        if req.get_method() == 'POST':
+            raise urllib.error.URLError('lost')
+        if '/upscale-requests/' in req.full_url:
+            return _Resp({'request_id': request_id, 'state': 'accepted', 'sequence_id': sid})
+        return _Resp({'sequence_id': sid, 'status': 'processing',
+                      'derivation': {'operation': 'upscale', 'source_sequence_id': 'seq_source',
+                                     'source_name': 'Source', 'scale': 2, 'source_hash': 'private'},
+                      'upscale': {'run_id': 'b' * 32, 'revision': 3, 'phase': 'saving',
+                                  'latest_frame': 1, 'secret': 'private'}})
+    client = Client(base_url=BASE, opener=opener)
+    with pytest.raises(HextileClientError) as exc:
+        client.upscale_sequence('seq_source', request_id, None, 2)
+    assert exc.value.kind == 'sequence_upscale_outcome_unknown' and exc.value.receipt == {'request_id': request_id}
+    assert client.get_sequence_upscale_request(request_id)['sequence_id'] == sid
+    status = client.get_sequence_summary(sid)
+    assert status['derivation'] == {'operation': 'upscale', 'source_sequence_id': 'seq_source', 'source_name': 'Source', 'scale': 2}
+    assert status['upscale'] == {'run_id': 'b' * 32, 'revision': 3, 'phase': 'saving', 'latest_frame': 1}
