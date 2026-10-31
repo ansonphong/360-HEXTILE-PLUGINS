@@ -4712,12 +4712,42 @@ class Client:
         sid = urllib.parse.quote(sequence_id, safe="")
         return self.get_json(f"/api/sequences/{sid}")
 
+    def get_sequence_summary(self, sequence_id: str) -> Any:
+        """Read bounded sequence metadata, projecting only public operational fields."""
+        sid = self._sequence_metadata_id(sequence_id)
+        data = self.get_json(f"/api/sequences/{sid}", params={"include_frames": "false"},
+                             max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large")
+        if not isinstance(data, dict) or data.get("sequence_id") != sequence_id or not isinstance(data.get("status"), str):
+            raise HextileClientError("Invalid sequence summary", kind="other")
+        keys = ("sequence_id", "name", "status", "lifecycle_status", "total_frames", "frames_pending",
+                "frames_queued", "frames_processing", "frames_completed", "frames_failed", "current_frame_index",
+                "frame_rate", "frame_count", "width", "height", "producer", "run_id", "run_revision",
+                "published_cursor", "ownership_live", "created_at", "started_at", "completed_at")
+        result = {key: data[key] for key in keys if key in data and key != "frame_rate"}
+        rate = data.get("frame_rate")
+        if isinstance(rate, dict) and type(rate.get("num")) is int and type(rate.get("den")) is int:
+            result["frame_rate"] = {"num": rate["num"], "den": rate["den"]}
+        return result
+
+    def _sequence_run_action(self, sequence_id: str, run_id: str, action: str) -> Any:
+        if type(run_id) is not str or re.fullmatch(r"[0-9a-f]{32}", run_id) is None:
+            raise HextileClientError("run_id must be the accepted 32-hex run identity", kind="other", status_code=422)
+        sid = self._sequence_metadata_id(sequence_id)
+        return self.post_json(f"/api/sequences/{sid}/{action}", {"run_id": run_id})
+
+    def resume_sequence(self, sequence_id: str, run_id: str) -> Any:
+        return self._sequence_run_action(sequence_id, run_id, "resume")
+
+    def retry_sequence_failed_frames(self, sequence_id: str, run_id: str) -> Any:
+        return self._sequence_run_action(sequence_id, run_id, "retry-failed")
+
     def list_sequence_frames(self, sequence_id: str, page: int = 1, page_size: int = 50) -> Any:
         """Read one bounded page without exposing source locators or private hashes."""
         if type(page) is not int or page < 1 or type(page_size) is not int or not 1 <= page_size <= 100:
             raise HextileClientError("page must be positive and page_size must be 1–100", kind="other", status_code=422)
         sid = self._sequence_metadata_id(sequence_id)
-        data = self.get_json(f"/api/sequences/{sid}/frames", params={"page": page, "page_size": page_size})
+        data = self.get_json(f"/api/sequences/{sid}/frames", params={"page": page, "page_size": page_size},
+                             max_bytes=_DISCOVERY_MAX_BYTES, too_large_code="response_too_large")
         if not isinstance(data, dict) or not isinstance(data.get("frames"), list) or len(data["frames"]) > page_size:
             raise HextileClientError("Invalid sequence frame page", kind="other")
         frames = []
@@ -4771,8 +4801,10 @@ class Client:
             raise HextileClientError('sequence_id is required', kind='other')
         return urllib.parse.quote(sequence_id, safe='')
 
-    def stop_sequence(self, sequence_id: str) -> Any:
-        """POST /api/sequences/{sequence_id}/stop."""
+    def stop_sequence(self, sequence_id: str, run_id: Optional[str] = None) -> Any:
+        """Stop a legacy sequence or the exact accepted native run."""
+        if run_id is not None:
+            return self._sequence_run_action(sequence_id, run_id, "stop")
         sid = urllib.parse.quote(sequence_id, safe="")
         return self.post_json(f"/api/sequences/{sid}/stop")
 

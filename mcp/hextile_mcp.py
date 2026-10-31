@@ -103,6 +103,8 @@ TOOL_NAMES = (
     "get_sequence",
     "list_sequences",
     "list_sequence_frames",
+    "resume_sequence",
+    "retry_sequence_failed_frames",
     "stop_sequence",
     "rename_sequence",
     "set_sequence_lifecycle",
@@ -268,6 +270,8 @@ _MUTATING = frozenset(
         "extract_sequence_video",
         "create_sequence",
         "start_sequence",
+        "resume_sequence",
+        "retry_sequence_failed_frames",
         "stop_sequence",
         "rename_sequence",
         "set_sequence_lifecycle",
@@ -1914,7 +1918,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_sequence",
-        "Poll sequence status by sequence_id (GET /api/sequences/{id}). "
+        "Poll bounded sequence status by sequence_id (GET /api/sequences/{id}?include_frames=false). "
         "Never pass a seq_* to get_status.",
         {
             "sequence_id": {
@@ -1945,6 +1949,18 @@ TOOLS: list[dict[str, Any]] = [
         required=["sequence_id"],
     ),
     _tool_def(
+        "resume_sequence", "Resume the exact accepted sequence run.",
+        {"sequence_id": {"type": "string", "minLength": 1},
+         "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}},
+        required=["sequence_id", "run_id"],
+    ),
+    _tool_def(
+        "retry_sequence_failed_frames", "Retry failed frames for the exact accepted sequence run.",
+        {"sequence_id": {"type": "string", "minLength": 1},
+         "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}},
+        required=["sequence_id", "run_id"],
+    ),
+    _tool_def(
         "stop_sequence",
         "Stop a running sequence (POST /api/sequences/{id}/stop). "
         "Status → cancelled. Destructive. Not cancel_run.",
@@ -1953,6 +1969,7 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "string",
                 "description": "Sequence id (seq_*) to stop",
             },
+            "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$", "description": "Accepted run identity for native sequence upscale"},
         },
         required=["sequence_id"],
     ),
@@ -3309,7 +3326,8 @@ def _activity_subject(name: str, args: Mapping[str, Any], payload: Any = None) -
         kind, value = "run", args.get("run_id")
     elif name in {"generate_seed", "get_seed_job", "cancel_seed"}:
         kind, value = "seed", args.get("request_id") if name == "generate_seed" else args.get("job_id")
-    elif name in {"get_sequence", "start_sequence", "stop_sequence", "control_shader_sequence",
+    elif name in {"get_sequence", "list_sequence_frames", "start_sequence", "stop_sequence",
+                  "resume_sequence", "retry_sequence_failed_frames", "control_shader_sequence",
                   "rename_sequence", "set_sequence_lifecycle", "set_sequence_tags", "get_sequence_tags"}:
         kind, value = "sequence", args.get("sequence_id")
     elif name == "create_sequence" and isinstance(payload, Mapping):
@@ -3520,6 +3538,8 @@ class HextileMcpServer:
             "get_sequence": self._get_sequence,
             "list_sequences": self._list_sequences,
             "list_sequence_frames": self._list_sequence_frames,
+            "resume_sequence": self._resume_sequence,
+            "retry_sequence_failed_frames": self._retry_sequence_failed_frames,
             "rename_sequence": self._rename_sequence,
             "set_sequence_lifecycle": self._set_sequence_lifecycle,
             "set_sequence_tags": self._set_sequence_tags,
@@ -3730,7 +3750,13 @@ class HextileMcpServer:
         progress_token: Any = None,
         operation_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        sequence_recovery = name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
+        derived_sequence_control = (isinstance(arguments, dict)
+                                    and isinstance(arguments.get("sequence_id"), str)
+                                    and re.fullmatch(r"seq_[0-9a-f]{32}", arguments["sequence_id"]) is not None
+                                    and (name == "get_sequence" or (name == "stop_sequence"
+                                         and isinstance(arguments.get("run_id"), str)
+                                         and re.fullmatch(r"[0-9a-f]{32}", arguments["run_id"]) is not None)))
+        sequence_recovery = derived_sequence_control or name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
             name in {"control_fractal_sequence", "control_shader_sequence"}
             and isinstance(arguments, dict) and arguments.get("action") in ("stop", "cancel_export")
         )
@@ -5226,15 +5252,25 @@ class HextileMcpServer:
             raise HextileClientError(
                 "sequence_id is required", status_code=None, kind="other"
             )
-        return self.client.get_sequence(str(sequence_id))
+        return self.client.get_sequence_summary(str(sequence_id))
 
     def _list_sequences(self, args: dict[str, Any]) -> Any:
-        return self.client.list_sequences(
-            str(args.get("lifecycle_status") or "active")
-        )
+        data = self.client.list_sequences(str(args.get("lifecycle_status") or "active"))
+        if not isinstance(data, list):
+            raise HextileClientError("Invalid sequence list", kind="other")
+        keys = ("sequence_id", "name", "status", "lifecycle_status", "total_frames",
+                "frames_completed", "frames_failed", "pipeline", "created_at", "producer",
+                "frame_count", "width", "height", "ownership_live", "storage_available")
+        return [{key: item[key] for key in keys if key in item} for item in data if isinstance(item, dict)]
 
     def _list_sequence_frames(self, args: dict[str, Any]) -> Any:
         return self.client.list_sequence_frames(args.get("sequence_id"), args.get("page", 1), args.get("page_size", 50))
+
+    def _resume_sequence(self, args: dict[str, Any]) -> Any:
+        return self.client.resume_sequence(args.get("sequence_id"), args.get("run_id"))
+
+    def _retry_sequence_failed_frames(self, args: dict[str, Any]) -> Any:
+        return self.client.retry_sequence_failed_frames(args.get("sequence_id"), args.get("run_id"))
 
     def _stop_sequence(self, args: dict[str, Any]) -> Any:
         sequence_id = args.get("sequence_id")
@@ -5242,7 +5278,7 @@ class HextileMcpServer:
             raise HextileClientError(
                 "sequence_id is required", status_code=None, kind="other"
             )
-        return self.client.stop_sequence(str(sequence_id))
+        return self.client.stop_sequence(str(sequence_id), args["run_id"]) if "run_id" in args else self.client.stop_sequence(str(sequence_id))
 
     def _rename_sequence(self, args: dict[str, Any]) -> Any:
         return self.client.rename_sequence(args.get('sequence_id'), args.get('name'))

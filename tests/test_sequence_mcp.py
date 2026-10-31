@@ -99,8 +99,9 @@ class _Resp:
     def __init__(self, payload: Any = None) -> None:
         self._payload = {} if payload is None else payload
 
-    def read(self) -> bytes:
-        return json.dumps(self._payload).encode()
+    def read(self, size: int = -1) -> bytes:
+        data = json.dumps(self._payload).encode()
+        return data if size < 0 else data[:size]
 
     def getcode(self) -> int:
         return 200
@@ -729,3 +730,42 @@ def test_sequence_frame_page_is_bounded_and_redacts_private_data():
         {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}})
     tools = {tool['name']: tool for tool in response['result']['tools']}
     jsonschema.validate({'sequence_id': 'seq_a', 'page_size': 100}, tools['list_sequence_frames']['inputSchema'])
+
+
+def test_bounded_sequence_summary_and_run_controls():
+    seen = {}
+    sid, run_id = 'seq_' + 'a' * 32, 'b' * 32
+    client = _client(seen, {'sequence_id': sid, 'status': 'processing', 'run_id': run_id,
+                            'source_folder': 'C:/private', 'frames': [{'source_file': 'secret'}],
+                            'frame_rate': {'num': 30000, 'den': 1001, 'hash': 'private'}})
+    summary = client.get_sequence_summary(sid)
+    assert summary == {'sequence_id': sid, 'status': 'processing', 'run_id': run_id,
+                       'frame_rate': {'num': 30000, 'den': 1001}}
+    assert seen['url'].endswith(f'/{sid}?include_frames=false')
+    for action, method in (('resume', client.resume_sequence), ('retry-failed', client.retry_sequence_failed_frames),
+                           ('stop', client.stop_sequence)):
+        method(sid, run_id)
+        assert seen['url'].endswith(f'/{sid}/{action}') and json.loads(seen['data']) == {'run_id': run_id}
+    with pytest.raises(HextileClientError):
+        client.resume_sequence(sid, 'stale')
+
+
+def test_only_derived_summary_and_run_fenced_stop_bypass_disabled_gate():
+    class DisabledClient:
+        _opener = None
+        def request_json(self, *args, **kwargs):
+            return {'enabled': False}
+        def get_sequence_summary(self, sid):
+            return {'sequence_id': sid, 'status': 'processing'}
+        def stop_sequence(self, sid, run_id=None):
+            return {'sequence_id': sid, 'status': 'cancelled'}
+    server = HextileMcpServer(client=DisabledClient())
+    sid, run_id = 'seq_' + 'a' * 32, 'b' * 32
+    for name, args in [('get_sequence', {'sequence_id': sid}),
+                       ('stop_sequence', {'sequence_id': sid, 'run_id': run_id})]:
+        assert not server.call_tool(name, args).get('isError', False)
+    for name, args in [('get_sequence', {'sequence_id': 'seq_legacy'}),
+                       ('stop_sequence', {'sequence_id': sid}),
+                       ('resume_sequence', {'sequence_id': sid, 'run_id': run_id}),
+                       ('list_sequence_frames', {'sequence_id': sid})]:
+        assert server.call_tool(name, args)['isError']
