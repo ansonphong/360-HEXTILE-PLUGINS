@@ -1,5 +1,7 @@
 # Recipes
 
+App preferences, storage, cache, and license have no recipe here. Read `get_guide` `best-practices` for `get_app_preferences`, `update_app_preferences`, `get_storage_summary`, `get_cache_buckets`, `clear_disposable_cache`, and `get_license_status`.
+
 Discover the installed `shader_*` native catalog before acting on a selected Shader. Native controls use the exact current asset, lease, owner, Project witness and operation request ID; a source file change still follows the acknowledged v2 workspace or logical file proposal route. Keep source bytes, formula content, rendered-frame identity and native destination validation distinct. After an uncertain native write, read the original operation ID before any new action. For editable Credits & Sources, read paged saved credits and complete known notices, then stage `shader_propose_credits` for review; keep prior records and distribution declarations intact. The source proposal in the adaptation example below belongs to an accepted asset-scoped creative change.
 
 ## External Shader adaptation: three upstream sources

@@ -2,6 +2,8 @@
 
 Enabling MCP fully trusts the connected agent; `get_local_access_status` reports the connection state. APP binds its actual current document writer without Follow, session selection or separate source/formula/capture grants. Include options select bounded content, and task paths select destinations. Native witnesses, validation, ownership, revision conflicts and original-request reconciliation still apply. Read the live `shader_contract` and its blockers before authoring; APP automatically Applies and saves singular ready Shader candidates through the native writer. Compilation alone is not a Save receipt. The MCP host retains its own filesystem, execution and desktop permissions.
 
+App preferences, storage, cache, and license are not Workflow fields. Read `get_guide` `best-practices` before `get_app_preferences`, `update_app_preferences`, `get_storage_summary`, `get_cache_buckets`, `clear_disposable_cache`, or `get_license_status`.
+
 A **Workflow** is a full `.hextile.json` document. There is no second format.
 
 Validated by APP `HextileConfig`. The MCP never merges or validates as authority.

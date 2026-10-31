@@ -200,6 +200,8 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 
 `get_license_status` reads the current activation, tier, access state and source, features, and non-secret access flags. It takes no tier argument and omits machine id, machine name, and license key hint.
 
+Online Gallery account and publishing workflows are outside this plugin's MCP interface.
+
 ### Trusted local files
 
 Call `get_local_access_status` first. `local_file_stat`, `local_file_read`, and write begin/append/abort/commit require effective trust at APP. `get_local_access_status` and `local_file_write_status` remain usable when MCP is disabled so a caller can inspect authority and the original receipt.

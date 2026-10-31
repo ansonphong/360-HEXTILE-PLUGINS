@@ -51,6 +51,20 @@ Send **`workflow_id` + `overrides`**, or a full `document` you cloned from `get_
 - Do not delete builtin. Do not `delete_workflow` unless the user asked.
 - License HTTP 402 → tell the user to activate through Help > License.
 
+## App preferences, storage, cache, and license
+
+These six tools are app status, not Workflow fields. `get_app_preferences`, `get_storage_summary`, `get_cache_buckets`, and `get_license_status` do not mutate. Obtain the external host's existing mutation confirmation for the exact `update_app_preferences` or `clear_disposable_cache` arguments before calling either one. An `approved` tool argument is not approval.
+
+`get_app_preferences` reads the safe preference fields and `effective_default_pipeline`. It omits the output folder, creator profile, EULA, credentials, and filesystem paths. `update_app_preferences(changes)` sends one nonempty partial object of those safe fields. Null does not clear a field and is not false. Send false only when the user explicitly selects false. `error_reporting_enabled` and `telemetry_enabled` change only when the user explicitly selects them. If the acknowledgement is unknown, reread those preferences and do not replay the change. `mcp_enabled` false uses the native switch and its revoke. A disconnected client cannot turn MCP back on.
+
+`get_storage_summary` reads disk free and total, default and fallback flags, and class identity. `refresh` defaults to false and keeps the memoized scan. It returns no configured roots or paths.
+
+`get_cache_buckets` reads bucket identity, display name, size, file count, protection, and total size. It omits cache directories. `clear_disposable_cache` uses the native clear routes. Omit `bucket` to clear every disposable bucket. Protected buckets and live owners stay refused. A completed response that lists errors is the acknowledgement and is not success; do not replay it. If the acknowledgement is unknown, rereading bucket status cannot prove that clear; do not replay it.
+
+`get_license_status` reads the current activation, tier, access state and source, features, and non-secret access flags. It takes no tier argument, does not activate a license, and omits machine id, machine name, and license key hint.
+
+Online Gallery account and publishing workflows are outside this plugin's MCP interface.
+
 ## Website
 
 Fetch URLs from `get_guide` `website-index` when you need product-domain depth (templates, pipelines, LoRA, prompts). The index follows canonical repository routes. A repository commit does not prove deployment or an installed host refresh; verify remote availability when needed.
