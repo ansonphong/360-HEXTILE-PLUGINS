@@ -811,7 +811,8 @@ def test_upscale_lost_reply_retains_original_request_and_safe_status():
             return _Resp({'request_id': request_id, 'state': 'accepted', 'sequence_id': sid})
         return _Resp({'sequence_id': sid, 'status': 'processing',
                       'derivation': {'operation': 'upscale', 'source_sequence_id': 'seq_source',
-                                     'source_name': 'Source', 'scale': 2, 'source_hash': 'private'},
+                                     'source_name': 'Source', 'scale': 2, 'scale_factor': 2, 'model': 'realesrgan-x4plus',
+                                     'execution_mode': 'raw', 'source_manifest_digest': 'private'},
                       'upscale': {'run_id': 'b' * 32, 'revision': 3, 'phase': 'saving',
                                   'latest_frame': 1, 'secret': 'private'}})
     client = Client(base_url=BASE, opener=opener)
@@ -820,5 +821,29 @@ def test_upscale_lost_reply_retains_original_request_and_safe_status():
     assert exc.value.kind == 'sequence_upscale_outcome_unknown' and exc.value.receipt == {'request_id': request_id}
     assert client.get_sequence_upscale_request(request_id)['sequence_id'] == sid
     status = client.get_sequence_summary(sid)
-    assert status['derivation'] == {'operation': 'upscale', 'source_sequence_id': 'seq_source', 'source_name': 'Source', 'scale': 2}
+    assert status['derivation'] == {'operation': 'upscale', 'source_sequence_id': 'seq_source', 'source_name': 'Source', 'scale': 2,
+                                    'scale_factor': 2, 'model': 'realesrgan-x4plus', 'execution_mode': 'raw'}
     assert status['upscale'] == {'run_id': 'b' * 32, 'revision': 3, 'phase': 'saving', 'latest_frame': 1}
+
+
+def test_upscale_original_receipt_distinguishes_unknown_and_preserves_public_run():
+    import uuid
+    request_id = str(uuid.uuid4())
+    sid = 'seq_' + uuid.UUID(request_id).hex
+    def missing(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 404, 'not found', None,
+            io.BytesIO(json.dumps({'detail': {'code': 'unknown_request', 'state': 'unknown'}}).encode()))
+    client = Client(base_url=BASE, opener=missing)
+    assert client.get_sequence_upscale_request(request_id) == {'request_id': request_id, 'state': 'unknown'}
+    with pytest.raises(HextileClientError):
+        Client(base_url=BASE, opener=_http_error_opener(404, 'other')).get_sequence_upscale_request(request_id)
+    client = _client({}, {'request_id': request_id, 'state': 'accepted', 'sequence_id': sid,
+                          'run_id': 'a' * 32, 'scale_factor': 4, 'phase': 'partial', 'revision': 5,
+                          'settled': True, 'stopping': False, 'frames_completed': 9, 'latest_frame': 8,
+                          'source_manifest_digest': 'private', 'project': 'C:/private'})
+    assert client.get_sequence_upscale_request(request_id) == {
+        'request_id': request_id, 'state': 'accepted', 'sequence_id': sid, 'run_id': 'a' * 32,
+        'scale_factor': 4, 'phase': 'partial', 'revision': 5, 'settled': True,
+        'stopping': False, 'frames_completed': 9, 'latest_frame': 8}
+    with pytest.raises(HextileClientError):
+        client.upscale_sequence('seq_source', request_id, None, 2, 'x' * 121)

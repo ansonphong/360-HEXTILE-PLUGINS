@@ -4755,7 +4755,7 @@ class Client:
             raise self._upscale_refusal(exc) from exc
         if not isinstance(data, dict) or type(data.get("eligible")) is not bool:
             raise HextileClientError("Invalid sequence upscale inspection", kind="other")
-        result = {key: data[key] for key in ("eligible", "name", "frame_count", "width", "height") if key in data}
+        result = {key: data[key] for key in ("eligible", "name", "frame_count", "width", "height", "source_sequence_id", "model_available") if key in data}
         rate = data.get("frame_rate")
         if isinstance(rate, dict) and type(rate.get("num")) is int and type(rate.get("den")) is int:
             result["frame_rate"] = {"num": rate["num"], "den": rate["den"]}
@@ -4772,7 +4772,7 @@ class Client:
         self._upscale_request_id(request_id)
         if (type(scale_factor) is not int or scale_factor not in (2, 4)
                 or project is not None and (type(project) is not str or not project or len(project) > 4096)
-                or name is not None and (type(name) is not str or not 1 <= len(name) <= 128)):
+                or name is not None and (type(name) is not str or not 1 <= len(name) <= 120)):
             raise HextileClientError("Invalid sequence upscale request", kind="other", status_code=422)
         self._require_sequence_upscale()
         body = {"request_id": request_id, "project": project, "scale_factor": scale_factor}
@@ -4796,6 +4796,12 @@ class Client:
         try:
             data = self.get_json(f"/api/sequences/upscale-requests/{request_id}", max_bytes=_DISCOVERY_MAX_BYTES)
         except HextileClientError as exc:
+            try:
+                detail = json.loads(exc.body or "{}").get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            if exc.status_code == 404 and isinstance(detail, dict) and detail.get("code") == "unknown_request" and detail.get("state") == "unknown":
+                return {"request_id": request_id, "state": "unknown"}
             raise self._upscale_refusal(exc) from exc
         if (not isinstance(data, dict) or data.get("request_id") != request_id
                 or data.get("state") not in {"unknown", "reserved", "interrupted", "accepted", "removed"}):
@@ -4804,6 +4810,16 @@ class Client:
         expected = "seq_" + uuid.UUID(request_id).hex
         if data.get("sequence_id") == expected:
             result["sequence_id"] = expected
+        for key in ("scale_factor", "revision", "frames_completed", "frames_failed", "frames_pending", "frames_queued", "total_frames", "latest_frame", "active_frame"):
+            if type(data.get(key)) is int and data[key] >= 0:
+                result[key] = data[key]
+        for key in ("settled", "stopping"):
+            if type(data.get(key)) is bool:
+                result[key] = data[key]
+        if type(data.get("run_id")) is str and re.fullmatch(r"[0-9a-f]{32}", data["run_id"]):
+            result["run_id"] = data["run_id"]
+        if data.get("phase") in ("preparing", "waiting", "upscaling", "saving", "stopping", "stopped", "interrupted", "partial", "complete"):
+            result["phase"] = data["phase"]
         return result
 
     def get_sequence_summary(self, sequence_id: str) -> Any:
@@ -4826,25 +4842,30 @@ class Client:
         derivation = data.get("derivation")
         if isinstance(derivation, dict) and derivation.get("operation") == "upscale":
             public = {"operation": "upscale"}
-            for key in ("version", "scale"):
+            for key in ("version", "scale", "scale_factor"):
                 if type(derivation.get(key)) is int:
                     public[key] = derivation[key]
             for key in ("source_sequence_id", "source_name"):
                 if type(derivation.get(key)) is str and len(derivation[key]) <= 128:
                     public[key] = derivation[key]
+            if derivation.get("model") == "realesrgan-x4plus":
+                public["model"] = derivation["model"]
+            if derivation.get("execution_mode") == "raw":
+                public["execution_mode"] = "raw"
             result["derivation"] = public
         upscale = data.get("upscale")
         if isinstance(upscale, dict):
             public = {}
             if type(upscale.get("run_id")) is str and re.fullmatch(r"[0-9a-f]{32}", upscale["run_id"]):
                 public["run_id"] = upscale["run_id"]
-            if upscale.get("phase") in ("preparing", "waiting", "upscaling", "saving", "stopping", "stopped", "interrupted"):
+            if upscale.get("phase") in ("preparing", "waiting", "upscaling", "saving", "stopping", "stopped", "interrupted", "partial", "complete"):
                 public["phase"] = upscale["phase"]
             for key in ("revision", "active_frame", "latest_frame"):
                 if type(upscale.get(key)) is int and upscale[key] >= 0:
                     public[key] = upscale[key]
-            if type(upscale.get("settled")) is bool:
-                public["settled"] = upscale["settled"]
+            for key in ("settled", "stopping"):
+                if type(upscale.get(key)) is bool:
+                    public[key] = upscale[key]
             result["upscale"] = public
         if type(data.get("source_available")) is bool:
             result["source_available"] = data["source_available"]

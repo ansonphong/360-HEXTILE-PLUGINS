@@ -1963,7 +1963,7 @@ TOOLS: list[dict[str, Any]] = [
                "request_id": {"type": "string", "format": "uuid"},
                "project": {"type": ["string", "null"]},
                "scale_factor": {"type": "integer", "enum": [2, 4]},
-               "name": {"type": "string", "minLength": 1, "maxLength": 128}},
+               "name": {"type": "string", "minLength": 1, "maxLength": 120}},
               required=["source_id", "request_id", "project", "scale_factor"]),
     _tool_def("get_sequence_upscale_request", "Recover the original sequence upscale request by its UUID.",
               {"request_id": {"type": "string", "format": "uuid"}}, required=["request_id"]),
