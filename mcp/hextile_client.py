@@ -397,15 +397,7 @@ def _valid_preview_receipt(result: dict) -> bool:
 
 def _bounded_job_route(job: Mapping[str, Any]) -> bool:
     """Optional admitted-route projection. A path or source inside it is not a receipt."""
-    route = job.get("render_route")
-    if "render_route" in job and (type(route) is not dict
-            or set(route) - {"browser_codec"} != {"profile", "route"}
-            or route.get("profile") != "shader-render-route/1"
-            or route.get("route") not in _RENDER_ROUTE_NAMES):
-        return False
-    codec = route.get("browser_codec") if isinstance(route, dict) else None
-    if codec is not None and (type(codec) is not dict or set(codec) - {"jpeg_quality"} != {"format"}
-            or codec.get("format") not in {"png", "jpeg"}):
+    if "render_route" in job and not _checked_render_route(job.get("render_route")):
         return False
     state = job.get("producer_state")
     if "producer_state" in job and (type(state) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", state) is None):
