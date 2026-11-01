@@ -2919,8 +2919,8 @@ _STILL_OUTPUT = {"anyOf": [
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
                     "roll": {"type": "number", "minimum": -180, "maximum": 180},
                     "output_path": _ABS_PATH}, ("fov_deg", "pan", "tilt", "roll")),
-    _shader_dome({"width": {"type": "integer", "minimum": 1024, "maximum": 8192},
-                    "height": {"type": "integer", "minimum": 1024, "maximum": 8192},
+    _shader_dome({"width": {"type": "integer", "minimum": 2, "maximum": 8192},
+                    "height": {"type": "integer", "minimum": 2, "maximum": 8192},
                     "projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
@@ -2933,6 +2933,7 @@ _STILL_OUTPUT = {"anyOf": [
 for _shape in _PREVIEW_OUTPUT["oneOf"]:
     _shape["properties"]["raster_policy"] = _SHADER_RASTER_PROCESSING
 _STILL_OUTPUT["anyOf"][1]["properties"]["raster_policy"] = _SHADER_RASTER_PNG
+_STILL_OUTPUT["anyOf"][4]["properties"]["supersampling"] = {"type": "number", "minimum": 1}
 for _shape in _STILL_OUTPUT["anyOf"][2:4]:
     _shape["properties"]["supersampling"] = {"type": "number", "minimum": 1}
     _shape["properties"]["raster_policy"] = _SHADER_RASTER_POLICY

@@ -193,7 +193,7 @@ def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
 
 def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
     if 'supersampling' in output:
-        if type(output['supersampling']) not in (int, float) or output['supersampling'] != 1:
+        if not _valid_shader_scale(output['supersampling']):
             return False
         output = {key: value for key, value in output.items() if key != 'supersampling'}
     if (not {"width", "height"} <= set(output)
@@ -207,7 +207,7 @@ def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
                 and not {"fov_deg", "pan", "tilt", "roll", "preserve_360", "preserve_360_profile"} & set(output))
     return (projection in {"fulldome", "fulldome_angular"}
             and output["width"] == output["height"]
-            and output["width"] in {1024, 2048, 4096, 8192}
+            and 2 <= output["width"] <= 8192
             and _safe_task_output_path(output.get("output_path"), {".exr"})
             and _native_pose(output) and _valid_preservation(output))
 

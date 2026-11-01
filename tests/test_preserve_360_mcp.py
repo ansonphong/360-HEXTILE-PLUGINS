@@ -179,3 +179,14 @@ def test_custom_shader_sequence_transport_accepts_actual_numeric_contract(projec
         output=output, supersampling=3.125, publication_mode='deferred')
     client.validate_shader_sequence_request(body)
     jsonschema.validate(body, server._SHADER_SEQUENCE_REQUEST)
+
+
+@pytest.mark.parametrize('projection', ['equirectangular', 'fulldome', 'fulldome_angular'])
+def test_float_exr_custom_scale_schema_and_checked_client(projection):
+    settings = dict(width=14 if projection == 'equirectangular' else 7, height=7,
+                    supersampling=1.37, output_path='D:/float.exr')
+    if projection != 'equirectangular':
+        settings.update(projection=projection, fov_deg=180, pan=0, tilt=0, roll=0)
+    jsonschema.validate(settings, server._STILL_OUTPUT)
+    assert client._valid_linear_exr_output(settings)
+    assert not client._valid_linear_exr_output({**settings, 'supersampling': True})
