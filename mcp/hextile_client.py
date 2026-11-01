@@ -338,8 +338,38 @@ def _valid_render_estimate(value: Any) -> bool:
         and type(value["includes_output"]) is bool)
 
 
+def _valid_display_processing(value: Any, *, width=None, height=None) -> bool:
+    """Optional WebGL work evidence, separate from the native raster execution profile."""
+    fields = {'profile', 'actual', 'kernel_sha256', 'reason', 'cpu_repair_rows',
+              'float_readback_bytes', 'display_readback_bytes', 'packed_rgb_bytes',
+              'owned_gpu_bytes', 'owned_host_calculated_bytes', 'frame_index'}
+    if (type(value) is not dict or set(value) != fields
+            or value['profile'] != 'shader-webgl-display-processing/1'
+            or value['actual'] not in ('cpu', 'gpu', 'gpu_cpu_repair')
+            or any(type(value[k]) is not int or not 0 <= value[k] < 2**53
+                   for k in fields - {'profile', 'actual', 'kernel_sha256', 'reason'})):
+        return False
+    if type(width) is int and type(height) is int:
+        if value['packed_rgb_bytes'] != width * height * 3 or value['cpu_repair_rows'] > height:
+            return False
+    if value['actual'] == 'cpu':
+        return (value['kernel_sha256'] is None and value['cpu_repair_rows'] == 0
+                and value['display_readback_bytes'] == 0
+                and value['reason'] in ('forced_cpu', 'postpass_unissued', 'gpu_residency', 'gpu_initialization'))
+    repaired = value['actual'] == 'gpu_cpu_repair'
+    return (type(value['kernel_sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', value['kernel_sha256']) is not None
+            and repaired == (value['cpu_repair_rows'] > 0) and repaired == (value['float_readback_bytes'] > 0)
+            and value['reason'] == ('exceptional_source' if repaired else None)
+            and (not (type(width) is int and type(height) is int)
+                 or value['display_readback_bytes'] == width * height * 4))
+
+
 def _valid_preview_receipt(result: dict) -> bool:
     common = {"request_id", "state", "status", "progress", "error"}
+    if 'display_processing' in result:
+        if not _valid_display_processing(result['display_processing'], width=result.get('width'), height=result.get('height')):
+            return False
+        common.add('display_processing')
     if (not _valid_raster_evidence(result, None) or result.get("status") == "completed"
             and "raster_policy" in result and result["raster_execution"] is None):
         return False
@@ -541,12 +571,18 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                         raise invalid()
                 job_id = job["job_id"]
             else:
-                if (set(job) - {"render_route", "producer_state", "published_cursor"}
+                if (set(job) - {"render_route", "producer_state", "published_cursor", "display_processing"}
                         != {"job_id", "state", "progress", "idempotency_key", "output"}
                         or not _bounded_job_route(job)
                         or job["idempotency_key"] != args["request_id"]):
                     raise invalid()
                 output = job["output"]
+                if 'display_processing' in job:
+                    size = output if isinstance(output, dict) else {}
+                    diameter = size.get('diameter')
+                    if not _valid_display_processing(job['display_processing'],
+                            width=diameter or size.get('width'), height=diameter or size.get('height')):
+                        raise invalid()
                 if output is not None and not _valid_dome_job_output(output, raster=profile == "shader-raster-still/1"):
                     raise invalid()
                 if (job.get("state") == "completed" and type(output) is dict
@@ -1347,6 +1383,12 @@ def _native_observation(value: Any) -> dict[str, Any] | None:
 def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
     """Bounded native evidence common to both producers; missing old-peer fields stay absent."""
     out: dict[str, Any] = {}
+    if 'display_processing' in data:
+        output = data.get('output') if isinstance(data.get('output'), dict) else {}
+        diameter = output.get('diameter') if output.get('projection') in ('fulldome', 'fulldome_angular') else None
+        if not _valid_display_processing(data['display_processing'], width=diameter or data.get('width'), height=diameter or data.get('height')):
+            raise HextileClientError('Invalid display processing receipt', kind='other')
+        out['display_processing'] = dict(data['display_processing'])
     if type(data.get("producer")) is str and data["producer"] in {"shader", "fractal"}:
         out["producer"] = data["producer"]
     if type(data.get("name")) is str and len(data["name"]) <= 128:

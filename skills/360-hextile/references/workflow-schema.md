@@ -122,6 +122,8 @@ Still/Dome preflight. Policy is excluded from deferred Sequence, PNG master,
 linear EXR and Fractal. Omission retains legacy CPU/PNG6 identities and recovery;
 never add policy when replaying an original request that omitted it.
 
+WebGL display jobs may separately report bounded `display_processing` work: `cpu`, `gpu`, or `gpu_cpu_repair`, with the issued kernel hash, readback bytes and calculated owned memory. This evidence does not qualify a route or prove file publication; retain the native `raster_execution` and publication receipts independently. Legacy peers may omit it.
+
 Bounded status retains admitted `raster_policy`, arithmetic `raster_profiles`
 and effective `raster_execution` where applicable. Preview/Still execution is
 pending (`null`) until available; completed new-policy output needs a checked

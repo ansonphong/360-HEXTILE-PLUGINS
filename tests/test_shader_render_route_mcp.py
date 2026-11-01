@@ -70,3 +70,40 @@ def test_still_receipt_accepts_a_bounded_route_and_keeps_the_legacy_job_shape():
     leaked = {**routed, "render_route": {**routed["render_route"], "destination": "D:/secret.exr"}}
     with pytest.raises(HextileClientError):
         _shader_output_receipt("still", args, {**legacy, "job": leaked})
+
+
+def _display_report():
+    return {'profile': 'shader-webgl-display-processing/1', 'actual': 'gpu',
+            'kernel_sha256': 'a' * 64, 'reason': None, 'cpu_repair_rows': 0,
+            'float_readback_bytes': 0, 'display_readback_bytes': 32, 'packed_rgb_bytes': 24,
+            'owned_gpu_bytes': 256, 'owned_host_calculated_bytes': 64, 'frame_index': 0}
+
+
+def test_optional_display_work_receipt_survives_still_get_stop_and_sequence_projection():
+    from hextile_client import _native_sequence_fields
+    report = _display_report()
+    job = {'job_id': 'a' * 32, 'state': 'processing', 'progress': 0,
+           'idempotency_key': 'req', 'output': None,
+           'render_route': {'profile': 'shader-render-route/1', 'route': 'webgl-display-native-encode'},
+           'display_processing': report}
+    args = {'request_id': 'req', 'profile': 'dome-png/1', 'shader': {'origin': 'user', 'shaderId': 'probe'}}
+    receipt = {'request_id': 'req', 'profile': 'dome-png/1', 'state': 'processing', 'job': job}
+    for operation in ('still', 'get_job', 'stop_job'):
+        assert _shader_output_receipt(operation, args, receipt)['job']['display_processing'] == report
+    assert _native_sequence_fields({'producer': 'shader', 'width': 4, 'height': 2,
+                                   'display_processing': report})['display_processing'] == report
+    changed = {**report, 'private_path': 'D:/private'}
+    with pytest.raises(HextileClientError):
+        _shader_output_receipt('get_job', args, {**receipt, 'job': {**job, 'display_processing': changed}})
+
+
+def test_preview_work_receipt_is_bounded_and_legacy_absence_remains_valid():
+    from hextile_client import _valid_display_processing
+    value = {'request_id': 'req', 'state': 'pending', 'status': 'completed', 'progress': None, 'error': None,
+             'display_processing': _display_report()}
+    assert _shader_output_receipt('get_preview', {'request_id': 'req'}, value) == value
+    legacy = {key: field for key, field in value.items() if key != 'display_processing'}
+    assert _shader_output_receipt('get_preview', {'request_id': 'req'}, legacy) == legacy
+    assert _valid_display_processing(_display_report(), width=4, height=2)
+    for changed in ({'kernel_sha256': 'private'}, {'packed_rgb_bytes': 25}, {'float_readback_bytes': True}):
+        assert not _valid_display_processing({**_display_report(), **changed}, width=4, height=2)
