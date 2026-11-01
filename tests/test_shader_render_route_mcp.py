@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "mcp"))
 
-from hextile_client import Client, HextileClientError, _checked_render_route  # noqa: E402
+from hextile_client import Client, HextileClientError, _checked_render_route, _shader_output_receipt  # noqa: E402
 from hextile_mcp import SHADER_EXTENSION_TOOLS, _SHADER_SEQUENCE_REQUEST  # noqa: E402
 
 NAMES = (
@@ -56,3 +56,17 @@ def test_unavailable_webgl_route_refuses_before_a_fixture_can_enable_it():
     assert str(refused.value) == "no_capable_client"
     client._require_native_render(render_route=None)
     client._require_native_render(render_route={"profile": "shader-render-route/1", "route": "native"})
+
+
+def test_still_receipt_accepts_a_bounded_route_and_keeps_the_legacy_job_shape():
+    job = {"job_id": "a" * 32, "state": "processing", "progress": 0,
+           "idempotency_key": "req", "output": None}
+    args = {"request_id": "req", "profile": "dome-png/1", "shader": {"origin": "user", "shaderId": "probe"}}
+    legacy = {"request_id": "req", "profile": "dome-png/1", "state": "processing", "job": job}
+    assert _shader_output_receipt("still", args, legacy)["job"] == job
+    routed = {**job, "render_route": {"profile": "shader-render-route/1", "route": "webgl-raw-float"},
+              "producer_state": "issued", "published_cursor": 0}
+    assert _shader_output_receipt("still", args, {**legacy, "job": routed})["job"]["published_cursor"] == 0
+    leaked = {**routed, "render_route": {**routed["render_route"], "destination": "D:/secret.exr"}}
+    with pytest.raises(HextileClientError):
+        _shader_output_receipt("still", args, {**legacy, "job": leaked})

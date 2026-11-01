@@ -395,6 +395,27 @@ def _valid_preview_receipt(result: dict) -> bool:
     return True
 
 
+def _bounded_job_route(job: Mapping[str, Any]) -> bool:
+    """Optional admitted-route projection. A path or source inside it is not a receipt."""
+    route = job.get("render_route")
+    if "render_route" in job and (type(route) is not dict
+            or set(route) - {"browser_codec"} != {"profile", "route"}
+            or route.get("profile") != "shader-render-route/1"
+            or route.get("route") not in _RENDER_ROUTE_NAMES):
+        return False
+    codec = route.get("browser_codec") if isinstance(route, dict) else None
+    if codec is not None and (type(codec) is not dict or set(codec) - {"jpeg_quality"} != {"format"}
+            or codec.get("format") not in {"png", "jpeg"}):
+        return False
+    state = job.get("producer_state")
+    if "producer_state" in job and (type(state) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", state) is None):
+        return False
+    cursor = job.get("published_cursor")
+    if "published_cursor" in job and (type(cursor) is not int or cursor < 0):
+        return False
+    return True
+
+
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                            *, mutation: bool = False) -> dict:
     """Close the native output boundary, retaining its actual task destination."""
@@ -495,7 +516,9 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     raise invalid()
                 job_id = job["id"]
             elif profile == "shader-linear-rgba-exr/1":
-                if (set(job) - {"accepted_settings"} != {"job_id", "state", "progress", "profile", "output"}
+                if (set(job) - {"accepted_settings", "render_route", "producer_state", "published_cursor"}
+                        != {"job_id", "state", "progress", "profile", "output"}
+                        or not _bounded_job_route(job)
                         or job["profile"] != profile or job["output"] is not None
                         and not _safe_output_leaf(job["output"], {".exr"})):
                     raise invalid()
@@ -508,7 +531,9 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                         raise invalid()
                 job_id = job["job_id"]
             else:
-                if (set(job) != {"job_id", "state", "progress", "idempotency_key", "output"}
+                if (set(job) - {"render_route", "producer_state", "published_cursor"}
+                        != {"job_id", "state", "progress", "idempotency_key", "output"}
+                        or not _bounded_job_route(job)
                         or job["idempotency_key"] != args["request_id"]):
                     raise invalid()
                 output = job["output"]
