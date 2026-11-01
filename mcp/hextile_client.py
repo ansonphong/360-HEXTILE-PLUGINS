@@ -291,7 +291,7 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
             return False
         output = {key: value for key, value in output.items() if key != "raster_policy"}
     if (type(mode) is not str or mode not in {"still", "sequence"} or type(width) is not int or type(height) is not int
-            or not 4 <= width <= 16384 or not 2 <= height <= 8192 or type(output) is not dict
+            or not 2 <= width <= 16384 or not 1 <= height <= 8192 or type(output) is not dict
             or (mode == "sequence") != (sample is not None)
             or sample is not None and not _valid_preview_sample(sample)):
         return False

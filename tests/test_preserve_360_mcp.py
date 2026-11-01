@@ -155,8 +155,14 @@ def test_custom_shader_preview_and_sequence_shapes_do_not_restore_preset_or_ss_l
     jsonschema.validate(output, server._SHADER_SEQUENCE_OUTPUT)
     assert client._valid_preview_selection(dict(mode='still', width=1536, height=1536,
         output={**output, 'supersampling': 3.125}))
-    assert client._valid_preview_selection(dict(mode='still', width=1554, height=777,
-        output=dict(projection='equirectangular', pan=0, tilt=0, roll=0, supersampling=1.2345)))
+    schema = next(tool['inputSchema'] for tool in server.SHADER_EXTENSION_TOOLS if tool['name'] == 'shader_request_preview')
+    for width, height in [(1554, 777), (2, 1)]:
+        selection = dict(mode='still', width=width, height=height,
+            output=dict(projection='equirectangular', pan=0, tilt=0, roll=0, supersampling=1.2345))
+        assert client._valid_preview_selection(selection)
+        jsonschema.validate(width, schema['properties']['width'])
+        jsonschema.validate(height, schema['properties']['height'])
+
 
 
 def test_explicit_one_x_exr_receipt_recovers_optional_scale():
