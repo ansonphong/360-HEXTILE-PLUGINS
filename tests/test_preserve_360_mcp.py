@@ -116,3 +116,66 @@ def test_deferred_sequence_preservation_requires_peer_before_post(monkeypatch, p
         api._shader_sequence_post(body, preflight=preflight)
     assert error.value.status_code == 501
     assert posts == []
+
+
+@pytest.mark.parametrize("projection", ["equirectangular", "fulldome", "fulldome_angular"])
+def test_custom_shader_raster_preflight_schema_client_forwarding_and_receipt(monkeypatch, projection):
+    api = client.Client()
+    digest = "sha256:" + "a" * 64
+    output = (dict(projection=projection, width=1536, height=768) if projection == 'equirectangular' else
+              dict(OUTPUT, projection=projection, diameter=1536))
+    output.update(encoding='png', output_path='D:/custom.png', supersampling=3.125)
+    args = dict(shader=dict(origin="user", shaderId="saved"), project_context_witness="w",
+        request_id="550e8400-e29b-41d4-a716-446655440000", studio_surface_id="surface",
+        expected_edit_sequence=0, base=dict(kind="saved", working_revision=1, document_hash=digest, source_hash=digest),
+        profile="shader-raster-still/1", output=output)
+    tool = next(tool for tool in server.SHADER_EXTENSION_TOOLS if tool['name'] == 'shader_preflight_still_export')
+    jsonschema.validate(args, tool['inputSchema'])
+    monkeypatch.setattr(api, 'get_capabilities', lambda: dict(native_render=dict(contract='native-render/1',
+        sequences={}, stills={'shader-raster-still/1': {}}, shader_dome_preservation=dict(
+        field='preserve_360', profiles=['shader-dome-from-360/1']))))
+    sent = []
+    monkeypatch.setattr(api, 'request_json', lambda method, path, body=None, **kwargs:
+        sent.append(body) or dict(request_id=args['request_id'], state='pending'))
+    assert api.preflight_shader_still(args)['state'] == 'pending'
+    assert sent[0]['output'] == output
+    returned = {key: value for key, value in output.items() if key != 'output_path'}
+    returned['file'] = 'custom.png'
+    receipt = dict(request_id=args['request_id'], profile=args['profile'], job=dict(job_id='b' * 32,
+        state='completed', progress=1, idempotency_key=args['request_id'], output=returned))
+    assert client._shader_output_receipt('get_job', dict(request_id=args['request_id'], profile=args['profile']), receipt) == receipt
+    del returned['encoding']  # Native PNG receipts have always omitted the default encoding.
+    assert client._shader_output_receipt('get_job', dict(request_id=args['request_id'], profile=args['profile']), receipt) == receipt
+    for invalid in [True, float('inf'), 0.5]:
+        assert not client._valid_raster_still_output({**output, 'supersampling': invalid})
+
+
+def test_custom_shader_preview_and_sequence_shapes_do_not_restore_preset_or_ss_limits():
+    output = dict(OUTPUT, diameter=1536)
+    jsonschema.validate(output, server._SHADER_SEQUENCE_OUTPUT)
+    assert client._valid_preview_selection(dict(mode='still', width=1536, height=1536,
+        output={**output, 'supersampling': 3.125}))
+    assert client._valid_preview_selection(dict(mode='still', width=1536, height=768,
+        output=dict(projection='equirectangular', pan=0, tilt=0, roll=0, supersampling=1.2345)))
+
+
+def test_explicit_one_x_exr_receipt_recovers_optional_scale():
+    args = dict(request_id='a' * 32, profile='shader-linear-rgba-exr/1')
+    value = dict(request_id=args['request_id'], profile=args['profile'], job=dict(job_id='b' * 32,
+        state='completed', progress=1, profile=args['profile'], output='small.exr',
+        accepted_settings=dict(output=dict(projection='equirectangular', width=4, height=2), supersampling=1)))
+    assert client._shader_output_receipt('get_job', args, value) == value
+
+
+@pytest.mark.parametrize('projection', ['equirectangular', 'fulldome', 'fulldome_angular'])
+def test_custom_shader_sequence_transport_accepts_actual_numeric_contract(projection):
+    digest = 'sha256:' + 'a' * 64
+    output = (dict(projection=projection, pan=0, tilt=0, roll=0) if projection == 'equirectangular' else
+              dict(projection=projection, diameter=1536, fov_deg=180, pan=0, tilt=0, roll=0))
+    body = dict(shader_ref=dict(origin='user', id='saved'), project_context_witness='w',
+        working_revision=1, document_hash=digest, source_hash=digest, idempotency_key='original', name='Custom',
+        frame_rate=dict(num=30, den=1), frame_count=30, start_time=dict(num='0', den='1'), end_time=dict(num='1', den='1'),
+        width=1536, height=768 if projection == 'equirectangular' else 1536, seed=0,
+        output=output, supersampling=3.125, publication_mode='deferred')
+    client.validate_shader_sequence_request(body)
+    jsonschema.validate(body, server._SHADER_SEQUENCE_REQUEST)

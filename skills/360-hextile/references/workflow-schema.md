@@ -61,7 +61,7 @@ Cancel and recovery stay on the original request, sequence, run, and attempt IDs
 Full-quality Shader inspection advertises `native_render.shader_preview.profile`
 `shader-export-preview/2`. `shader_request_preview` adds required `mode:"still"|
 "sequence"`, `width`, `height` to its saved mounted-owner request; `output` retains
-projection/framing and optional hundredth `supersampling`. Sequence requires
+projection/framing and optional finite `supersampling` ≥1, subject to format/device/working-set admission. Sequence requires
 `sequence_sample:{start_time,end_time,frame_rate,frame_count,index}` with reduced
 rational string endpoints, exact integer FPS, zero-based index and exclusive End.
 Geometry/quality/history use native export limits. This is a transient inspector,
@@ -99,7 +99,7 @@ continue through existing native controls. No new mutation or GPU job is added.
 
 Shader sequence input includes the saved identity/hashes/Project witness, exact
 rational interval/FPS/count, dimensions, seed, output and optional hundredth
-`supersampling`1.00–2.00. Direct output carries
+`supersampling` ≥1 with no preset-derived ceiling. Direct output carries
 `folder_export:{destination_folder,format:"PNG"|"JPG",quality_if_jpg}`; JPG requires
 quality1–100 and PNG uses null/omission. Explicit `publication_mode:"deferred"`
 omits that folder and retains separate native-master publication tools. Fractal
@@ -147,7 +147,7 @@ Stop, Continue and unknown-outcome recovery keep the same original native IDs.
 For Shader still preflight, `shader-raster-still/1` output chooses projection,
 `encoding:"png"|"jpg"`, exact `output_path` and native geometry. Equirectangular
 widths1024/2048/4096 have half-height; Dome uses native diameter/FOV/pose. Raster
-JPEG quality is fixed95, with no still supersampling or arbitrary raster sizes.
+JPEG quality is fixed95. Raster stills accept checked custom 2:1 sizes or square Dome diameters and optional finite supersampling ≥1. Read model-derived dimensions and admission constraints from discovery; presets are conveniences. EXR uses its separately advertised float-processing limits.
 `shader-linear-rgba-exr/1` uses width/height and optional native Dome projection/
 pose; it remains scene-linear float/alpha. `png-master/1` keeps its existing
 supported sizes/supersampling/import behavior. Still preflight's optional boolean

@@ -392,3 +392,6 @@ the original UUID and original Shader/Project witness. Unknown replies retain th
 original identity; never create a replacement ID automatically. Preview cleanup
 does not cancel an accepted export job. Still uses `mode:"still"` and omits
 `sequence_sample`, freezing the actual completed native frame.
+
+
+Shader raster stills accept checked custom 2:1 dimensions or square Dome diameters; listed resolution presets are conveniences, not the allowed set. Read `native_render.stills["shader-raster-still/1"].dimensions` and the Shader Dome range. Supersampling accepts finite scales of at least 1, subject to format, device and working-set admission; never infer a 2× ceiling from presets. Omit the field to preserve a retained legacy request. Both Dome laws retain their explicit Preserve 360 choice. EXR supersampling remains gated by its separately advertised float-processing contract.

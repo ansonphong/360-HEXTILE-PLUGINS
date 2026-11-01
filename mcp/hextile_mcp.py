@@ -798,7 +798,7 @@ _SHADER_SEQUENCE_OUTPUT = {"oneOf": [
     _shader_closed({"projection": {"const": "equirectangular"},
                     "pan": {"const": 0}, "tilt": {"const": 0}, "roll": {"const": 0}}),
     _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
-                    "diameter": {"enum": [1024, 2048, 4096, 8192]},
+                    "diameter": {"type": "integer", "minimum": 2, "maximum": 8192},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
@@ -850,7 +850,7 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "width": {"type": "integer", "minimum": 4, "maximum": 16384},
     "height": {"type": "integer", "minimum": 2, "maximum": 8192},
     "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
-    "supersampling": {"type": "number", "minimum": 1, "maximum": 2},
+    "supersampling": {"type": "number", "minimum": 1},
     "raster_policy": _SHADER_RASTER_POLICY,
     "output": _SHADER_SEQUENCE_OUTPUT,
     "folder_export": {"oneOf": [_NATIVE_FOLDER_INTENT, {"type": "null"}]},
@@ -2713,7 +2713,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "preflight_fractal_sequence",
      "description": "Check one saved Fractal scene revision, rational frame rate, exact range, and native output without queueing. "
                     "Equirectangular output is exact 2:1 and at least 128x64. "
-                    "Dome output is square at diameter 1024, 2048, 4096, or 8192, fulldome or fulldome_angular. "
+                    "Shader Dome output uses a checked custom square diameter, fulldome or fulldome_angular. "
                     "publication_mode is deferred. The receipt keeps source and output width and height. "
                     "Resource and geometry refusals come from this check. It does not allocate a new sequence id.",
      "inputSchema": _FRACTAL_SEQUENCE_REQUEST, "annotations": _annotations("preflight_fractal_sequence")},
@@ -2876,15 +2876,15 @@ _OUTPUT_PROFILE = {"enum": ["png-master/1", "shader-linear-rgba-exr/1", "dome-pn
 _PREVIEW_OUTPUT = {"oneOf": [
     _shader_closed({"projection": {"const": "equirectangular"}, "pan": {"const": 0},
                     "tilt": {"const": 0}, "roll": {"const": 0},
-                    "supersampling": {"type": "number", "minimum": 1, "maximum": 2}},
+                    "supersampling": {"type": "number", "minimum": 1}},
                    ("supersampling",)),
     _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
-                    "diameter": {"enum": [1024, 2048, 4096, 8192]},
+                    "diameter": {"type": "integer", "minimum": 2, "maximum": 8192},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
                     "roll": {"type": "number", "minimum": -180, "maximum": 180},
-                    "supersampling": {"type": "number", "minimum": 1, "maximum": 2}},
+                    "supersampling": {"type": "number", "minimum": 1}},
                    ("supersampling",)),
 ]}
 _PREVIEW_SAMPLE = _shader_closed({
@@ -2895,12 +2895,12 @@ _PREVIEW_SAMPLE = _shader_closed({
     "index": {"type": "integer", "minimum": 0, "maximum": 9999},
 })
 _STILL_OUTPUT = {"anyOf": [
-    _shader_closed({"width": {"type": "integer", "minimum": 1024, "maximum": 16384},
-                    "height": {"type": "integer", "minimum": 512, "maximum": 8192},
-                    "supersampling": {"type": "number", "minimum": 1, "maximum": 2},
+    _shader_closed({"width": {"type": "integer", "minimum": 2, "maximum": 16384},
+                    "height": {"type": "integer", "minimum": 1, "maximum": 8192},
+                    "supersampling": {"type": "number", "minimum": 1},
                     "output_path": _ABS_PATH}, ("supersampling", "output_path")),
     _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
-                    "diameter": {"enum": [1024, 2048, 4096, 8192]},
+                    "diameter": {"type": "integer", "minimum": 2, "maximum": 8192},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
@@ -2908,12 +2908,12 @@ _STILL_OUTPUT = {"anyOf": [
                     "output_path": _ABS_PATH}, ("output_path",)),
     _shader_closed({"projection": {"const": "equirectangular"},
                     "encoding": {"enum": ["png", "jpg"]},
-                    "width": {"enum": [1024, 2048, 4096]},
-                    "height": {"enum": [512, 1024, 2048]},
+                    "width": {"type": "integer", "minimum": 2, "maximum": 16384},
+                    "height": {"type": "integer", "minimum": 1, "maximum": 8192},
                     "output_path": _ABS_PATH}),
     _shader_dome({"projection": {"enum": ["fulldome", "fulldome_angular"]},
                     "encoding": {"enum": ["png", "jpg"]},
-                    "diameter": {"enum": [1024, 2048, 4096, 8192]},
+                    "diameter": {"type": "integer", "minimum": 2, "maximum": 8192},
                     "fov_deg": {"type": "number", "minimum": 10, "maximum": 360},
                     "pan": {"type": "number", "minimum": -180, "maximum": 180},
                     "tilt": {"type": "number", "minimum": -90, "maximum": 90},
@@ -2934,6 +2934,7 @@ for _shape in _PREVIEW_OUTPUT["oneOf"]:
     _shape["properties"]["raster_policy"] = _SHADER_RASTER_PROCESSING
 _STILL_OUTPUT["anyOf"][1]["properties"]["raster_policy"] = _SHADER_RASTER_PNG
 for _shape in _STILL_OUTPUT["anyOf"][2:4]:
+    _shape["properties"]["supersampling"] = {"type": "number", "minimum": 1}
     _shape["properties"]["raster_policy"] = _SHADER_RASTER_POLICY
     _shape.setdefault("allOf", []).append({
         "if": {"properties": {"encoding": {"const": "png"}}},

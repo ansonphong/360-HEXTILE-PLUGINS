@@ -160,7 +160,15 @@ def _valid_raster_evidence(value: Mapping[str, Any], format: str | None) -> bool
     return execution == cpu or _closed_native_execution(policy, execution)
 
 
+
+def _valid_shader_scale(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and value >= 1
+
 def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
+    if 'supersampling' in output:
+        if not _valid_shader_scale(output['supersampling']):
+            return False
+        output = {key: value for key, value in output.items() if key != 'supersampling'}
     if "raster_policy" in output:
         if not _valid_raster_policy(output["raster_policy"], str(output.get("encoding", "")).upper()):
             return False
@@ -173,17 +181,21 @@ def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
         return False
     if output["projection"] == "equirectangular":
         return (set(output) == {"projection", "encoding", "output_path", "width", "height"}
-                and type(output["width"]) is int and output["width"] in {1024, 2048, 4096}
-                and type(output["height"]) is int and output["height"] * 2 == output["width"])
+                and type(output["width"]) is int and 2 <= output["width"] <= 16384
+                and type(output["height"]) is int and 1 <= output["height"] <= 8192 and output["height"] * 2 == output["width"])
     return (output["projection"] in {"fulldome", "fulldome_angular"}
             and set(output) <= {"projection", "encoding", "output_path", "diameter",
                                 "fov_deg", "pan", "tilt", "roll", "preserve_360", "preserve_360_profile"}
             and type(output.get("diameter")) is int
-            and output["diameter"] in {1024, 2048, 4096, 8192}
+            and 2 <= output["diameter"] <= 8192
             and _native_pose(output) and _valid_preservation(output))
 
 
 def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
+    if 'supersampling' in output:
+        if type(output['supersampling']) not in (int, float) or output['supersampling'] != 1:
+            return False
+        output = {key: value for key, value in output.items() if key != 'supersampling'}
     if (not {"width", "height"} <= set(output)
             or set(output) - {"width", "height", "projection", "fov_deg", "pan", "tilt", "roll", "output_path", "preserve_360", "preserve_360_profile"}
             or type(output["width"]) is not int or type(output["height"]) is not int):
@@ -201,6 +213,10 @@ def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
 
 
 def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
+    if type(output) is dict and 'supersampling' in output:
+        if not _valid_shader_scale(output['supersampling']):
+            return False
+        output = {key: value for key, value in output.items() if key != 'supersampling'}
     if type(output) is dict and {"raster_policy", "raster_execution"} & output.keys():
         if not _valid_raster_evidence(output, str(output.get("encoding", "png")).upper()):
             return False
@@ -209,21 +225,21 @@ def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
             "equirectangular", "fulldome", "fulldome_angular"}:
         return False
     if raster:
-        if output.get("encoding") not in {"png", "jpg"}:
+        if output.get("encoding", "png") not in {"png", "jpg"}:
             return False
         if output["projection"] == "equirectangular":
             if (not {"width", "height"} <= set(output)
                     or set(output) - {"projection", "encoding", "width", "height", "file"}
-                    or type(output["width"]) is not int or output["width"] not in {1024, 2048, 4096}
+                    or type(output["width"]) is not int or not 2 <= output["width"] <= 16384
                     or type(output["height"]) is not int or output["height"] * 2 != output["width"]):
                 return False
         elif (type(output.get("diameter")) is not int
-                or output["diameter"] not in {1024, 2048, 4096, 8192}
+                or not 2 <= output["diameter"] <= 8192
                 or set(output) - {"projection", "encoding", "diameter", "fov_deg", "pan", "tilt", "roll", "file", "preserve_360", "preserve_360_profile"}):
             return False
     else:
         if (output["projection"] == "equirectangular" or type(output.get("diameter")) is not int
-                or output["diameter"] not in {1024, 2048, 4096, 8192}
+                or not 2 <= output["diameter"] <= 8192
                 or "fov_deg" not in output
                 or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file", "preserve_360", "preserve_360_profile"}):
             return False
@@ -233,7 +249,7 @@ def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
         return True
     file = output["file"]
     if raster:
-        suffixes = {".png"} if output["encoding"] == "png" else {".jpg", ".jpeg"}
+        suffixes = {".png"} if output.get("encoding", "png") == "png" else {".jpg", ".jpeg"}
         return _safe_output_leaf(file, suffixes)
     return (type(file) is str and re.fullmatch(r"domes/[A-Za-z0-9_-]{1,64}\.png", file) is not None)
 
@@ -280,8 +296,7 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
             or sample is not None and not _valid_preview_sample(sample)):
         return False
     scale = output.get("supersampling", 1)
-    if (type(scale) not in (int, float) or not math.isfinite(scale) or not 1 <= scale <= 2
-            or abs(scale * 100 - round(scale * 100)) > 1e-9):
+    if not _valid_shader_scale(scale):
         return False
     projection = output.get("projection")
     fields = {"projection", "pan", "tilt", "roll", "supersampling"}
@@ -294,7 +309,7 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
     return (type(projection) is str and projection in {"fulldome", "fulldome_angular"}
             and required | {"diameter", "fov_deg"} <= output.keys() and not set(output) - fields
             and width == height == output.get("diameter") and type(output["diameter"]) is int
-            and width in {1024, 2048, 4096, 8192} and _native_pose(output) and _valid_preservation(output))
+            and 2 <= width <= 8192 and _native_pose(output) and _valid_preservation(output))
 
 
 def _valid_render_timing(value: Any) -> bool:
@@ -516,10 +531,13 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     raise invalid()
                 if "accepted_settings" in job:
                     settings = job["accepted_settings"]
-                    if (type(settings) is not dict or set(settings) != {"output"}
+                    if (type(settings) is not dict or "output" not in settings or set(settings) - {"output", "supersampling"}
+                            or ("supersampling" in settings and not _valid_shader_scale(settings["supersampling"]))
                             or type(settings["output"]) is not dict
                             or {"raster_policy", "raster_execution"} & settings["output"].keys()
-                            or not _valid_dome_job_output(settings["output"], raster=False)):
+                            or not (_valid_linear_exr_output(settings["output"])
+                                    if settings["output"].get("projection") == "equirectangular"
+                                    else _valid_dome_job_output(settings["output"], raster=False))):
                         raise invalid()
                 job_id = job["job_id"]
             else:
@@ -1538,9 +1556,7 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
             or not _valid_raster_policy(body["raster_policy"], folder["format"])):
         refuse()
     scale = body.get("supersampling", 1.0)
-    if (type(scale) not in (int, float) or not math.isfinite(scale)
-            or not 100 <= round(scale * 100) <= 200
-            or abs(scale * 100 - round(scale * 100)) > 1e-8):
+    if not _valid_shader_scale(scale):
         refuse()
     ref = body["shader_ref"]
     if (type(ref) is not dict or set(ref) != {"origin", "id"}
@@ -1597,7 +1613,7 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
             refuse()
     elif projection in ("fulldome", "fulldome_angular"):
         if (set(output) - {"preserve_360", "preserve_360_profile"} != {"projection", "diameter", "fov_deg", "pan", "tilt", "roll"}
-                or type(output["diameter"]) is not int or output["diameter"] not in (1024, 2048, 4096, 8192)
+                or type(output["diameter"]) is not int or not 2 <= output["diameter"] <= 8192
                 or not _valid_preservation(output)
                 or body["width"] != output["diameter"] or body["height"] != output["diameter"]):
             refuse()
