@@ -29,6 +29,22 @@ capable client is `no_capable_client`. The agent does not produce WebGL frames:
 APP delivers mounted `shader_render_produce` and the Workshop claims the grant.
 Read `route`, `producer_state`, and `published_cursor` from the existing status
 tools. Stop and recovery use the original IDs.
+`available` reports the mounted runtime/writer; it does not activate a pipeline.
+`qualification:"closed"` / `admission:"route_unqualified"` means production
+requests are refused unchanged. Keep the selected route and request bytes; never
+retry as native or lower quality. Check each format's `geometry_limits` and
+`history_limits`: direct Dome history is unsupported; WebGL history requires
+1× SS, at most 2048×1024 equirectangular or 1024² Preserve 360°.
+Custom dimensions and finite SS ≥1 remain subject to actual format/device and
+working-set admission, not the preset list. EXR retains its own float limits.
+Sequence status preserves the closed `render_route` including browser codec
+quality when supplied, alongside the bounded producer/publication cursor.
+Publication-only Continue reuses verified saved frames; rendering Continue starts
+at the first unpublished frame using the original frozen recipe. Inspect/Continue,
+status and observed-run Stop remain the same native operations. Recover unknown
+outcomes with the original UUID/key/sequence/run/attempt and original request;
+missing status is unknown, never permission to mint a new request.
+
 
 ## Credits and sources
 

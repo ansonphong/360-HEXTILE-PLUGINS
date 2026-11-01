@@ -303,7 +303,7 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
     if projection == "equirectangular":
         return (fields - {"supersampling"} <= output.keys() and not set(output) - fields
                 and all(type(output[key]) in (int, float) and output[key] == 0 for key in ("pan", "tilt", "roll"))
-                and width == height * 2 and height % 2 == 0)
+                and width == height * 2)
     required = fields - {"supersampling"}
     fields |= {"diameter", "fov_deg", "preserve_360", "preserve_360_profile"}
     return (type(projection) is str and projection in {"fulldome", "fulldome_angular"}
@@ -1389,6 +1389,9 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
         if not _valid_display_processing(data['display_processing'], width=diameter or data.get('width'), height=diameter or data.get('height')):
             raise HextileClientError('Invalid display processing receipt', kind='other')
         out['display_processing'] = dict(data['display_processing'])
+    route = data.get('render_route')
+    if _checked_render_route(route):
+        out['render_route'] = {**route, **({'browser_codec': dict(route['browser_codec'])} if 'browser_codec' in route else {})}
     if type(data.get("producer")) is str and data["producer"] in {"shader", "fractal"}:
         out["producer"] = data["producer"]
     if type(data.get("name")) is str and len(data["name"]) <= 128:

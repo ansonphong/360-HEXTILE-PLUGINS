@@ -155,7 +155,7 @@ def test_custom_shader_preview_and_sequence_shapes_do_not_restore_preset_or_ss_l
     jsonschema.validate(output, server._SHADER_SEQUENCE_OUTPUT)
     assert client._valid_preview_selection(dict(mode='still', width=1536, height=1536,
         output={**output, 'supersampling': 3.125}))
-    assert client._valid_preview_selection(dict(mode='still', width=1536, height=768,
+    assert client._valid_preview_selection(dict(mode='still', width=1554, height=777,
         output=dict(projection='equirectangular', pan=0, tilt=0, roll=0, supersampling=1.2345)))
 
 

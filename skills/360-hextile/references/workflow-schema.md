@@ -57,6 +57,22 @@ does not produce frames. APP delivers `shader_render_produce` on the existing
 mounted channel, and the Workshop claims that grant. Status keeps `route`,
 `producer_state`, and `published_cursor` inside the existing projection.
 Cancel and recovery stay on the original request, sequence, run, and attempt IDs.
+`available` reports the mounted runtime/writer; it does not activate a pipeline.
+`qualification:"closed"` / `admission:"route_unqualified"` means production
+requests are refused unchanged. Keep the selected route and request bytes; never
+retry as native or lower quality. Check each format's `geometry_limits` and
+`history_limits`: direct Dome history is unsupported; WebGL history requires
+1× SS, at most 2048×1024 equirectangular or 1024² Preserve 360°.
+Custom dimensions and finite SS ≥1 remain subject to actual format/device and
+working-set admission, not the preset list. EXR retains its own float limits.
+Sequence status preserves the closed `render_route` including browser codec
+quality when supplied, alongside the bounded producer/publication cursor.
+Publication-only Continue reuses verified saved frames; rendering Continue starts
+at the first unpublished frame using the original frozen recipe. Inspect/Continue,
+status and observed-run Stop remain the same native operations. Recover unknown
+outcomes with the original UUID/key/sequence/run/attempt and original request;
+missing status is unknown, never permission to mint a new request.
+
 
 Full-quality Shader inspection advertises `native_render.shader_preview.profile`
 `shader-export-preview/2`. `shader_request_preview` adds required `mode:"still"|

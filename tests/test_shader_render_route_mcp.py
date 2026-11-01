@@ -107,3 +107,27 @@ def test_preview_work_receipt_is_bounded_and_legacy_absence_remains_valid():
     assert _valid_display_processing(_display_report(), width=4, height=2)
     for changed in ({'kernel_sha256': 'private'}, {'packed_rgb_bytes': 25}, {'float_readback_bytes': True}):
         assert not _valid_display_processing({**_display_report(), **changed}, width=4, height=2)
+
+
+def test_sequence_status_preserves_frozen_browser_route_without_private_fields():
+    client = Client.__new__(Client)
+    sid = 'seq_' + 'b' * 32
+    route = {'profile': 'shader-render-route/1', 'route': 'webgl-browser-encode-backend',
+             'browser_codec': {'format': 'jpeg', 'jpeg_quality': 0.83}}
+    from copy import deepcopy
+    response = {'sequence_id': sid, 'producer': 'shader', 'status': 'incomplete',
+                'render_route': deepcopy(route), 'producer_state': 'stopped', 'published_cursor': 2,
+                'frames_completed': 3, 'frame_count': 5, 'private_grant': 'secret',
+                'continuation_receipt': {'key': 'original', 'request_hash': 'sha256:' + 'a' * 64,
+                    'inspection_fingerprint': 'sha256:' + 'b' * 64, 'run_id': 'c' * 32, 'mode': 'native'}}
+    client.get_json = lambda path: response
+    result = client.get_shader_sequence(sid)
+    assert result['render_route'] == route
+    assert result['route'] == route['route']
+    assert result['published_cursor'] == 2 and result['frames_completed'] == 3
+    assert result['continuation_receipt']['key'] == 'original'
+    assert 'secret' not in str(result)
+    result['render_route']['browser_codec']['jpeg_quality'] = 0.5
+    assert response['render_route'] == route
+    response['render_route']['private_grant'] = 'secret'
+    assert 'render_route' not in client.get_shader_sequence(sid)
