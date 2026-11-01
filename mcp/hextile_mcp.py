@@ -2713,7 +2713,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "preflight_fractal_sequence",
      "description": "Check one saved Fractal scene revision, rational frame rate, exact range, and native output without queueing. "
                     "Equirectangular output is exact 2:1 and at least 128x64. "
-                    "Shader Dome output uses a checked custom square diameter, fulldome or fulldome_angular. "
+                    "Fractal Dome output is square at diameter 1024, 2048, 4096, or 8192, fulldome or fulldome_angular. "
                     "publication_mode is deferred. The receipt keeps source and output width and height. "
                     "Resource and geometry refusals come from this check. It does not allocate a new sequence id.",
      "inputSchema": _FRACTAL_SEQUENCE_REQUEST, "annotations": _annotations("preflight_fractal_sequence")},
