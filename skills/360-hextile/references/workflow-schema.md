@@ -146,19 +146,36 @@ pending (`null`) until available; completed new-policy output needs a checked
 receipt. Sequence accepted settings carry policy/profiles and storage encoding
 carries the selected PNG level. Static support does not mean every job used the GPU.
 Discovery advertises `gpu_qualified` and `production_activated` from the live
-gates. Those gates qualify `preview` and `direct_sequence`. Dome, preserve-360,
-history, and EXR stay on the CPU path.
-While selection is pending, preview and direct sequence publish no execution
-(`raster_execution` null). The immediate 5-key CPU receipt is `forced_cpu`
-for an explicit CPU request and `gpu_unqualified` for an excluded automatic
-job, including a completed dome, preserve-360, history, or EXR job.
+gates. Use `qualified_subpaths` as the activation authority: a staged still
+candidate does not enable GPU stills while `still` is absent. Existing
+`preview` and `direct_sequence` support remains equirectangular PNG/RGB only.
+When `still` is advertised, native PNG still processing supports 2:1
+equirectangular output, square `fulldome` and `fulldome_angular`, and both
+Dome laws with `preserve_360:true`. Explicit still subpaths distinguish those
+five domains. Native still resolve requires the continuous effective ratio
+`ceil(height * supersampling) / height <= 2`; higher valid SS preserves the
+requested quality through the CPU stream. Dimensions and SS are not reduced.
+Preserve-360 retains the canonical 2:1 physical panorama on GPU only when its
+texture, mapped band, postpass, resources and helper memory fit the observed
+device limits and available memory. Unknown capacity, an oversized source or
+nonresident request chooses the CPU mapper before source evaluation. Native
+mapping uses the same pose, longitude wrap, latitude clamp and sanitized
+associated-alpha bilinear rule as the CPU mapper; source pixels are evaluated
+once. Dome/Preserve Preview and Sequence, JPG, history and EXR remain CPU paths.
+Runtime identity and the completed execution receipt still decide what actually
+ran; eligible geometry and static policy support alone cannot prove GPU work.
+While native selection is pending, Preview, direct Sequence and still output
+publish no execution (`raster_execution` null). The immediate 5-key CPU receipt
+is `forced_cpu` for an explicit CPU request and `gpu_unqualified` for an excluded
+automatic job, including a late still resident-capacity refusal. That refusal
+emits its receipt before CPU source rendering and does not submit another job.
 The closed 8-key receipt appears after the resident stream runs or falls
 back. Its `actual_processing` is `retained_native`,
 `retained_native_with_cpu_repair`, or `cpu` with reason `dense_cpu_fallback`
 or `cpu_fallback`. A native pair may set both flags true only for an admitted
 qualified job. A CPU outcome keeps both flags false. An `actual_processing`
-of `gpu` or any extra key is not evidence. The retained-source maximum is
-still 1/255 RGB.
+of `gpu` or any extra key is not evidence. The retained-source postpass maximum is 1/255 RGB; it does not measure
+projection agreement or establish successful saved-image publication.
 Compression does not change RGB Preview identity; processing does. Progress,
 Stop, Continue and unknown-outcome recovery keep the same original native IDs.
 
