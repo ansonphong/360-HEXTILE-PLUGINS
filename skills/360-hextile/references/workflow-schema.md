@@ -58,6 +58,15 @@ mounted channel, and the Workshop claims that grant. Status keeps `route`,
 `producer_state`, and `published_cursor` inside the existing projection.
 Cancel and recovery stay on the original request, sequence, run, and attempt IDs.
 `available` reports the mounted runtime/writer; it does not activate a pipeline.
+For explicitly enabled local testing, discovery reports `available:true` and
+`qualification:"testing"`, with no qualified envelopes. This permits testing
+through the same UI/MCP native operations; it is not a quality or production
+approval. The source-owned `WEBGL_TESTING_ENABLED` switch in
+`plugins/shader/backend/webgl_admission.py` controls this access; requests cannot
+enable it. It also requires existing source developer mode (`HEXTILE_DEV_MODE=1`);
+packaged processes cannot use it. Setting it false restores the existing reviewed production envelopes.
+Device, format, memory, history, currentness and ownership checks still apply,
+and the requested route is never silently changed.
 `qualification:"closed"` / `admission:"route_unqualified"` means production
 requests are refused unchanged. Keep the selected route and request bytes; never
 retry as native or lower quality. Check each format's `geometry_limits` and
