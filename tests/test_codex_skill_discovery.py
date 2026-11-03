@@ -67,6 +67,7 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     assert not (tmp_path / ".codex" / "skills" / "hextile").exists()
 
     specialized = (tmp_path / ".agents" / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
+    specialized += "\n" + (tmp_path / ".agents" / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
     umbrella = (tmp_path / ".agents" / "skills" / "360-hextile" / "SKILL.md").read_text(encoding="utf-8")
     assert specialized.startswith("---\nname: shader\n")
     assert umbrella.startswith("---\nname: 360-hextile\n")
@@ -128,6 +129,15 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     assert INSTALL.main(["--home", str(tmp_path)]) == 0
     assert shader.read_bytes() == (ROOT / "skills" / "shader" / "SKILL.md").read_bytes()
     assert (tmp_path / ".codex" / "config.toml").read_text().count("[mcp_servers.hextile]") == 1
+
+
+def test_shader_quick_skill_and_authoring_reference_are_delivered(tmp_path: Path) -> None:
+    assert INSTALL.main(["--home", str(tmp_path)]) == 0
+    source = ROOT / "skills" / "shader"
+    installed = tmp_path / ".agents" / "skills" / "shader"
+    for relative in ("SKILL.md", "references/authoring.md"):
+        assert (installed / relative).read_bytes() == (source / relative).read_bytes()
+    assert "references/authoring.md" in (installed / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_uninstall_removes_agents_root_and_marker_legacy_keeps_survivor(
@@ -339,7 +349,7 @@ def test_fractal_workshop_skill_lands_only_in_the_temp_home(tmp_path: Path) -> N
         assert phrase in text
     hub = (tmp_path / ".agents" / "skills" / "360-hextile" / "SKILL.md").read_text(encoding="utf-8")
     assert "installed **`fractal`**" in hub
-    assert "human Apply" in (tmp_path / ".agents" / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
+    assert "human Apply" in (tmp_path / ".agents" / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "skills/fractal/SKILL.md" in readme
     assert "does not prove an installed host" in readme

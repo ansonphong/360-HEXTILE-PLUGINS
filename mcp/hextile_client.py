@@ -1805,6 +1805,76 @@ def _project_discovery_public(value: Any) -> Any:
     return _DISCOVERY_DROP
 
 
+def _valid_shader_connection_surface(surface: Any) -> bool:
+    if surface is None:
+        return True
+    required = {"kind", "studio_surface_id", "project_context_witness", "shader", "base", "draft_state"}
+    optional = {"owner_id", "owner_generation", "viewer_generation", "source_epoch"}
+    if type(surface) is not dict or not required <= set(surface) or set(surface) - required - optional:
+        return False
+    if (surface["kind"] != "shader_workshop" or not _duplicate_ref(surface["shader"], destination=False)
+            or type(surface["draft_state"]) is not str
+            or surface["draft_state"] not in {"clean", "dirty", "saving", "unknown", "external_attached"}):
+        return False
+    for key, limit in (("studio_surface_id", 64), ("project_context_witness", 256), ("owner_id", 128)):
+        if key in surface and (type(surface[key]) is not str or not 1 <= len(surface[key]) <= limit):
+            return False
+    for key in ("owner_generation", "viewer_generation", "source_epoch"):
+        if key in surface and (type(surface[key]) is not int or not 0 <= surface[key] <= 2**53 - 1):
+            return False
+    base = surface["base"]
+    if type(base) is not dict:
+        return False
+    if base.get("kind") == "unaccepted":
+        return set(base) == {"kind", "authoring_digest"} and _duplicate_digest(base["authoring_digest"])
+    required_base = {"working_revision", "document_hash", "source_hash"}
+    return (required_base <= set(base) and not set(base) - required_base - {"kind", "manifest_hash"}
+            and ("kind" not in base or base["kind"] == "saved")
+            and type(base["working_revision"]) is int and 1 <= base["working_revision"] <= 2**53 - 1
+            and _duplicate_digest(base["document_hash"]) and _duplicate_digest(base["source_hash"])
+            and ("manifest_hash" not in base or _duplicate_digest(base["manifest_hash"], null=True)))
+
+
+def _valid_shader_connection(result: Any) -> bool:
+    """Closed public metadata only. Unknown APP shapes never become compact success."""
+    if (type(result) is not dict or set(result) != {
+            "view", "schema", "mcp_enabled", "current_surface", "shader_contract", "shader_summary"}
+            or result["view"] != "shader" or type(result["schema"]) is not int or result["schema"] != 1
+            or type(result["mcp_enabled"]) is not bool):
+        return False
+    summary, contract, surface = result["shader_summary"], result["shader_contract"], result["current_surface"]
+    if (type(summary) is not dict or set(summary) != {
+            "name", "metadata_status", "shader", "draft_state", "save_state", "editable", "blockers"}
+            or type(contract) is not dict or set(contract) != {"revision", "apply_policy", "blockers"}
+            or type(contract["revision"]) is not int or contract["revision"] != 1
+            or type(contract["apply_policy"]) is not str or contract["apply_policy"] not in {"mounted", "unavailable"}
+            or not _valid_shader_connection_surface(surface)):
+        return False
+    for codes in (summary["blockers"], contract["blockers"]):
+        if (type(codes) is not list or len(codes) > 16
+                or any(type(code) is not str or re.fullmatch(r"[a-z_]{1,64}", code) is None for code in codes)):
+            return False
+    name = summary["name"]
+    if (name is not None and (type(name) is not str or not name.strip() or len(name) > 4096)
+            or summary["metadata_status"] != ("available" if name is not None else "unavailable")
+            or type(summary["editable"]) is not bool or type(summary["save_state"]) is not str
+            or summary["save_state"] not in {"saved", "saving", "not_saved", "unknown", "unaccepted", "external_attached"}
+            or not set(contract["blockers"]) <= set(summary["blockers"])):
+        return False
+    if surface is None:
+        return (name is None and summary["shader"] is None and summary["draft_state"] is None
+                and summary["save_state"] == "unknown" and not summary["editable"]
+                and contract["apply_policy"] == "unavailable")
+    if summary["shader"] != surface["shader"] or summary["draft_state"] != surface["draft_state"]:
+        return False
+    if summary["save_state"] == "saved" and (surface["draft_state"] != "clean" or surface["base"].get("kind") == "unaccepted"):
+        return False
+    return (not summary["editable"] or result["mcp_enabled"] and not summary["blockers"]
+            and contract["apply_policy"] == "mounted" and surface["shader"]["origin"] in {"user", "project"}
+            and surface["draft_state"] in {"clean", "external_attached"}
+            and summary["save_state"] in {"saved", "unaccepted", "external_attached"})
+
+
 def _discovery_malformed(message: str) -> HextileClientError:
     return HextileClientError(message, kind="other", status_code=502)
 
@@ -4661,15 +4731,23 @@ class Client:
         *,
         include_nav: bool = False,
         include_active_tool: bool = False,
+        view: str = "full",
     ) -> Any:
-        """GET /api/agent/live-context. No local merge."""
-        return self.get_json(
+        """GET /api/agent/live-context. Optional source-free Shader view; no local merge."""
+        if type(view) is not str or view not in {"full", "shader"}:
+            raise HextileClientError("view must be full or shader", kind="other", status_code=422)
+        result = self.get_json(
             "/api/agent/live-context",
             params={
                 "include_nav": 1 if include_nav else 0,
                 "include_active_tool": 1 if include_active_tool else 0,
+                **({"view": "shader"} if view == "shader" else {}),
             },
         )
+        if view == "shader" and not _valid_shader_connection(result):
+            raise HextileClientError("Compact Shader discovery is unavailable or invalid. Update 360 Hextile; no compact result was verified.",
+                                     kind="unsupported", status_code=503)
+        return result
 
     def save_workflow(
         self,

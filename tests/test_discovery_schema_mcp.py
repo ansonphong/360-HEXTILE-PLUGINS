@@ -94,6 +94,96 @@ def _tool(name: str) -> dict[str, Any]:
     return next(row for row in TOOLS if row["name"] == name)
 
 
+def _shader_connection() -> dict[str, Any]:
+    ref = {"origin": "user", "shaderId": "aurora"}
+    return {"view": "shader", "schema": 1, "mcp_enabled": True,
+        "current_surface": {"kind": "shader_workshop", "shader": ref, "draft_state": "clean",
+            "studio_surface_id": "ws-test", "project_context_witness": "test-witness",
+            "base": {"kind": "saved", "working_revision": 1,
+                "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64}},
+        "shader_contract": {"revision": 1, "apply_policy": "mounted", "blockers": []},
+        "shader_summary": {"name": "Aurora", "metadata_status": "available", "shader": ref,
+            "draft_state": "clean", "save_state": "saved", "editable": True, "blockers": []}}
+
+
+def test_shader_connection_is_one_compact_read_and_preserves_full_default() -> None:
+    compact = _shader_connection()
+    full = {"models": [{"id": "unrelated"}], "inventory": {"renders": []}, "current_surface": compact["current_surface"]}
+    query = "include_nav=0&include_active_tool=0"
+    server, _client, calls = _server({
+        ("GET", "/api/agent/live-context", query + "&view=shader"): (200, json.dumps(compact).encode()),
+        ("GET", "/api/agent/live-context", query): (200, json.dumps(full).encode()),
+    })
+    result = server.call_tool("get_live_context", {"view": "shader"})
+    assert not result.get("isError") and json.loads(result["content"][0]["text"]) == compact
+    assert len(_native_calls(calls)) == 1
+    assert _native_calls(calls)[0][1] == "/api/agent/live-context"
+    assert json.loads(server.call_tool("get_live_context", {})["content"][0]["text"]) == full
+    assert _tool("get_live_context")["inputSchema"]["properties"]["view"]["enum"] == ["full", "shader"]
+
+
+@pytest.mark.parametrize("payload", [
+    {"inventory": {}, "models": []},  # old APP silently ignored the new query
+    {**_shader_connection(), "shader_summary": {**_shader_connection()["shader_summary"], "editable": "yes"}},
+    {**_shader_connection(), "current_surface": {**_shader_connection()["current_surface"], "source": "private GLSL"}},
+    {**_shader_connection(), "shader_contract": {**_shader_connection()["shader_contract"], "inventory": []}},
+    {**_shader_connection(), "shader_contract": {**_shader_connection()["shader_contract"], "apply_policy": []}},
+    {**_shader_connection(), "shader_summary": {**_shader_connection()["shader_summary"], "draft_state": "bogus", "editable": False},
+        "current_surface": {**_shader_connection()["current_surface"], "draft_state": "bogus"}},
+    {**_shader_connection(), "shader_summary": {**_shader_connection()["shader_summary"], "editable": False,
+        "shader": {"origin": "invalid", "shaderId": "aurora"}}, "current_surface": {
+            **_shader_connection()["current_surface"], "shader": {"origin": "invalid", "shaderId": "aurora"}}},
+])
+def test_shader_connection_never_claims_success_for_old_or_invalid_metadata(payload: dict[str, Any]) -> None:
+    server, _client, calls = _server({
+        ("GET", "/api/agent/live-context"): (200, json.dumps(payload).encode()),
+    })
+    result = server.call_tool("get_live_context", {"view": "shader"})
+    assert result["isError"] is True
+    assert json.loads(result["content"][0]["text"])["kind"] == "unsupported"
+    assert len(_native_calls(calls)) == 1  # no fallback inventory or source reads
+
+
+def test_shader_connection_invalid_arguments_do_not_reach_app() -> None:
+    server, _client, calls = _server({})
+    for args in ({"view": "other"}, {"view": True}, {"view": "shader", "include_source": True},
+                 {"view": "shader", "include_nav": "false"}):
+        assert server.call_tool("get_live_context", args)["isError"] is True
+    assert _native_calls(calls) == []
+
+
+def test_shader_connection_disconnected_app_is_not_a_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client()
+    calls = []
+    def unavailable(method: str, path: str, **_kwargs: Any) -> Any:
+        calls.append((method, path))
+        if path == "/api/agent/events":
+            return {}
+        raise HextileClientError("APP unavailable", kind="network")
+    monkeypatch.setattr(client, "request_json", unavailable)
+    result = HextileMcpServer(client=client).call_tool("get_live_context", {"view": "shader"})
+    assert result["isError"] is True
+    assert calls == [("GET", "/api/agent/mcp-status")]
+
+
+def test_shader_connection_keeps_external_mcp_enabled_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client()
+    calls = []
+    def native(method: str, path: str, **_kwargs: Any) -> Any:
+        calls.append((method, path))
+        if path == "/api/agent/events":
+            return {}
+        if path == "/api/agent/mcp-status":
+            return {"enabled": True}
+        assert path == "/api/agent/live-context"
+        return _shader_connection()
+    monkeypatch.setattr(client, "request_json", native)
+    result = HextileMcpServer(client=client).call_tool("get_live_context", {"view": "shader"})
+    assert result["isError"] is False
+    assert [call for call in calls if call[1] != "/api/agent/events"] == [
+        ("GET", "/api/agent/mcp-status"), ("GET", "/api/agent/live-context")]
+
+
 def test_discovery_tools_are_closed_read_only_and_dispatched() -> None:
     assert {
         "get_config_schema", "list_processors", "get_processor_schema", "get_plugin_catalog",

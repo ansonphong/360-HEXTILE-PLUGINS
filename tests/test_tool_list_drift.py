@@ -1220,10 +1220,13 @@ def test_mcp_initialize() -> None:
     assert resp["result"]["protocolVersion"] == "2024-11-05"
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]
-    for term in ("current_surface", "executable_capabilities", "execution_ready", "conventions/1", "modulation/2", "keyboard/mouse", "MIDI/OSC/gamepad",
-                 "preflight_shader_sequence", "render_shader_sequence", "get_shader_sequence",
-                 "preflight_shader_sequence_export", "export_shader_sequence", "control_shader_sequence"):
-        assert term in instructions
+    assert 'get_live_context(view="shader")' in instructions
+    assert "original IDs" in instructions and "workflow-schema" in instructions
+    guidance = load_guide("workflow-schema")["markdown"]
+    for term in ("executable_capabilities", "execution_ready", "conventions/1", "modulation/2",
+                 "keyboard/mouse", "MIDI/OSC/gamepad", "preflight_shader_sequence",
+                 "get_shader_sequence", "control_shader_sequence"):
+        assert term in guidance
 
 
 def test_private_headers_are_request_local() -> None:

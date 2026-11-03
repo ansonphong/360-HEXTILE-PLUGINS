@@ -616,67 +616,10 @@ _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
                      "pattern": r"^[A-Za-z0-9_-]{1,64}:[1-9][0-9]{0,15}$",
                      "description": "<handle>:<expected_generation+1>; suffix <= 9007199254740991, no leading zeros. Replay the original ID, generation and digest only."}
 _WORKSPACE_GUIDANCE = (
-    "Discover the three workspace tools via MCP tools/list; get_capabilities remains the APP workflow handshake. "
-    "Read get_live_context.current_surface and bind its actual document and writer identity. "
-    "Omit workspace_schema for the unchanged v1 pair; request workspace_schema:2 for the complete portable manifest. "
-    "V2 returns server-owned saved/unaccepted base, root and ordered source paths; preserve these exact identities. "
-    "Use strict UTF-8 confined relative GLSL paths (<=256 UTF-8 bytes), no .git, native/absolute paths or escapes. "
-    "Declare every source in authoring.json: <=32 GLSL files, <=64 KiB aggregate raw and expanded source, include depth <=16. "
-    "V2 registers the full declared set, including unused modules, Looks and provenance: follow APP's raw-byte v2 digest instructions. "
-    "Never reuse the v1 pair digest for v2. Originals/resources are verified separately; unlisted files confer nothing. "
-    "get_shader_update include_source_diagnostics:true requests bounded logical locations for the current writer, witness and candidate. "
-    "Omitted/false keeps the source-free legacy receipt. Missing support requires upgrade/reconnect, never downgrade. "
-    "Workspace schema 2 is format support; source-modules/1 execution requires APP available and executable_capabilities. "
-    "frame-accumulation/1 is executable only when listed in executable_capabilities. "
-    "Author extensions.frame_accumulation as {schema:1, prior_frame_binding:\"hxPriorColor\", decay_parameter:\"trail_decay\"} "
-    "plus sorted required capability frame-accumulation/1, and sample hxPriorColor at hx.mapUv. "
-    "Do not author it when the id is absent. Do not add a get_capabilities flag, a pass graph, a history file, or a new tool. "
-    "Replay from the start, at most 240 frames, full frame at most 2048×1024. "
-    "Recognized capabilities, guide text and version numbers do not prove execution or installed host filesystem access. "
-    "Open requires a clean Project or My Library Shader and its actual current private writer. "
-    "Only acknowledged open returns files after APP acquires the mounted readonly/autosave hold. "
-    "V1 edits source.glsl (64 KiB) and authoring.json (2 MiB), with a complete derived document <= 2 MiB. "
-    "Keep v1 sidecar base immutable. V1 digest raw bytes without newline/JSON normalization: sha256: + SHA256("
-    "b'360hextile.shader-workspace.v1\\0' + uint64be(len(source)) + source + uint64be(len(authoring)) + authoring). "
-    "Register automatically checks the frozen candidate; it never wakes idle intelligence or synthesizes Apply. "
-    "Poll prepare/compile/preview/presentation/save, attachment_state, check_attempt and candidate-bound diagnostics; "
-    "prepare success is not compile proof or a save. Native Apply in Workshop advances the accepted base after its exact acknowledgement. "
-    "APP Retry rechecks the same candidate; a native-file repair uses a fresh canonical change_id. "
-    "After a lost open reply, make at most one identical open request with the same surface, witness, Shader, saved hashes/revision "
-    "and optional adoption digest; changed authority requires rediscovery. Never infer attachment from a notice or timeout. "
-    "410 means workspace/receipt expired: preserve files, rediscover and reopen; never recreate successful receipts. "
-    "Existing divergent files require explicit existing_workspace adoption of the reported exact digest. "
-    "APP owns eight handles, one attachment, eight receipts per handle, one current complete candidate, a 300-second idle TTL "
-    "and an aggregate 8 MiB workspace-copy budget; this proxy has no workspace cache or scheduler. "
-    "For Playable Shaders, read recipes and best-practices plus acknowledged closed conventions/1 instructions. "
-    "Pass through APP ABI/conventions instructions, available and executable_capabilities; observe execution_ready "
-    "independently of the current document declaration. Check conventions/1 and modulation/2 separately. "
-    "For schema-2 expression edits check parameter-expressions/1, shader-timeline/1 and admitted modulation/3 separately. "
-    "Discover control_shader_timeline through tools/list; current_surface owner generations are opaque witness, "
-    "and known client_request_id status recovers uncertain control replies without a new action. "
-    "Session playback does not save: propose_shader set_timeline edits document start/end/loop through native Apply. "
-    "Author Enter -> default-0 logical gate -> schema-2 oneshot BLAST (20 ms Linear Attack, "
-    "400 ms Ease Out Release, exponent 2) -> Range -> declared Glow parameter and GLSL effect "
-    "as one complete two-file candidate, with the default Master Clock and sorted sidecar declarations. "
-    "Camera helpers are vec3 hxCameraPosition, mat3 hxCameraRotation, vec3 hxCameraDirection(vec3 canonicalDirection); "
-    "camera:null is identity. Fly GLSL must use ro=hxCameraPosition and rd=hxCameraDirection(hx.direction). "
-    "Schema-2 modulation envelopes target stable typed logical input IDs shared with future INPUT session bindings. "
-    "Portable conventions/1 sources remain keyboard/mouse. MIDI/OSC/gamepad adapters are future/unsupported unless APP "
-    "reports their availability; executable capabilities or keyboard bindings do not prove adapter availability. "
-    "Do not author source IDs, packets or live events or invent workspace flags in get_capabilities. "
-    "Source candidate authoring never arms Interact, presses keys, changes live pose, writes Project presets or self Applies. "
-    "For an explicitly requested Project convention change, discover shader_get_project_conventions and "
-    "shader_set_project_conventions; use the native writer with the current Project witness and exact digest. "
-    "A shortcut conflict requires an explicit remap proposal, not a compiler-failure claim or Hotkeys override."
-    " Saved Shader native sequences use preflight_shader_sequence, render_shader_sequence, then "
-    "get_shader_sequence with the preflight-known deterministic ID and matching request_hash. "
-    "Require confirmed native Apply and its saved revision/hash, explicit deferred publication_mode, "
-    "exact rational interval/frame count and explicit native output. A lost render reply is recovered "
-    "by GET of that same ID; a missing ID leaves the outcome unknown. After verified native masters, "
-    "preflight_shader_sequence_export and export_shader_sequence use an explicitly chosen existing local folder, "
-    "PNG or JPG, and the preflight fingerprint. Recover an uncertain export through get_shader_sequence "
-    "and its known attempt_id; never blindly repost. control_shader_sequence stops/resumes native work or "
-    "cancels/retries the exact current export attempt. Generic create_sequence/start_sequence remain folder upres."
+    "For Shader source editing, read the installed shader skill's references/authoring.md "
+    "or get_guide(name=\"workflow-schema\") before attaching. Bind fresh current_surface Shader/base/writer/witness; "
+    "wait for acknowledged open before file access. Register the exact complete raw-byte digest; "
+    "recover uncertain mutations by original IDs. Discovery, compile, Apply and Saved are distinct."
 )
 
 
@@ -1442,8 +1385,12 @@ TOOLS: list[dict[str, Any]] = [
         "Read-only studio snapshot (K1). Current document/owner state, doc_generation FNV hex, "
         "and identity-stripped live export when the studio is present. "
         "403 studio_not_present if the FE RAM slot is empty. "
-        "Does not merge. include_nav and include_active_tool default false.",
+        "Use view=shader for a compact open-Shader name, Saved/draft state, editability and blockers; "
+        "no capability handshake or source read is needed for this read-only question. "
+        "Default full response is unchanged. Does not merge; discovery never proves Apply or Save.",
         {
+            "view": {"type": "string", "enum": ["full", "shader"], "default": "full",
+                     "description": "shader: compact mounted Shader discovery only; full: existing app snapshot."},
             "include_nav": {
                 "type": "boolean",
                 "description": "Include descriptive nav manifest. Default false.",
@@ -3733,7 +3680,9 @@ class HextileMcpServer:
                         "version": SERVER_VERSION,
                     },
                     "instructions": (
-                        "Call get_capabilities then get_live_context before compose; "
+                        "For read-only Shader connection use get_live_context(view=\"shader\") once; "
+                        "do not fetch inventories, GLSL or DevTools just to identify it. "
+                        "For workflow compose, call get_capabilities then get_live_context; "
                         "validate_config before run_workflow."
                         " " + _WORKSPACE_GUIDANCE
                     ),
@@ -4900,10 +4849,16 @@ class HextileMcpServer:
         )
 
     def _get_live_context(self, args: dict[str, Any]) -> Any:
+        _closed_tool_args(args, frozenset({"view", "include_nav", "include_active_tool"}))
+        view = args.get("view", "full")
+        if not isinstance(view, str) or view not in {"full", "shader"} or any(
+                type(args[key]) is not bool for key in ("include_nav", "include_active_tool") if key in args):
+            raise HextileClientError("Expected view full or shader and boolean include options", kind="other", status_code=422)
         try:
             return self.client.get_live_context(
                 include_nav=bool(args.get("include_nav", False)),
                 include_active_tool=bool(args.get("include_active_tool", False)),
+                **({"view": view} if view != "full" else {}),
             )
         except HextileClientError as exc:
             body = exc.body or ""

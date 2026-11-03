@@ -1,3 +1,18 @@
+## Quick Shader connection
+
+For “connect / what Shader is open?”, use `get_live_context(view="shader")` once.
+It returns only the mounted identity, name, Saved/draft state, editability and
+blockers. No capabilities handshake, GLSL read, app inventory or DevTools is
+needed for this question. Default full discovery and capability reads remain
+available for tasks that need them. Unknown metadata remains unknown; discovery
+is not Apply/Save proof and does not attach or authorize changes. Builtins are
+readable and require duplication before source editing. Before authoring, load
+the installed Shader skill's `references/authoring.md`; preserve all native
+ownership and original-request recovery rules. Update the canonical plugin in
+the host and reconnect to load changed tools/skills; APP also needs compact-view
+support. An old APP ignoring the query is reported unsupported, never a compact
+success. Source checkout/bundle checks do not activate installed hosts.
+
 # Workflow automation — best practices
 
 Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply.
