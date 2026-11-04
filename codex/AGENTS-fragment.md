@@ -8,7 +8,7 @@ Install id: **`360-hextile@360-hextile`**. Marketplace `360-hextile`. Skill `360
 
 See `references/agent-lexicon.md` for locked words, the complementarity card, and `REFUSE_*` strings.
 
-For Project Shader coding, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the acknowledged native-file procedure: negotiate v2 for the complete `workspace/` manifest or retain v1 for its two-file pair; edit only declared files, register the full raw digest, read APP diagnostics, repair/re-register, and verify APP’s automatic **Apply** and exact saved receipt. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page, known schema, recognized `source-modules/1`, or source fixture does not prove installed shared-file access or executable support; observe APP `available`, executable capabilities and candidate `execution_ready`. Git CLI actions need a separate user instruction; MCP supplies no Git tool; APP owns native automatic Apply. For **Playable Shaders** (`conventions/1`, `modulation/2`), one Enter-blast request authors the parameter, GLSL, logical gate, keyboard binding, BLAST envelope and Range mapping together. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
+For Project Shader coding, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the acknowledged native-file procedure: require workspace schema 2 for the complete `workspace/` manifest; the client defaults to 2 and never downgrades; edit only declared files, register the full raw digest, read APP diagnostics, repair/re-register, and verify APP’s automatic **Apply** and exact saved receipt. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page, known schema, recognized `source-modules/1`, or source fixture does not prove installed shared-file access or executable support; observe APP `available`, executable capabilities and candidate `execution_ready`. Git CLI actions need a separate user instruction; MCP supplies no Git tool; APP owns native automatic Apply. For **Playable Shaders** (`conventions/1`, `modulation/2`), one Enter-blast request authors the parameter, GLSL, logical gate, keyboard binding, BLAST envelope and Range mapping together. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
 
 For Fractal Workshop, invoke the installed **`fractal`** skill. It owns fresh context, actual current renderer ownership, closed edits, session transport, Save and Save As, and native sequence or folder publication. Shader and Fractal keep their native validation and saved receipts.
 
@@ -52,6 +52,16 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 |------|-------------|----------|
 | `call_hextile_api` | Call the configured local native API with GET/POST/PATCH/PUT/DELETE at `/api/...`, or GET `/openapi.json`; optional query/body JSON. Named tools remain preferred. | **yes** |
 | `get_capabilities` | Handshake before a session | no |
+| `get_config_schema` | Read one workflow config model's JSON schema, or the name index when `model` is omitted. PromptSettings uses the wire field `global`. Not the current file, not `/api/config`, and not `validate_config` | no |
+| `list_processors` | Read processor identity and admission metadata. Does not load or unload | no |
+| `get_processor_schema` | Read one processor UI schema by `pipeline_id`. Does not validate or unload | no |
+| `get_plugin_catalog` | Read plugin metadata, availability, dependencies, and operations. Does not start CREATE or animation and returns no private filesystem paths | no |
+| `get_app_preferences` | Read safe app preferences and effective_default_pipeline. Omits output folder, creator profile, EULA, credentials, and filesystem paths | no |
+| `update_app_preferences` | Patch one nonempty partial of those safe fields. Null does not clear a field. Privacy toggles change only when explicitly selected. Unknown acknowledgement: reread and do not replay. mcp_enabled false uses the native disconnect | **yes** |
+| `get_storage_summary` | Read disk free and total, default and fallback flags, and class identity. refresh defaults to false. No roots or paths | no |
+| `get_cache_buckets` | Read cache bucket identity, display name, size, file count, protection, and total size. No cache directories | no |
+| `clear_disposable_cache` | Clear disposable cache through the native clear routes. Protected buckets and live owners stay refused. Listed errors are not success and must not be replayed | **yes** |
+| `get_license_status` | Read current activation, tier, access state and source, features, and non-secret access flags. No tier argument and no machine id or license key hint | no |
 | `get_live_context` | Studio snapshot (current owner, doc_generation and live export) | no |
 | `apply_config_delta` | Live delta on the current open file. Never queues | **yes** |
 | `get_guide` | Schema, practices, recipes, website index | no |
@@ -88,6 +98,10 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `start_sequence` | Queue GPU for an existing sequence | **yes** |
 | `get_sequence` | Poll `sequence_id` progress / output (not `get_status`) | no |
 | `list_sequences` | Find sequences if you lost `sequence_id` | no |
+| `rename_sequence` | Rename display metadata only; preserve the saved recipe, files and native render owner | **yes** |
+| `set_sequence_lifecycle` | Archive, move to Trash or restore through the native library operation; keeps files | **yes** |
+| `set_sequence_tags` | Replace existing tag IDs, including the favorite tag when retained | **yes** |
+| `get_sequence_tags` | Read selected tags or reconcile an uncertain tag change | no |
 | `stop_sequence` | Request active-frame cancellation and cancel queued/pending frames; observe frame/holder drain before another heavy job | **yes** |
 | `preflight_batch` | Strict Batch preflight over a frozen workflow + folder/files | **yes** |
 | `get_batch_preflight` | Poll preflight until ready/failed/expired; get spec_hash | no |
@@ -127,13 +141,14 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `propose_shader` | Post a legacy shader candidate or Board, preserving Playable convention/envelope bytes and declarations in every row. Complete controls use the attested workspace. No prepare, consume, Import, delete, or Board Accept | **yes** |
 | `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through the connected APP and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |
-| `render_shader_sequence` | Queue that exact saved-native deferred request using its original idempotency key; compare its request hash with preflight | **yes** |
-| `get_shader_sequence` | Read bounded native progress and verified masters by the known Shader sequence ID; private paths and source stay hidden | no |
-| `control_shader_sequence` | Stop/resume native work or cancel/retry the exact current folder attempt; GET after uncertain control replies | **yes** |
+| `inspect_shader_sequence_output` | Inspect one chosen destination using native metadata; retain its identity and fingerprint before explicit Continue | no |
+| `render_shader_sequence` | Submit the exact saved-native direct PNG/JPG or explicit deferred request once; retain the preflight ID/hash and original key | **yes** |
+| `get_shader_sequence` | Read native ownership, run/revision, phases, saved count, cursor, timing and accepted settings; restart counts are last reported until checked | no |
+| `control_shader_sequence` | Continue an inspected request, Stop the observed run, resume an admitted job, or control the exact publication attempt; reconcile unknown replies | **yes** |
 | `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG or JPG; retain the fingerprint and attempt ID | no |
 | `export_shader_sequence` | Publish only that exact preflighted folder intent; GET the known ID/attempt after an uncertain reply | **yes** |
-| `open_shader_workspace` | Acknowledge exact Project Shader attachment; v1 returns two native files, negotiated v2 returns the declared source set and metadata path. Follow installed `360-hextile` | **yes** |
-| `register_shader_update` | Register the acknowledged format-specific raw digest: v1 pair or complete v2 declared set, including unused helpers; automatic APP Prepare/compile checks, never Apply | **yes** |
+| `open_shader_workspace` | Acknowledge exact Project Shader attachment; current schema2 returns the declared source set and metadata path; older replies refuse. Follow installed `360-hextile` | **yes** |
+| `register_shader_update` | Register the complete acknowledged v2 raw digest, including unused helpers; APP checks the candidate and saves only after its native acceptance | **yes** |
 | `get_shader_update` | Read the exact workspace receipt with handle, change_id and acknowledged Project witness | no |
 | `request_shader_doctor` | Start one on-demand GPU Doctor pass for the clean, previewed Builtin, My Library or Project Shader with its actual private captured frame; keep the UUID for polling | **yes** |
 | `get_shader_doctor` | Poll the exact Doctor request UUID and witness for bounded diagnostics without source, pixels or overlay mask | no |
@@ -143,7 +158,9 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `open_fractal_scene` | Open one saved scene id. Reopen does not enable interaction | **yes** |
 | `save_fractal_scene` | Save the adopted revision, or Save As a caller-known create-only id. Do not post again after ok false or a lost reply | **yes** |
 | `get_fractal_request` | Read one caller-known Fractal action. 410 is unknown, not refusal | no |
+| `capture_fractal_still` | Capture the exact finished native 360 preview into one known Render/node; export that source separately and retain unknown mint outcomes | **yes** |
 | `preflight_fractal_sequence` | Check a saved revision, rational rate, exact range, and 2:1 or Dome geometry before any queue | no |
+| `inspect_fractal_sequence_output` | Inspect one chosen destination and retained native Fractal intent without checking frame bytes | no |
 | `render_fractal_sequence` | Queue that same deferred native request. A lost reply does not mint a new id | **yes** |
 | `get_fractal_sequence` | Read one known sequence id, including after a lost render or export reply | no |
 | `control_fractal_sequence` | Stop or resume native work, or cancel, retry, or open the current export attempt | **yes** |
@@ -157,6 +174,30 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `local_file_write_abort` | Abort staging; does not publish the target | **yes** |
 | `local_file_write_commit` | Publish staged bytes; create-only, or optimistic expected-SHA check then atomic same-directory publication | **yes** |
 | `local_file_write_status` | Reconcile the original `request_id` after a lost reply, revoke, or MCP OFF | no |
+
+### Config, processor, and plugin discovery
+
+`get_config_schema` reads owned workflow config model names, or one model's JSON schema when `model` is set. PromptSettings exposes the wire field `global`. The index is names only. This is not the current config file, not host settings at `/api/config`, and it does not validate or admit work. `validate_config` remains the semantic check.
+
+`list_processors` and `get_processor_schema` read processor metadata and one native UI schema. They do not load, unload, or validate a pipeline.
+
+`get_plugin_catalog` reads plugin metadata, availability, dependencies, and operations. Disabled and unsupported rows stay disabled and unsupported. It does not start CREATE or animation and does not register jobs.
+
+### App preferences, storage, cache, and license
+
+`get_app_preferences` reads the safe preference fields and `effective_default_pipeline`. It omits the output folder, creator profile, EULA, credentials, and filesystem paths.
+
+`update_app_preferences(changes)` sends one nonempty partial object of those safe fields. Null does not clear a field. `error_reporting_enabled` and `telemetry_enabled` change only when the user explicitly selects them. If the acknowledgement is unknown, reread those preferences and do not replay the change. `mcp_enabled` false uses the native switch and its revoke. A disconnected client cannot turn MCP back on.
+
+`get_storage_summary` reads disk free and total, default and fallback flags, and class identity. `refresh` defaults to false and keeps the memoized scan. It returns no configured roots or paths.
+
+`get_cache_buckets` reads bucket identity, display name, size, file count, protection, and total size. It omits cache directories.
+
+`clear_disposable_cache` uses the native clear routes. Omit `bucket` to clear every disposable bucket. Protected buckets and live owners stay refused. A completed response that lists errors is the acknowledgement and is not success; do not replay it. If the acknowledgement is unknown, rereading bucket status cannot prove that clear; do not replay it.
+
+`get_license_status` reads the current activation, tier, access state and source, features, and non-secret access flags. It takes no tier argument and omits machine id, machine name, and license key hint.
+
+Online Gallery account and publishing workflows are outside this plugin's MCP interface.
 
 ### Trusted local files
 
@@ -173,7 +214,23 @@ The proxy forwards only to APP loopback and supplies `X-Hextile-Mcp-Session`. Do
 
 ### Selection guide
 
-For saved Shader animation, inspect typed targets with `get_shader_context`, propose the expression and timeline, then wait for native automatic Apply and a confirmed Save receipt. Reread the saved revision and hashes before `preflight_shader_sequence` → `render_shader_sequence` → `get_shader_sequence`. Use exact rational endpoints, frame rate/count, explicit equirectangular or square Dome output and `publication_mode:"deferred"`. On an uncertain render reply, GET the preflight-known ID and compare `request_hash`; unknown 404 is still an unknown outcome. Once native masters are complete, supply the existing destination_folder task path, then call `preflight_shader_sequence_export` → `export_shader_sequence` with the same intent and fingerprint. GET the known sequence and attempt after uncertain export or control replies; never blindly repost. `control_shader_sequence` needs the current `attempt_id` for cancel/retry. Generic `create_sequence`/`start_sequence` remain folder upres. See runnable JSON in `get_guide(name="recipes")`.
+For saved Shader animation, keep confirmed Apply and Save under the effective
+policy, then reread the saved identity/hashes and Project witness. Require
+`get_capabilities.native_render.contract:"native-render/1"`. Preflight and submit
+the same exact request/key using `preflight_shader_sequence` →
+`render_shader_sequence`, then poll `get_shader_sequence`. Direct PNG/JPG carries
+the explicit `folder_export` destination, format and JPG quality; optional
+hundredth supersampling1.00–2.00 keeps final dimensions. Explicit deferred masters
+and their separate export tools remain available. Inspect a chosen folder with
+`inspect_shader_sequence_output`; matching unfinished work uses
+`control_shader_sequence(action="continue")` with the complete original request
+and inspection fingerprint. Stop carries the observed run ID; export controls
+also carry the observed attempt ID/revision. A stale409 requires fresh status.
+After an uncertain reply, reconcile the original known ID/key/hash/run, never a
+new mutation. A known-ID404 remains unknown. Report committed saved count and
+contiguous cursor separately; checking/replay and last-reported restart counts
+are not newly rendered frames. Generic `create_sequence`/`start_sequence` remain
+folder upres. See the direct and explicit-deferred examples in `get_guide(name="recipes")`.
 
 1. **Handshake** → `get_capabilities` then `get_live_context` before compose.
 2. **Learn** → `get_guide` (`best-practices` then `workflow-schema`).

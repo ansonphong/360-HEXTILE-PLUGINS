@@ -1219,8 +1219,7 @@ def validate_shader_workspace(operation: str, args: Mapping[str, Any]) -> None:
                 or args.keys() - required - {"existing_workspace", "workspace_schema", "attribution_schema"}
                 or ("workspace_schema" in args and (type(args["workspace_schema"]) is not int or args["workspace_schema"] != 2))
                 or ("attribution_schema" in args and (type(args["attribution_schema"]) is not int or args["attribution_schema"] != 1))
-                or (supplied and supplied != base)
-                or (args.get("workspace_schema") != 2 and supplied != base)):
+                or (supplied and supplied != base)):
             refuse()
         shader = args["shader"]
         if (type(shader) is not dict or set(shader) != {"origin", "shaderId"}
@@ -4523,6 +4522,7 @@ class Client:
 
     def open_shader_workspace(self, body: Mapping[str, Any]) -> Any:
         validate_shader_workspace("open", body)
+        body = {"workspace_schema": 2, **body}
         result = self._shader_workspace_request("POST", "/api/agent/shader-workspaces/open", dict(body))
         if (not isinstance(result, dict) or type(result.get("handle")) is not str
                 or _WORKSPACE_HANDLE.fullmatch(result["handle"]) is None
@@ -4531,20 +4531,37 @@ class Client:
                 or result.get("shader") != body["shader"]
                 or result.get("project_context_witness") != body["project_context_witness"]
                 or result.get("studio_surface_id") != body["studio_surface_id"]
-                or result.get("attachment_state", "attached") != "attached"
-                or (body.get("workspace_schema") != 2 and (
-                    type(result.get("files")) is not dict or set(result["files"]) != {"source_path", "authoring_path"}
-                    or any(type(value) is not str or not value for value in result["files"].values())))):
+                or result.get("attachment_state", "attached") != "attached"):
             raise HextileClientError("Shader workspace acknowledgement unknown; rediscover or make one identical open retry. No paths were released.",
                                      kind="workspace_outcome_unknown")
-        if body.get("workspace_schema") == 2 and (
-                result.get("workspace_schema") != 2 or type(result.get("files")) is not list
+        if (type(result.get("workspace_schema")) is not int or result["workspace_schema"] != 2
+                or type(result.get("schema")) is not int or result["schema"] != 2
+                or type(result.get("files")) is not list
                 or not result["files"] or len(result["files"]) > 32
                 or any(type(row) is not dict or set(row) != {"path", "native_path"}
                        or any(type(value) is not str or not value for value in row.values()) for row in result["files"])
                 or any(type(result.get(key)) is not str or not result[key] for key in ("workspace_root", "authoring_path"))):
             raise HextileClientError("Upgrade 360 Hextile and reconnect for workspace_schema 2; no workspace paths were released.",
                                      kind="upgrade")
+        base = result.get("base")
+        if "expected_working_revision" in body:
+            fields = {"kind", "working_revision", "document_hash", "source_hash"}
+            valid_base = (type(base) is dict and fields <= base.keys()
+                and not base.keys() - fields - {"manifest_hash"} and base["kind"] == "saved"
+                and type(base["working_revision"]) is int
+                and base["working_revision"] == body["expected_working_revision"]
+                and base["document_hash"] == body["expected_document_hash"]
+                and base["source_hash"] == body["expected_source_hash"])
+            if valid_base and "manifest_hash" in base and base["manifest_hash"] is not None:
+                valid_base = (type(base["manifest_hash"]) is str
+                              and _WORKSPACE_DIGEST.fullmatch(base["manifest_hash"]) is not None)
+        else:
+            valid_base = (type(base) is dict and set(base) == {"kind", "authoring_digest"}
+                and base["kind"] == "unaccepted" and type(base["authoring_digest"]) is str
+                and _WORKSPACE_DIGEST.fullmatch(base["authoring_digest"]) is not None)
+        if not valid_base:
+            raise HextileClientError("Shader workspace base acknowledgement unknown; rediscover the current Shader. No paths were released.",
+                                     kind="workspace_outcome_unknown")
         return result
 
     def register_shader_update(self, args: Mapping[str, Any]) -> Any:

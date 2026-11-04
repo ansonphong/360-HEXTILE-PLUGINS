@@ -39,6 +39,10 @@ the coding host; APP owns attachment, checks, accepted state, compilation and
 Save. Read fresh `current_surface` and `shader_contract` before authoring;
 discovery metadata grants no authority.
 
+Current authoring uses document schema 4 and workspace schema 2. Require the
+acknowledged complete file set; older content needs offline migration, never a
+workspace downgrade. Extension and transport versions are independent.
+
 Keep native ownership, witness and base checks. Only acknowledged workspace open
 releases editable paths; register exact complete raw bytes and reconcile an
 uncertain outcome with its original request ID. Never auto-install/restart or

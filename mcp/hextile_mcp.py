@@ -42,7 +42,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.5.4"
+SERVER_VERSION = "0.5.5"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -618,7 +618,8 @@ _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
 _WORKSPACE_GUIDANCE = (
     "For Shader source editing, read the installed shader skill's references/authoring.md "
     "or get_guide(name=\"workflow-schema\") before attaching. Bind fresh current_surface Shader/base/writer/witness; "
-    "wait for acknowledged open before file access. Register the exact complete raw-byte digest; "
+    "use workspace_schema 2 and wait for its acknowledged complete file set before file access; never downgrade. "
+    "Register the exact complete raw-byte digest; "
     "recover uncertain mutations by original IDs. Discovery, compile, Apply and Saved are distinct."
 )
 
@@ -2567,11 +2568,11 @@ TOOLS: list[dict[str, Any]] = [
          "expected_document_hash": _WORKSPACE_DIGEST, "expected_source_hash": _WORKSPACE_DIGEST,
          "studio_surface_id": _WORKSPACE_WITNESS,
          "existing_workspace": _shader_closed({"action": {"const": "adopt"}, "expected_content_digest": _WORKSPACE_DIGEST}),
-         "workspace_schema": {"type": "integer", "const": 2},
+         "workspace_schema": {"type": "integer", "const": 2, "default": 2},
          "attribution_schema": {"type": "integer", "const": 1},
      }, ("existing_workspace", "workspace_schema", "attribution_schema", "expected_working_revision", "expected_document_hash", "expected_source_hash")) | {
          "anyOf": [{"required": ["expected_working_revision", "expected_document_hash", "expected_source_hash"]},
-                   {"required": ["workspace_schema"], "not": {"anyOf": [
+                   {"not": {"anyOf": [
                        {"required": [key]} for key in ("expected_working_revision", "expected_document_hash", "expected_source_hash")]}}],
      }, "annotations": _annotations("open_shader_workspace")},
     _tool_def("register_shader_update",

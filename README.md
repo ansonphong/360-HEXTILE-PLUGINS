@@ -1,6 +1,6 @@
 # 360-hextile-agent
 
-**v0.5.4**
+**v0.5.5**
 
 Claude Code plugin + Codex twin that drive **360 Hextile** over localhost HTTP.
 
@@ -23,9 +23,21 @@ Updating this repository or its APP vendor snapshot does not update an installed
 plugin cache; update through the host's existing plugin flow and reconnect/start
 a new host session. No install or reconnect is performed by this change.
 
-## Qualification status (2026-10-24)
+## Recorded live qualification (2026-10-24)
 
 The connected MCP tool inventory still showed the original 16 Shader tools; new names including `shader_get_credits` and `shader_get_output_job` were absent. An actual `get_capabilities` call returned `isError` with “MCP availability could not be verified. Check 360 Hextile Settings → MCP and retry.” The loaded connector revision and installed APP behavior are therefore unverified. Native filesystem access, GPU output, and desktop behavior have not been qualified for this delivery. Source checkout and bundled-file checks do not establish installed-host behavior.
+
+## Current Shader format
+
+Version 0.5.5 source authoring requires document schema 4 and workspace schema 2. The
+client requests workspace2 by default and refuses older acknowledgements without
+releasing paths. Existing older content needs the separate checked offline
+migration; opening a workspace never upgrades or overwrites it. Extension,
+provenance and bundle versions remain independent.
+
+Source/headless verification and isolated shelf conversions do not establish
+installed-plugin or live visual acceptance. Update the installed host package and
+reconnect only when the matching APP/content cutover is ready for your smoke test.
 
 ## Prerequisites
 
@@ -198,7 +210,7 @@ A temporary installer destination does not prove an installed host.
 
 ### Shader authoring in your coding host
 
-The `shader` skill edits the open Project Shader through the acknowledged `source.glsl` / `authoring.json` pair, registers a raw-byte framed digest and polls real APP Prepare/compiler receipts, with at most three repairs. APP automatically Applies and saves a singular ready `spt_` / `cpr_` candidate through the native writer. Registration alone does not prove Save; inspect the exact saved receipt, and keep unknown Save unknown. Installed MCP connectivity and native access to the same physical Project/worktree files are both required; a remote connector alone is insufficient. APP verifies current ownership, source and CAS; the host controls its own filesystem permissions. Reasoning belongs to your host account/provider and may incur charges or quota limits.
+The `shader` skill edits the open Project Shader through the complete acknowledged member set, registers a raw-byte framed digest and polls real APP Prepare/compiler receipts, with at most three repairs. APP automatically Applies and saves a singular ready `spt_` / `cpr_` candidate through the native writer. Registration alone does not prove Save; inspect the exact saved receipt, and keep unknown Save unknown. Installed MCP connectivity and native access to the same physical Project/worktree files are both required; a remote connector alone is insufficient. APP verifies current ownership, source and CAS; the host controls its own filesystem permissions. Reasoning belongs to your host account/provider and may incur charges or quota limits.
 
 Claude prefixes plugin skills with the plugin name: `/360-hextile:360-hextile` (hub), `/360-hextile:shader`, `/360-hextile:fractal`, `/360-hextile:upres`. Codex uses separately installed sibling skill directories (`360-hextile`, `shader`, `fractal`, `upres`): confirm them in the installed picker. Check actual Codex/Grok invocation syntax on the installed client; source layout does not prove an installed host.
 

@@ -1216,7 +1216,7 @@ def test_mcp_initialize() -> None:
     )
     assert resp is not None
     assert resp["result"]["serverInfo"]["name"] == "hextile"
-    assert resp["result"]["serverInfo"]["version"] == "0.5.4"
+    assert resp["result"]["serverInfo"]["version"] == "0.5.5"
     assert resp["result"]["protocolVersion"] == "2024-11-05"
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]

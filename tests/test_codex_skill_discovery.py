@@ -73,7 +73,7 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     assert umbrella.startswith("---\nname: 360-hextile\n")
     assert "installed **`shader`**" in umbrella
     assert "workspace_schema:2" in specialized
-    assert "negotiate v2" in umbrella
+    assert "workspace schema 2" in umbrella
     for body in (specialized, umbrella):
         assert "source-modules/1" in body
         assert "https://360hextile.com/docs/create/shader" in body
@@ -314,7 +314,7 @@ def test_fragment_tracks_legacy_hub_and_source_versions_agree(isolated_generated
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == "SERVER_VERSION" for target in node.targets)
     )
-    assert INSTALL.PACKAGE_VERSION == manifest["version"] == server_version == "0.5.4"
+    assert INSTALL.PACKAGE_VERSION == manifest["version"] == server_version == "0.5.5"
     assert f"**v{INSTALL.PACKAGE_VERSION}**" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 

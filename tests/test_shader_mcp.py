@@ -1183,13 +1183,12 @@ def test_served_best_practices_preserve_shader_credit_authority() -> None:
     from hextile_mcp import load_guide
 
     guide = load_guide("best-practices")["markdown"]
-    skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
-    for text in (guide, skill):
+    procedure = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
+    for text in (guide, procedure):
         assert "extensions.lineage" in text
         assert "extensions.retained_credits" in text
         assert "ai_assistance" in text
         assert "repair registrations" in text
-        assert "v1 cannot edit provenance" in text
         assert "extensions.distribution" in text
         assert "permission to distribute" in text
 
@@ -1198,7 +1197,7 @@ def test_attribution_guides_teach_limits_and_typed_proposal() -> None:
     from hextile_mcp import load_guide
 
     guide = load_guide("best-practices")["markdown"]
-    skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
     for text in (guide, skill):
         assert "64 KiB" in text and "256 KiB" in text
         assert "depth at most 2" in text or "depth 2" in text
@@ -1206,7 +1205,7 @@ def test_attribution_guides_teach_limits_and_typed_proposal() -> None:
         assert "attribution_proposal" in text
         assert "Attribution wasn't added in this selection edit" in text
         assert "skip_optional" in text
-        assert "reopen" in text and "v2" in text
+        assert "acknowledged" in text and "schema-2" in text
         assert "do not claim a page was read" in text.lower() or "when it was not" in text
 
 
@@ -1852,11 +1851,13 @@ def _workspace_open() -> dict[str, Any]:
 def _workspace_attachment() -> dict[str, Any]:
     body = _workspace_open()
     return {"handle": "sw_test", "generation": 0, "shader": body["shader"],
-            "base": {"working_revision": 1, "document_hash": body["expected_document_hash"],
+            "base": {"kind": "saved", "working_revision": 1, "document_hash": body["expected_document_hash"],
                      "source_hash": body["expected_source_hash"], "manifest_hash": None},
             "project_context_witness": "wit", "studio_surface_id": "surface",
-            "files": {"source_path": "D:/project/workspace/source.glsl", "authoring_path": "D:/project/workspace/authoring.json"},
-            "content_digest": "sha256:" + "ef" * 32, "schema": 1, "abi": "hx-shader/1",
+            "files": [{"path": "source.glsl", "native_path": "D:/project/workspace/source.glsl"}],
+            "workspace_root": "D:/project/workspace", "authoring_path": "D:/project/workspace/authoring.json",
+            "workspace_schema": 2,
+            "content_digest": "sha256:" + "ef" * 32, "schema": 2, "abi": "hx-shader/1",
             "available": True, "executable_capabilities": ["conventions/1"], "instructions": "observed APP instructions"}
 
 
@@ -1976,7 +1977,7 @@ def test_workspace_http_identity_receipt_and_open_replay() -> None:
     assert server._get_shader_update({"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit"}) == receipt
     assert [timeout for _, timeout in seen] == [15.0, 15.0, 23, 23]
     assert [req.get_method() for req, _ in seen] == ["POST", "POST", "POST", "GET"]
-    assert json.loads(seen[0][0].data) == json.loads(seen[1][0].data) == _workspace_open()
+    assert json.loads(seen[0][0].data) == json.loads(seen[1][0].data) == {**_workspace_open(), "workspace_schema": 2}
     assert json.loads(seen[2][0].data) == {key: value for key, value in _workspace_register().items() if key != "handle"}
     assert seen[2][0].full_url.endswith("/api/agent/shader-workspaces/sw_test/updates")
     assert seen[3][0].full_url.endswith("/sw_test/updates/sw_test%3A1?project_context_witness=wit")
@@ -2125,7 +2126,9 @@ def test_workspace_v2_open_preserves_exact_server_base_and_files(base: dict[str,
         seen.append(json.loads(req.data))
         return _WorkspaceResponse(attachment)
 
-    args = _workspace_open_v2() if base["kind"] == "unaccepted" else {**_workspace_open(), "workspace_schema": 2}
+    args = _workspace_open_v2() if base["kind"] == "unaccepted" else {
+        **_workspace_open(), "workspace_schema": 2, "expected_working_revision": base["working_revision"],
+        "expected_document_hash": base["document_hash"], "expected_source_hash": base["source_hash"]}
     jsonschema.validate(args, _schema("open_shader_workspace")["inputSchema"])
     assert HextileMcpServer(client=Client(opener=opener))._open_shader_workspace(args) == attachment
     assert seen == [args]
@@ -2280,19 +2283,23 @@ def test_workspace_v2_negotiated_capabilities_are_not_inferred_from_format_or_gu
     assert "version numbers do not prove execution or installed host filesystem access" in guidance
 
 
-def test_workspace_v2_old_peer_200_refuses_and_v1_remains_unchanged() -> None:
+def test_workspace_old_peer_200_refuses_without_downgrade() -> None:
     seen = []
 
     def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
         seen.append(json.loads(req.data))
-        return _WorkspaceResponse(_workspace_attachment())
+        legacy = {**_workspace_attachment(), "schema": 1,
+            "files": {"source_path": "D:/project/workspace/source.glsl",
+                      "authoring_path": "D:/project/workspace/authoring.json"}}
+        legacy.pop("workspace_schema", None)
+        return _WorkspaceResponse(legacy)
 
     server = HextileMcpServer(client=Client(opener=opener))
-    assert server._open_shader_workspace(_workspace_open()) == _workspace_attachment()
-    with pytest.raises(HextileClientError) as caught:
-        server._open_shader_workspace({**_workspace_open(), "workspace_schema": 2})
-    assert caught.value.kind == "upgrade" and "reconnect" in str(caught.value)
-    assert seen == [_workspace_open(), {**_workspace_open(), "workspace_schema": 2}]
+    for args in (_workspace_open(), {**_workspace_open(), "workspace_schema": 2}):
+        with pytest.raises(HextileClientError) as caught:
+            server._open_shader_workspace(args)
+        assert caught.value.kind == "upgrade" and "reconnect" in str(caught.value)
+    assert seen == [{**_workspace_open(), "workspace_schema": 2}] * 2
 
 
 @pytest.mark.parametrize("status,detail", [(404, "Not Found"),
@@ -2523,3 +2530,23 @@ def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatc
         dropped = _native_sequence_fields({'producer': 'shader', 'accepted_settings': settings,
             'raster_execution': native_execution, 'folder_export': {'format': 'PNG'}})
         assert 'raster_execution' not in dropped
+
+
+@pytest.mark.parametrize("unaccepted,base", [
+    (False, None),
+    (False, {"kind": "saved", "working_revision": 2, "document_hash": "sha256:" + "ab" * 32,
+             "source_hash": "sha256:" + "cd" * 32}),
+    (False, {"kind": "saved", "working_revision": True, "document_hash": "sha256:" + "ab" * 32,
+             "source_hash": "sha256:" + "cd" * 32}),
+    (False, {"kind": "unaccepted", "authoring_digest": "sha256:" + "12" * 32}),
+    (True, {"kind": "saved", "working_revision": 1, "document_hash": "sha256:" + "ab" * 32,
+            "source_hash": "sha256:" + "cd" * 32}),
+])
+def test_workspace_ack_base_mismatch_does_not_release_paths(unaccepted, base) -> None:
+    reply = {**_workspace_attachment(), "base": base}
+    client = Client(opener=lambda *_a, **_k: _WorkspaceResponse(reply))
+    args = _workspace_open_v2() if unaccepted else _workspace_open()
+    with pytest.raises(HextileClientError) as caught:
+        client.open_shader_workspace(args)
+    assert caught.value.kind == "workspace_outcome_unknown"
+    assert "D:/project" not in str(caught.value)
