@@ -46,7 +46,9 @@ Workflow document. Require `get_capabilities.native_render.contract` equal to
 The capability projection gives actual native bounds and supported combinations.
 `native_render.render_routes` lists `native`, `webgl-raw-float`,
 `webgl-display-native-encode`, `webgl-browser-encode-desktop`, and
-`webgl-browser-encode-backend`. The default is native. An omitted `render_route`
+`webgl-browser-encode-backend`. The API default is native. The Render Shader
+dialog can prefer Viewer - App codec for fresh PNG/JPG settings when advertised
+as available. An omitted `render_route`
 on `shader_preflight_still_export`, `shader_export_still`,
 `preflight_shader_sequence`, `render_shader_sequence`, and
 `shader_request_preview` stays native. A route is available only while that
@@ -67,7 +69,7 @@ enable it. It also requires existing source developer mode (`HEXTILE_DEV_MODE=1`
 packaged processes cannot use it. Setting it false restores the existing reviewed production envelopes.
 Device, format, memory, history, currentness and ownership checks still apply,
 and the requested route is never silently changed.
-Full precision (`webgl-raw-float`) still output can be tested. Its Sequence
+Viewer - High precision (`webgl-raw-float`) still output can be tested. Its Sequence
 raw-spool consumer is not implemented: testing preflight refuses with
 `raw_float_sequence_unsupported` before job creation; use the other Viewer
 routes for Sequence tests. Do not claim that testing access completes that handoff.
