@@ -7,8 +7,10 @@ description: "Connect to the open Shader and inspect its state, or edit a Projec
 
 ## Connect / what Shader is open?
 
-For a read-only connection or current-Shader question, call the installed
-`get_live_context(view="shader")` once. This compact read needs no
+For a read-only connection or current-Shader question, first check that the
+registered tool accepts `view`. If missing, report that the host tool registration
+needs refresh/reconnect; do not send an unsupported field or call the full view.
+Otherwise call `get_live_context(view="shader")` once. This compact read needs no
 `get_capabilities` handshake. Use the tools already exposed by the host; do not
 print the whole catalog or inspect DevTools just to discover the Shader.
 
@@ -22,8 +24,8 @@ anything to answer this question.
 
 `metadata_status=unavailable` / `save_state=unknown` stay unknown; do not guess a
 name from an ID or claim Saved. A successful connection proves neither file
-access, candidate Apply nor Save. Missing compact support requires an APP/plugin
-update; report it instead of silently dumping the full app snapshot. APP down:
+access, candidate Apply nor Save. Invalid/missing compact replies require an
+APP/plugin update; report this instead of dumping the full app snapshot. APP down:
 “Launch 360 Hextile, then retry.” MCP disabled: enable MCP in APP Settings.
 
 Only use DevTools when the request needs visual/DOM inspection. Discovery does
@@ -46,8 +48,8 @@ workspace downgrade. Extension and transport versions are independent.
 Keep native ownership, witness and base checks. Only acknowledged workspace open
 releases editable paths; register exact complete raw bytes and reconcile an
 uncertain outcome with its original request ID. Never auto-install/restart or
-change host permissions. Installed package and running APP support must both be
-observed after an update; repository changes do not activate installed caches.
+change host permissions. Package, registered tools and running APP support must
+all be observed after an update; source/cache versions alone prove no activation.
 
 Human guides: https://360hextile.com/docs/create/shader and
 https://360hextile.com/docs/user-guide/agent-mode.
