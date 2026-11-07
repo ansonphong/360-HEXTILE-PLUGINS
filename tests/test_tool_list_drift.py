@@ -1222,7 +1222,7 @@ def test_mcp_initialize() -> None:
     instructions = resp["result"]["instructions"]
     assert 'get_live_context(view="shader")' in instructions
     assert "original IDs" in instructions and "workflow-schema" in instructions
-    guidance = load_guide("workflow-schema")["markdown"]
+    guidance = load_guide("workflow-schema", detail=True)["markdown"]
     for term in ("executable_capabilities", "execution_ready", "conventions/1", "modulation/2",
                  "keyboard/mouse", "MIDI/OSC/gamepad", "preflight_shader_sequence",
                  "get_shader_sequence", "control_shader_sequence"):
@@ -1451,6 +1451,18 @@ def test_list_runs_sends_lifecycle_query() -> None:
 def test_get_guide_reads_real_markdown() -> None:
     listed = load_guide("index")
     assert set(listed["guides"]) == set(GUIDE_NAMES)
+    assert set(load_guide("")["guides"]) == set(GUIDE_NAMES)
+    for page in (listed, load_guide("")):
+        prose = page["markdown"]
+        assert "A workflow starts with get_capabilities." in prose
+        assert "does not call get_capabilities." in prose
+        assert "Ready Shader candidates can be applied and saved through the native writer." in prose
+        assert "Register checks a candidate and never synthesizes Apply." in prose
+        assert "shader_request_preview, then shader_get_preview with image true as the 512px RGB display image, then shader_preflight_still_export, then shader_export_still using that preflight_request_id." in prose
+        assert "A sequence is preflight_shader_sequence then render_shader_sequence." in prose
+        assert "same saved hashes and the same frozen inputs." in prose
+        assert "Width and height are top-level on shader_request_preview." in prose
+        assert "preserve_360 is dome-only." in prose
     guides = {name: load_guide(name)["markdown"] for name in GUIDE_NAMES}
     assert "workspace_schema:2" in guides["best-practices"]
     assert "include_source_diagnostics:true" in guides["best-practices"]
@@ -1461,9 +1473,14 @@ def test_get_guide_reads_real_markdown() -> None:
     assert "source_files" in guides["recipes"]
     assert "register a new canonical change ID" in guides["recipes"]
     assert "APP automatically Applies" in guides["recipes"]
-    assert "metadata/config" in guides["workflow-schema"]
-    assert "No GLSL bodies belong in durable JSON" in guides["workflow-schema"]
-    assert "source-modules/1" in guides["workflow-schema"]
+    assert "Native render requests" not in guides["workflow-schema"]
+    detail = load_guide("workflow-schema", detail=True)["markdown"]
+    assert "metadata/config" in detail
+    assert "No GLSL bodies belong in durable JSON" in detail
+    assert "source-modules/1" in detail
+    assert "Shader workspace authoring protocol" in detail
+    assert "never synthesizes Apply" in detail
+    assert "automatically Applies and saves" in guides["workflow-schema"]
     for name in ("gitignore.txt", "gitattributes.txt"):
         url = f"https://360hextile.com/static/templates/shaders/{name}"
         assert url in guides["best-practices"]
@@ -1493,6 +1510,41 @@ def test_get_guide_reads_real_markdown() -> None:
                                 "params": {"name": "get_guide", "arguments": {"name": "../../private"}}})
     assert refused["result"]["isError"] is True
     assert "Unknown guide" in refused["result"]["content"][0]["text"]
+
+
+def test_get_guide_field_lookup_uses_closed_shader_schemas() -> None:
+    schema = _tool_schema("get_guide")
+    assert schema["additionalProperties"] is False
+    assert {"name", "field", "detail"} <= schema["properties"].keys()
+    preview = load_guide(field="shader_request_preview.output")
+    variants = {row["variant"] for row in preview["records"]}
+    assert "equirectangular" in variants and "dome" in variants
+    assert all(row["tool"] == "shader_request_preview" for row in preview["records"])
+    preserved = [row for row in preview["records"] if row["leaf"] == "preserve_360"]
+    assert preserved and all(row["variant"] == "dome" for row in preserved)
+    width = load_guide(field="output.width")
+    assert width["answer"] == "width is top-level on shader_request_preview"
+    assert "nearest" not in width
+    assert any(row["tool"] == "shader_request_preview" and row["variant"] == "top-level" and row["leaf"] == "width"
+               for row in width["records"])
+    unknown = load_guide(field="output.not_a_real_leaf")
+    assert "answer" not in unknown
+    assert 1 <= len(unknown["nearest"]) <= 5
+    opened = next(tool["description"] for tool in TOOLS if tool["name"] == "open_shader_workspace")
+    assert "Reuse the original request id." in opened
+    assert "Leave Apply to the human." in opened
+    assert "Treat an unknown reply as unknown." in opened
+    assert "authoring.md" not in opened
+    assert "source-modules/1" not in opened
+    local = Client(opener=lambda *a, **k: pytest.fail("field lookup needs no HTTP"))
+    local.post_activity = mock.Mock()
+    server = HextileMcpServer(client=local)
+    reply = server.call_tool("get_guide", {"field": "output.width"})
+    assert reply["isError"] is False
+    body = json.loads(reply["content"][0]["text"])
+    assert body["answer"] == width["answer"]
+    encoded = json.dumps(body)
+    assert encoded.index(body["answer"]) < encoded.find("nearest") or "nearest" not in body
 
 
 def test_mcp_get_guide_and_save_builtin() -> None:

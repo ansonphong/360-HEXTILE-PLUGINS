@@ -9,6 +9,7 @@ Catalog + persist + run + monitor + config + seed + models + guides + live conte
 
 from __future__ import annotations
 
+import difflib
 import http.client
 import base64
 import json
@@ -437,6 +438,24 @@ GUIDE_NAMES = (
     "best-practices",
     "website-index",
     "recipes",
+)
+_GUIDE_INDEX = (
+    "A workflow starts with get_capabilities. "
+    "A read-only \"what Shader is open?\" question is only get_live_context(view=\"shader\") and does not call get_capabilities. "
+    "Ready Shader candidates can be applied and saved through the native writer. "
+    "Register checks a candidate and never synthesizes Apply. "
+    "A still is shader_request_preview, then shader_get_preview with image true as the 512px RGB display image, then shader_preflight_still_export, then shader_export_still using that preflight_request_id. "
+    "A sequence is preflight_shader_sequence then render_shader_sequence. "
+    "Use the same saved hashes and the same frozen inputs. "
+    "Width and height are top-level on shader_request_preview. "
+    "preserve_360 is dome-only."
+)
+_WORKFLOW_SCHEMA_SPLIT = "## Native render requests"
+_FIELD_GUIDE_TOOLS = (
+    "shader_request_preview",
+    "shader_preflight_still_export",
+    "shader_export_still",
+    "render_shader_sequence",
 )
 _GUIDE_ROOT = Path(__file__).resolve().parent.parent / "skills" / "360-hextile" / "references"
 
@@ -1835,6 +1854,18 @@ TOOLS: list[dict[str, Any]] = [
                     "recipes | index"
                 ),
             },
+            "field": {
+                "type": "string",
+                "description": (
+                    "Dotted field on shader_request_preview, shader_preflight_still_export, "
+                    "shader_export_still, or render_shader_sequence. "
+                    "Example: shader_request_preview.output or output.width."
+                ),
+            },
+            "detail": {
+                "type": "boolean",
+                "description": "Return the full workflow-schema page. Default false stops before Native render requests.",
+            },
         },
     ),
     _tool_def(
@@ -2559,7 +2590,8 @@ TOOLS: list[dict[str, Any]] = [
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
     {"name": "open_shader_workspace",
-     "description": "Attach native files for a Project or My Library Shader. Open may materialize files and waits for trusted mounted ACK; no caller path or GLSL JSON. " + _WORKSPACE_GUIDANCE,
+     "description": "Attach native files for a Project or My Library Shader. Open may materialize files and waits for trusted mounted ACK; no caller path or GLSL JSON. "
+                    "Reuse the original request id. Leave Apply to the human. Treat an unknown reply as unknown.",
      "inputSchema": _shader_closed({
          "shader": _shader_closed({"origin": {"enum": ["project", "user"]}, "shaderId": {
              "type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_-]+$"}}),
@@ -3219,13 +3251,132 @@ assert _BATCH_TOOLS <= set(TOOL_NAMES)
 assert _DESTRUCTIVE <= _MUTATING
 
 
-def load_guide(name: str) -> dict[str, Any]:
+def _field_note(schema: Mapping[str, Any]) -> str:
+    if "const" in schema:
+        return f"const {schema['const']}"
+    enum = schema.get("enum")
+    if isinstance(enum, list):
+        return "enum " + "|".join(str(item) for item in enum)
+    kind = schema.get("type")
+    if isinstance(kind, list):
+        kind = "|".join(str(item) for item in kind)
+    parts = [str(kind or "object")]
+    if "minimum" in schema:
+        parts.append(f"minimum {schema['minimum']}")
+    if "maximum" in schema:
+        parts.append(f"maximum {schema['maximum']}")
+    return " ".join(parts)
+
+
+def _branch_variant(schema: Mapping[str, Any]) -> Optional[str]:
+    props = schema.get("properties")
+    if not isinstance(props, Mapping):
+        return None
+    projection = props.get("projection")
+    if not isinstance(projection, Mapping):
+        return None
+    if projection.get("const") == "equirectangular":
+        return "equirectangular"
+    enum = projection.get("enum")
+    if isinstance(enum, list) and ("fulldome" in enum or "fulldome_angular" in enum):
+        return "dome"
+    return None
+
+
+def _schema_branches(schema: Mapping[str, Any]) -> Optional[list[Mapping[str, Any]]]:
+    if schema.get("properties"):
+        return None
+    for key in ("oneOf", "anyOf"):
+        branches = schema.get(key)
+        if isinstance(branches, list) and branches and all(isinstance(item, Mapping) for item in branches):
+            return branches
+    return None
+
+
+def _walk_guide_fields(schema: Mapping[str, Any], tool: str, prefix: str, variant: str,
+                       out: list[dict[str, str]], depth: int = 0) -> None:
+    if depth > 12:
+        return
+    branches = _schema_branches(schema)
+    if branches is not None:
+        for branch in branches:
+            _walk_guide_fields(branch, tool, prefix, _branch_variant(branch) or "unspecified", out, depth + 1)
+        return
+    props = schema.get("properties")
+    if not isinstance(props, Mapping):
+        return
+    for key, child in props.items():
+        if not isinstance(key, str) or not isinstance(child, Mapping):
+            continue
+        path = f"{prefix}.{key}" if prefix else f"{tool}.{key}"
+        child_branches = _schema_branches(child)
+        if child_branches is not None:
+            for branch in child_branches:
+                _walk_guide_fields(branch, tool, path, _branch_variant(branch) or "unspecified", out, depth + 1)
+            continue
+        out.append({
+            "tool": tool,
+            "variant": variant,
+            "path": path,
+            "leaf": key,
+            "line": f"{path} ({variant}): {_field_note(child)}",
+        })
+        if child.get("properties"):
+            _walk_guide_fields(child, tool, path, variant, out, depth + 1)
+
+
+def _guide_field_records() -> list[dict[str, str]]:
+    cached = getattr(_guide_field_records, "_cache", None)
+    if cached is not None:
+        return cached
+    by_name = {tool["name"]: tool for tool in (*TOOLS, *SHADER_EXTENSION_TOOLS)}
+    records: list[dict[str, str]] = []
+    for name in _FIELD_GUIDE_TOOLS:
+        _walk_guide_fields(by_name[name]["inputSchema"], name, "", "top-level", records)
+    _guide_field_records._cache = records  # type: ignore[attr-defined]
+    return records
+
+
+def _lookup_guide_field(field: str) -> dict[str, Any]:
+    """One closed-schema record, an exact-leaf correction, or at most five nearest paths."""
+    records = _guide_field_records()
+    exact = [row for row in records if row["path"] == field or row["path"].startswith(field + ".")]
+    if exact:
+        return {"field": field, "records": exact}
+    leaf = field.rsplit(".", 1)[-1]
+    matches = [row for row in records if row["leaf"] == leaf]
+    if matches:
+        if any(row["tool"] == "shader_request_preview" and row["variant"] == "top-level" and row["leaf"] == "width"
+               for row in matches):
+            answer = "width is top-level on shader_request_preview"
+        else:
+            first = matches[0]
+            answer = f"{leaf} is on {first['tool']} ({first['variant']})"
+        return {"field": field, "answer": answer, "records": matches}
+    ranked = sorted(records, key=lambda row: (
+        -difflib.SequenceMatcher(None, leaf, row["leaf"]).ratio(), row["path"]))
+    nearest: list[str] = []
+    seen: set[str] = set()
+    for row in ranked:
+        if row["path"] in seen:
+            continue
+        seen.add(row["path"])
+        nearest.append(row["path"])
+        if len(nearest) == 5:
+            break
+    return {"field": field, "nearest": nearest}
+
+
+def load_guide(name: str = "", *, field: Optional[str] = None, detail: bool = False) -> dict[str, Any]:
     """Read an allowlisted bundled guide. Unknown/empty name lists titles."""
+    if isinstance(field, str) and field.strip():
+        return _lookup_guide_field(field.strip())
     requested = (name or "index").strip().lower()
     if requested in ("", "index", "list"):
         return {
             "guides": list(GUIDE_NAMES),
             "hint": "Call get_guide with name= one of these titles.",
+            "markdown": _GUIDE_INDEX,
         }
     if requested not in GUIDE_NAMES:
         raise HextileClientError(
@@ -3240,11 +3391,20 @@ def load_guide(name: str) -> dict[str, Any]:
             status_code=None,
             kind="other",
         )
-    return {
-        "name": requested,
-        "path": str(path),
-        "markdown": path.read_text(encoding="utf-8"),
-    }
+    text = path.read_text(encoding="utf-8")
+    if requested == "workflow-schema" and not detail:
+        head, sep, _rest = text.partition(_WORKFLOW_SCHEMA_SPLIT)
+        if not sep:
+            raise HextileClientError(
+                "workflow-schema is missing its native-render split",
+                status_code=None,
+                kind="other",
+            )
+        text = head.rstrip() + "\n"
+    result: dict[str, Any] = {"name": requested, "path": str(path), "markdown": text}
+    if requested == "workflow-schema":
+        result["detail"] = bool(detail)
+    return result
 
 
 def _overrides_keys(name: str, args: Mapping[str, Any]) -> Optional[list[str]]:
@@ -5213,7 +5373,13 @@ class HextileMcpServer:
         return self.client.cancel_model_download(pipeline_id, model_id, entry_id)
 
     def _get_guide(self, args: dict[str, Any]) -> Any:
-        return load_guide(str(args.get("name") or "index"))
+        detail = args.get("detail", False)
+        if not isinstance(detail, bool):
+            raise HextileClientError("detail must be a boolean", status_code=None, kind="other")
+        field = args.get("field")
+        if field is not None and not isinstance(field, str):
+            raise HextileClientError("field must be a string", status_code=None, kind="other")
+        return load_guide(str(args.get("name") or ""), field=field, detail=detail)
 
     def _extract_sequence_video(self, args: dict[str, Any]) -> Any:
         video_path = args.get("video_path")

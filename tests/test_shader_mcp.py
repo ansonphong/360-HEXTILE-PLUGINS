@@ -2279,8 +2279,13 @@ def test_workspace_v2_negotiated_capabilities_are_not_inferred_from_format_or_gu
     assert server._register_shader_update(_workspace_register()) == receipt
     assert len(calls) == 2 and receipt["compile"] == "not_requested"  # No proxy compiler/execution claim.
     guidance = _schema("open_shader_workspace")["description"]
-    assert "source-modules/1 execution requires APP available and executable_capabilities" in guidance
-    assert "version numbers do not prove execution or installed host filesystem access" in guidance
+    assert "Reuse the original request id." in guidance
+    assert "Leave Apply to the human." in guidance
+    assert "Treat an unknown reply as unknown." in guidance
+    from hextile_mcp import load_guide
+    detail = load_guide("workflow-schema", detail=True)["markdown"]
+    assert "source-modules/1 execution requires APP available and executable_capabilities" in detail
+    assert "version numbers do not prove execution or installed host filesystem access" in detail
 
 
 def test_workspace_old_peer_200_refuses_without_downgrade() -> None:
@@ -2406,9 +2411,14 @@ def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls()
     assert "source-free" in context and "include_formula selects" in context
     assert "every Board row" in proposal and "preserve" in proposal
     assert "attested" in proposal and "envelope" in proposal
-    assert "conventions/1" in workspace and "modulation/2" in workspace
-    assert "hxCameraDirection(vec3 canonicalDirection)" in workspace
-    assert "never arms Interact" in workspace
+    assert "Reuse the original request id." in workspace
+    assert "Leave Apply to the human." in workspace
+    assert "Treat an unknown reply as unknown." in workspace
+    from hextile_mcp import load_guide
+    detail = load_guide("workflow-schema", detail=True)["markdown"]
+    assert "conventions/1" in detail and "modulation/2" in detail
+    assert "hxCameraDirection(vec3 canonicalDirection)" in detail
+    assert "never arms Interact" in detail
     operations = _schema("propose_shader")["inputSchema"]["properties"]["modulation_edits"]
     assert {variant["properties"]["schema"]["const"] for variant in operations["oneOf"]} == {1, 2}
     assert all(variant["additionalProperties"] is False for variant in operations["oneOf"])
