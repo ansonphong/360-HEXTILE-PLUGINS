@@ -199,8 +199,8 @@ Fit/zoom only change display scale. This does not inspect scene-linear EXR data
 or JPEG encoding artifacts. Zoom/pan/Fit and Auto are local presentation/request
 scheduling: agents use explicit typed requests, status and cancellation instead.
 
-New Shader sequences use the chosen PNG/JPG `folder_export` directly, with JPG
-quality1–100 and optional hundredth supersampling1.00–2.00. Final dimensions stay
+New Shader sequences use the chosen PNG/JPG/EXR `folder_export` directly, with JPG
+quality1–100, null quality for PNG and EXR, and optional hundredth supersampling1.00–2.00. Final dimensions stay
 fixed; internal work grows with supersampling. Native temporal/resource/history
 limits can refuse combinations; never drop a setting or seed feedback from JPG
 pixels. Keep exact rational interval/FPS/count and all saved source/resource

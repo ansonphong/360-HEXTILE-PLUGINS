@@ -151,10 +151,10 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through the connected APP and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |
 | `inspect_shader_sequence_output` | Inspect one chosen destination using native metadata; retain its identity and fingerprint before explicit Continue | no |
-| `render_shader_sequence` | Submit the exact saved-native direct PNG/JPG or explicit deferred request once; retain the preflight ID/hash and original key | **yes** |
+| `render_shader_sequence` | Submit the exact saved-native direct PNG/JPG/EXR or explicit deferred request once; retain the preflight ID/hash and original key | **yes** |
 | `get_shader_sequence` | Read native ownership, run/revision, phases, saved count, cursor, timing and accepted settings; restart counts are last reported until checked | no |
 | `control_shader_sequence` | Continue an inspected request, Stop the observed run, resume an admitted job, or control the exact publication attempt; reconcile unknown replies | **yes** |
-| `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG or JPG; retain the fingerprint and attempt ID | no |
+| `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG, JPG, or EXR; retain the fingerprint and attempt ID | no |
 | `export_shader_sequence` | Publish only that exact preflighted folder intent; GET the known ID/attempt after an uncertain reply | **yes** |
 | `open_shader_workspace` | Acknowledge exact Project Shader attachment; current schema2 returns the declared source set and metadata path; older replies refuse. Follow installed `360-hextile` | **yes** |
 | `register_shader_update` | Register the complete acknowledged v2 raw digest, including unused helpers; APP checks the candidate and saves only after its native acceptance | **yes** |
@@ -227,7 +227,7 @@ For saved Shader animation, keep confirmed Apply and Save under the effective
 policy, then reread the saved identity/hashes and Project witness. Require
 `get_capabilities.native_render.contract:"native-render/1"`. Preflight and submit
 the same exact request/key using `preflight_shader_sequence` →
-`render_shader_sequence`, then poll `get_shader_sequence`. Direct PNG/JPG carries
+`render_shader_sequence`, then poll `get_shader_sequence`. Direct PNG/JPG/EXR carries
 the explicit `folder_export` destination, format and JPG quality; optional
 hundredth supersampling1.00–2.00 keeps final dimensions. Explicit deferred masters
 and their separate export tools remain available. Inspect a chosen folder with

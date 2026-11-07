@@ -777,17 +777,32 @@ _NATIVE_FOLDER_INTENT["allOf"] = [
      "then": {"required": ["quality_if_jpg"], "properties": {"quality_if_jpg": {"type": "integer"}}},
      "else": {"properties": {"quality_if_jpg": {"type": "null"}}}},
 ]
+_SHADER_FOLDER_INTENT = _shader_closed({
+    "destination_folder": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "format": {"enum": ["PNG", "JPG", "EXR"]},
+    "quality_if_jpg": {"oneOf": [{"type": "integer", "minimum": 1, "maximum": 100}, {"type": "null"}]},
+}, ("quality_if_jpg",))
+_SHADER_FOLDER_INTENT["allOf"] = [
+    {"if": {"properties": {"format": {"const": "JPG"}}},
+     "then": {"required": ["quality_if_jpg"], "properties": {"quality_if_jpg": {"type": "integer"}}},
+     "else": {"properties": {"quality_if_jpg": {"type": "null"}}}},
+]
 _RENDER_ROUTES = (
     "native", "webgl-raw-float", "webgl-display-native-encode",
     "webgl-browser-encode-desktop", "webgl-browser-encode-backend",
 )
+_BROWSER_CODEC = _shader_closed({
+    "format": {"enum": ["png", "jpeg", "exr"]},
+    "jpeg_quality": {"type": "number", "minimum": 0.5, "maximum": 1},
+}, ("jpeg_quality",))
+_BROWSER_CODEC["allOf"] = [
+    {"if": {"properties": {"format": {"const": "exr"}}},
+     "then": {"not": {"required": ["jpeg_quality"]}}},
+]
 _RENDER_ROUTE = _shader_closed({
     "profile": {"const": "shader-render-route/1"},
     "route": {"enum": list(_RENDER_ROUTES)},
-    "browser_codec": _shader_closed({
-        "format": {"enum": ["png", "jpeg"]},
-        "jpeg_quality": {"type": "number", "minimum": 0.5, "maximum": 1},
-    }, ("jpeg_quality",)),
+    "browser_codec": _BROWSER_CODEC,
 }, ("browser_codec",))
 _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "input_capture_id": {"type": "string", "pattern": r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
@@ -816,14 +831,14 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "supersampling": {"type": "number", "minimum": 1},
     "raster_policy": _SHADER_RASTER_POLICY,
     "output": _SHADER_SEQUENCE_OUTPUT,
-    "folder_export": {"oneOf": [_NATIVE_FOLDER_INTENT, {"type": "null"}]},
+    "folder_export": {"oneOf": [_SHADER_FOLDER_INTENT, {"type": "null"}]},
     "publication_mode": {"oneOf": [{"const": "deferred"}, {"type": "null"}]},
     "render_route": _RENDER_ROUTE,
 }, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy", "render_route"))
 _SHADER_SEQUENCE_REQUEST["allOf"] = [
     {"if": {"properties": {"publication_mode": {"const": "deferred"}}, "required": ["publication_mode"]},
      "then": {"properties": {"folder_export": {"type": "null"}}},
-     "else": {"required": ["folder_export"], "properties": {"folder_export": _NATIVE_FOLDER_INTENT}}},
+     "else": {"required": ["folder_export"], "properties": {"folder_export": _SHADER_FOLDER_INTENT}}},
     {"if": {"required": ["raster_policy"]}, "then": {
         "properties": {"publication_mode": {"type": "null"}},
         "required": ["folder_export"], "allOf": [
@@ -835,15 +850,11 @@ _SHADER_SEQUENCE_ID = {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}
 _SHADER_ATTEMPT_ID = {"type": "string", "pattern": r"^attempt_[0-9a-f]{32}$"}
 _SHADER_FOLDER_EXPORT = _shader_closed({
     "sequence_id": _SHADER_SEQUENCE_ID,
-    "destination_folder": {"type": "string", "minLength": 1},
-    "format": {"enum": ["PNG", "JPG"]},
-    "quality_if_jpg": {"type": "integer", "minimum": 1, "maximum": 100},
+    "destination_folder": _SHADER_FOLDER_INTENT["properties"]["destination_folder"],
+    "format": _SHADER_FOLDER_INTENT["properties"]["format"],
+    "quality_if_jpg": _SHADER_FOLDER_INTENT["properties"]["quality_if_jpg"],
 }, ("quality_if_jpg",))
-_SHADER_FOLDER_EXPORT["allOf"] = [
-    {"if": {"properties": {"format": {"const": "JPG"}}},
-     "then": {"required": ["quality_if_jpg"]},
-     "else": {"not": {"required": ["quality_if_jpg"]}}},
-]
+_SHADER_FOLDER_EXPORT["allOf"] = _SHADER_FOLDER_INTENT["allOf"]
 _SHADER_SEQUENCE_CONTROL = {"oneOf": [
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "stop"},
                     "run_id": {"type": "string", "pattern": r"^[0-9a-f]{32}$"}}),
@@ -1038,7 +1049,11 @@ _FRACTAL_EXPORT = _shader_closed({
     "format": {"enum": ["PNG", "JPG"]},
     "quality_if_jpg": {"type": "integer", "minimum": 1, "maximum": 100},
 }, ("quality_if_jpg",))
-_FRACTAL_EXPORT["allOf"] = _SHADER_FOLDER_EXPORT["allOf"]
+_FRACTAL_EXPORT["allOf"] = [
+    {"if": {"properties": {"format": {"const": "JPG"}}},
+     "then": {"required": ["quality_if_jpg"]},
+     "else": {"not": {"required": ["quality_if_jpg"]}}},
+]
 _FRACTAL_EXPORT_SUBMIT = _shader_closed({
     **_FRACTAL_EXPORT["properties"],
     "transaction_fingerprint": _FRACTAL_SHA,
@@ -2550,7 +2565,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "preflight_shader_sequence",
      "description": "Check a confirmed saved Shader revision and exact rational native interval without queuing. "
                     "Use the returned deterministic sequence_id and request_hash for uncertain render recovery. "
-                    "Direct PNG/JPG uses folder_export; explicit deferred keeps its managed native master. "
+                    "Direct PNG/JPG/EXR uses folder_export; explicit deferred keeps its managed native master. "
                     "Absent render_route stays native. A WebGL route delivers shader_render_produce to the mounted Workshop.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("preflight_shader_sequence")},
@@ -2577,7 +2592,7 @@ TOOLS: list[dict[str, Any]] = [
      "annotations": _annotations("control_shader_sequence")},
     {"name": "preflight_shader_sequence_export",
      "description": "Check verified native masters and an explicitly chosen existing local destination folder. "
-                    "PNG omits quality_if_jpg; JPG requires 1..100. Returns a fingerprint and deterministic attempt_id; "
+                    "JPG requires quality_if_jpg 1..100; PNG and EXR keep it null. Returns a fingerprint and deterministic attempt_id; "
                     "the caller must authorize this local destination before use. Private paths stay out of the receipt.",
      "inputSchema": _SHADER_FOLDER_EXPORT,
      "annotations": _annotations("preflight_shader_sequence_export")},

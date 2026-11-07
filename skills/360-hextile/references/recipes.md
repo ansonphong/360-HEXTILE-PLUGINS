@@ -43,7 +43,7 @@ For **session playback only**, submit `control_shader_timeline` with `{"operatio
 
 ## Saved Shader native sequence
 
-### Selected-folder Shader PNG/JPG
+### Selected-folder Shader PNG/JPG/EXR
 
 After confirmed native Apply and Save, read the fresh source hashes/revision and
 Project witness. Require `get_capabilities.native_render.contract:"native-render/1"`
@@ -69,7 +69,7 @@ an uncertain submission must be recovered by its original sequence ID/key.
 `render_shader_sequence` uses that exact body/key. Poll `get_shader_sequence` for
 actual owner/run/revision/checking/replay/rendering/writing and saved completion.
 No intermediate PNG image sequence or automatic final copy is requested by this
-direct flow. For PNG use formatPNG and null/omitted JPG quality. Temporal/input/
+direct flow. For PNG or EXR use that format and null JPG quality. Temporal/input/
 resource or supersampling refusals remain native; never silently downgrade.
 
 For existing output, `inspect_shader_sequence_output({request:<same intent>})`
@@ -89,13 +89,13 @@ After the expression/timeline proposal, APP checks, automatically Applies and sa
 
 Preflight returns `sequence_id`, `status` (`ready` or `existing`), `request_hash` and, for an existing record, `recipe_hash`. Only after that receipt, send the same request to `render_shader_sequence`; it returns the same ID/hash with queued or existing status. Poll `get_shader_sequence({"sequence_id":"<preflight ID>"})` for native progress and its reported terminal outcome. Restart counts remain last reported until explicit verification. If the render reply is lost, GET that **known** ID and compare `request_hash`; a 404 is outcome unknown, not permission to mint a key or blindly repost. The GET projection omits source, formula and private paths, including on older automatic records. An explicitly chosen native square Dome instead uses `width=height=diameter` and `output={"projection":"fulldome","diameter":2048,"fov_deg":180,"pan":0,"tilt":0,"roll":0}`; `fulldome_angular` is the other native projection, and FOV is 10–360 degrees. APP checks operational Standard or Pro access to queue; Lite/unlicensed work refuses. Generic `create_sequence`/`start_sequence` remain folder upres.
 
-Once GET reports `status:"completed"` and `published_cursor==frame_count`, use the exact existing destination_folder task path. The caller supplies the folder path to the local MCP tool; no UI picker or retained private path is exposed by GET. Send the following intent to `preflight_shader_sequence_export` (replace the sample sequence ID and folder with the chosen values). For JPG, use `"format":"JPG","quality_if_jpg":90`; PNG omits quality.
+Once GET reports `status:"completed"` and `published_cursor==frame_count`, use the exact existing destination_folder task path. The caller supplies the folder path to the local MCP tool; no UI picker or retained private path is exposed by GET. Send the following intent to `preflight_shader_sequence_export` (replace the sample sequence ID and folder with the chosen values). For JPG, use `"format":"JPG","quality_if_jpg":90`; PNG and EXR keep quality null.
 
 ```json
 {"sequence_id":"seq_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","destination_folder":"C:\\Chosen\\Frames","format":"PNG"}
 ```
 
-Keep the returned `attempt_id` and `transaction_fingerprint`. Submit `export_shader_sequence` with the **same** `sequence_id`, `destination_folder`, and `format`, plus `"transaction_fingerprint":"<preflight fingerprint>"`. Poll `get_shader_sequence({"sequence_id":"<preflight ID>"})`, matching `attempt_id` and fingerprint in `folder_export` or `publication_attempts`. If export acknowledgement is lost, GET that known ID/attempt before another action; absence is unknown, never a reason to blindly repost. To stop native work use `control_shader_sequence({"sequence_id":"<preflight ID>","action":"stop"})`; resume uses `action:"resume"` and current Standard/Pro access. To cancel or retry folder publication use `action:"cancel_export"` or `action:"retry_export"` with the exact current `attempt_id`. GET after uncertain control replies. Native equirectangular and square Dome masters keep their frozen timing/projection; folder PNG/JPG encoding does not change them.
+Keep the returned `attempt_id` and `transaction_fingerprint`. Submit `export_shader_sequence` with the **same** `sequence_id`, `destination_folder`, and `format`, plus `"transaction_fingerprint":"<preflight fingerprint>"`. Poll `get_shader_sequence({"sequence_id":"<preflight ID>"})`, matching `attempt_id` and fingerprint in `folder_export` or `publication_attempts`. If export acknowledgement is lost, GET that known ID/attempt before another action; absence is unknown, never a reason to blindly repost. To stop native work use `control_shader_sequence({"sequence_id":"<preflight ID>","action":"stop"})`; resume uses `action:"resume"` and current Standard/Pro access. To cancel or retry folder publication use `action:"cancel_export"` or `action:"retry_export"` with the exact current `attempt_id`. GET after uncertain control replies. Native equirectangular and square Dome masters keep their frozen timing/projection; folder PNG/JPG/EXR encoding does not change them.
 
 ## Shader file session — complete portable source set
 

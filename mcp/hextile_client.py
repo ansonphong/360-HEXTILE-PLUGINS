@@ -1320,13 +1320,26 @@ def _checked_render_route(value: Any) -> bool:
     if not browser:
         return True
     codec = value["browser_codec"]
-    if type(codec) is not dict or codec.get("format") not in ("png", "jpeg"):
+    if type(codec) is not dict or codec.get("format") not in ("png", "jpeg", "exr"):
         return False
-    if codec["format"] == "png":
+    if codec["format"] in ("png", "exr"):
         return set(codec) == {"format"}
     quality = codec.get("jpeg_quality")
     return (set(codec) == {"format", "jpeg_quality"} and type(quality) in (int, float)
             and not isinstance(quality, bool) and 0.50 <= float(quality) <= 1.00)
+
+
+def _shader_folder_intent(value: Any) -> bool:
+    """PNG, JPG, or EXR. JPG requires quality; PNG and EXR keep quality null."""
+    if type(value) is not dict or not {"destination_folder", "format"} <= set(value) <= {
+            "destination_folder", "format", "quality_if_jpg"}:
+        return False
+    folder, encoding, quality = value["destination_folder"], value["format"], value.get("quality_if_jpg")
+    return (type(folder) is str and 1 <= len(folder) <= 4096 and _absolute_task_path(folder)
+            and "\x00" not in folder
+            and encoding in {"PNG", "JPG", "EXR"}
+            and ((encoding == "JPG" and type(quality) is int and 1 <= quality <= 100)
+                 or (encoding in {"PNG", "EXR"} and quality is None)))
 
 
 def _native_folder_intent(value: Any) -> bool:
@@ -1594,7 +1607,7 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
     folder = body.get("folder_export")
     if (mode not in (None, "deferred")
             or (mode == "deferred") != (folder is None)
-            or (folder is not None and not _native_folder_intent(folder))):
+            or (folder is not None and not _shader_folder_intent(folder))):
         refuse()
     if "raster_policy" in body and (mode == "deferred" or folder is None
             or not _valid_raster_policy(body["raster_policy"], folder["format"])):
@@ -3535,17 +3548,12 @@ class Client:
                 or args.keys() - required - optional):
             raise HextileClientError("Expected closed Shader folder export intent", kind="other", status_code=422)
         sid = args["sequence_id"]
-        folder = args["destination_folder"]
-        encoding = args["format"]
-        quality = args.get("quality_if_jpg")
+        intent = {key: args[key] for key in ("destination_folder", "format", "quality_if_jpg") if key in args}
         if (type(sid) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", sid) is None
-                or type(folder) is not str or not folder or "\x00" in folder
-                or type(encoding) is not str or encoding not in ("PNG", "JPG")
-                or (encoding == "JPG") != (type(quality) is int and 1 <= quality <= 100)
-                or (encoding == "PNG" and "quality_if_jpg" in args)):
+                or not _shader_folder_intent(intent)):
             raise HextileClientError("Invalid Shader folder export intent", kind="other", status_code=422)
-        body = {"destination_folder": folder, "format": encoding,
-                "quality_if_jpg": quality}
+        body = {"destination_folder": intent["destination_folder"], "format": intent["format"],
+                "quality_if_jpg": intent.get("quality_if_jpg")}
         if submit:
             fingerprint = args["transaction_fingerprint"]
             if type(fingerprint) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint) is None:
