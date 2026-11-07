@@ -1573,11 +1573,9 @@ def test_get_guide_field_lookup_uses_closed_shader_schemas() -> None:
     assert "answer" not in unknown
     assert 1 <= len(unknown["nearest"]) <= 5
     opened = next(tool["description"] for tool in TOOLS if tool["name"] == "open_shader_workspace")
-    assert "Reuse the original request id." in opened
-    assert "Leave Apply to the human." in opened
-    assert "Treat an unknown reply as unknown." in opened
-    assert "authoring.md" not in opened
-    assert "source-modules/1" not in opened
+    assert opened == "Reuse the original request id. Leave Apply to the human. Treat an unknown reply as unknown."
+    for phrase in ("Attach native files", "materialize", "authoring.md", "before attaching", "source-modules/1"):
+        assert phrase not in opened
     local = Client(opener=lambda *a, **k: pytest.fail("field lookup needs no HTTP"))
     local.post_activity = mock.Mock()
     server = HextileMcpServer(client=local)

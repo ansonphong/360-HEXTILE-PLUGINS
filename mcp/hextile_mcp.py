@@ -2590,8 +2590,7 @@ TOOLS: list[dict[str, Any]] = [
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
     {"name": "open_shader_workspace",
-     "description": "Attach native files for a Project or My Library Shader. Open may materialize files and waits for trusted mounted ACK; no caller path or GLSL JSON. "
-                    "Reuse the original request id. Leave Apply to the human. Treat an unknown reply as unknown.",
+     "description": "Reuse the original request id. Leave Apply to the human. Treat an unknown reply as unknown.",
      "inputSchema": _shader_closed({
          "shader": _shader_closed({"origin": {"enum": ["project", "user"]}, "shaderId": {
              "type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_-]+$"}}),
