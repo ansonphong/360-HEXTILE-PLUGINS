@@ -112,6 +112,12 @@ EXPECTED_TOOLS = (
     "start_sequence",
     "get_sequence",
     "list_sequences",
+    "list_sequence_frames",
+    "inspect_sequence_upscale",
+    "upscale_sequence",
+    "get_sequence_upscale_request",
+    "resume_sequence",
+    "retry_sequence_failed_frames",
     "stop_sequence",
     "rename_sequence",
     "set_sequence_lifecycle",
@@ -318,8 +324,44 @@ _WRITE_ID = "33333333-3333-4333-8333-333333333333"
 _SHA256 = "ab" * 32
 
 
+def _allow_app_mcp_sdk_import() -> None:
+    """APP disconnect imports the MCP SDK. This repo's mcp/ folder shadows that name."""
+    import types
+
+    root = ROOT.resolve()
+    for key in list(sys.modules):
+        if key == "mcp" or key.startswith("mcp."):
+            loc = str(getattr(sys.modules[key], "__file__", "") or getattr(sys.modules[key], "__path__", ""))
+            if "hextile-agent" in loc:
+                del sys.modules[key]
+    held = sys.path[:]
+    sys.path[:] = [entry for entry in sys.path if entry and Path(entry).resolve() != root]
+    try:
+        from mcp import ClientSession  # noqa: F401
+        from mcp.client.stdio import stdio_client  # noqa: F401
+    except ImportError:
+        mcp_mod = types.ModuleType("mcp")
+        mcp_mod.ClientSession = object
+        mcp_mod.StdioServerParameters = object
+        client_mod = types.ModuleType("mcp.client")
+        stdio_mod = types.ModuleType("mcp.client.stdio")
+
+        def stdio_client(*_args, **_kwargs):
+            raise RuntimeError("mcp sdk is not installed")
+
+        stdio_mod.stdio_client = stdio_client
+        client_mod.stdio = stdio_mod
+        mcp_mod.client = client_mod
+        sys.modules["mcp"] = mcp_mod
+        sys.modules["mcp.client"] = client_mod
+        sys.modules["mcp.client.stdio"] = stdio_mod
+    finally:
+        sys.path[:] = held
+
+
 def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch):
     """Real native routes/settings persistence; only the in-process HTTP wire is adapted."""
+    _allow_app_mcp_sdk_import()
     sys.path.insert(0, str(ROOT.parent / "360-HEXTILE-APP"))
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -380,7 +422,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 124 and len(SHADER_EXTENSION_TOOLS) == 47
+    assert len(TOOLS) == 130 and len(SHADER_EXTENSION_TOOLS) == 49
 
 
 def test_trusted_local_file_contract() -> None:
@@ -1170,7 +1212,7 @@ def test_mcp_tools_list_rpc() -> None:
     opened = discovered["open_shader_workspace"]["inputSchema"]
     got = discovered["get_shader_update"]["inputSchema"]
     registered = discovered["register_shader_update"]["inputSchema"]
-    assert opened["properties"]["workspace_schema"] == {"type": "integer", "const": 2}
+    assert opened["properties"]["workspace_schema"] == {"type": "integer", "const": 2, "default": 2}
     assert "workspace_schema" not in opened["required"]
     assert got["properties"]["include_source_diagnostics"] == {"type": "boolean", "default": False}
     legacy = {"shader": {"origin": "project", "shaderId": "test"}, "project_context_witness": "wit",

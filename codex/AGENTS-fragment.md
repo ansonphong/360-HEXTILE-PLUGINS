@@ -98,6 +98,12 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `start_sequence` | Queue GPU for an existing sequence | **yes** |
 | `get_sequence` | Poll `sequence_id` progress / output (not `get_status`) | no |
 | `list_sequences` | Find sequences if you lost `sequence_id` | no |
+| `list_sequence_frames` | Read one bounded page of sequence frame states and output handles | no |
+| `inspect_sequence_upscale` | Inspect a saved sequence for native upscale eligibility | no |
+| `upscale_sequence` | Upscale a saved sequence with a caller-owned UUID; recover with `get_sequence_upscale_request` | **yes** |
+| `get_sequence_upscale_request` | Recover the original sequence upscale request by its UUID | no |
+| `resume_sequence` | Resume the exact accepted sequence run | **yes** |
+| `retry_sequence_failed_frames` | Retry failed frames for the exact accepted sequence run | **yes** |
 | `rename_sequence` | Rename display metadata only; preserve the saved recipe, files and native render owner | **yes** |
 | `set_sequence_lifecycle` | Archive, move to Trash or restore through the native library operation; keeps files | **yes** |
 | `set_sequence_tags` | Replace existing tag IDs, including the favorite tag when retained | **yes** |
