@@ -348,6 +348,7 @@ _DESTRUCTIVE = frozenset(
         "cancel_seed",
         "delete_workflow",
         "stop_sequence",
+        "control_shader_sequence",
         "cancel_batch",
         "cancel_model_download",
         "cancel_layer_generation",

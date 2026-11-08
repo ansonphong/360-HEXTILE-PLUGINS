@@ -960,6 +960,7 @@ def test_shader_saved_recipe_and_replacement_recover_original_request_without_pr
         {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}})['result']['tools']}
     action = {'sequence_id': old, 'action': 'start_over', 'request': request,
               'inspection_fingerprint': digest, 'confirmed': True}
+    assert tools['control_shader_sequence']['annotations']['destructiveHint'] is True
     validate_shader_sequence_request(request)
     jsonschema.validate(request, tools['render_shader_sequence']['inputSchema'])
     jsonschema.validate(action, tools['control_shader_sequence']['inputSchema'])
