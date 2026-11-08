@@ -331,7 +331,8 @@ def test_shader_render_export_mcp_tool_chain() -> None:
     jsonschema.validate(example, tools["render_shader_sequence"]["inputSchema"])
     sys.path.insert(0, str(ROOT.parent / "360-HEXTILE-APP"))
     from backend.api.routes.shaders_pkg.sequences import SequenceRequest
-    assert SequenceRequest.model_validate(example).publication_mode == "deferred"
+    example_request = SequenceRequest.model_validate(example)
+    assert example_request.publication_mode is None and example_request.folder_export.format == 'JPG'
 
     seen: list[Any] = []
     sid = "seq_" + "a" * 32
@@ -1022,3 +1023,27 @@ def test_shader_saved_recipe_and_replacement_recover_original_request_without_pr
     with pytest.raises(HextileClientError) as old_peer:
         client.control_shader_sequence(action)
     assert old_peer.value.status_code == 501
+    # Preserve the native deferred PNG-master restriction when syncing an older
+    # canonical snapshot that previously advertised a nonexistent EXR conversion.
+    deferred_exr = {'sequence_id': old, 'destination_folder': 'C:/selected', 'format': 'EXR'}
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(deferred_exr, tools['preflight_shader_sequence_export']['inputSchema'])
+    with pytest.raises(HextileClientError) as refused_exr:
+        client.preflight_shader_sequence_export(deferred_exr)
+    assert refused_exr.value.status_code == 422
+    recovery = {'sequence_id': old, 'action': 'recover_start_over', 'new_sequence_id': new,
+        'destination_folder': request['folder_export']['destination_folder'], 'confirmed': True,
+        'project_context_witness': 'witness'}
+    jsonschema.validate(recovery, tools['control_shader_sequence']['inputSchema'])
+    monkeypatch.setattr(client, 'get_capabilities', lambda: capabilities)
+    monkeypatch.setattr(client, 'post_json', reply)
+    assert client.control_shader_sequence(recovery)['sequence_id'] == new
+    assert calls[-1][0] == f'/api/shaders/sequences/{old}/start-over/recover'
+    assert calls[-1][1] == {'new_sequence_id': new, 'destination_folder': request['folder_export']['destination_folder'], 'confirmed': True}
+    pending = _native_inspection_result({'status': 'unavailable', 'code': 'sequence_replacement_pending',
+        'counts_verified': False, 'capabilities': {'recover_start_over': True},
+        'replacement': {'sequence_id': old, 'new_sequence_id': new, 'request_hash': digest, 'phase': 'moving',
+                        'request': private, 'recovered_request': private}}, 'shader')
+    assert pending['replacement'] == {'sequence_id': old, 'new_sequence_id': new, 'request_hash': digest, 'phase': 'moving'}
+    assert pending['capabilities'] == {'recover_start_over': True}
+    assert 'private' not in json.dumps(pending)

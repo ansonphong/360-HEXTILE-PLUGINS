@@ -285,9 +285,15 @@ supports replacement; legacy output advertises
 `sequence_replacement_legacy_unsupported`. Native replacement archives the old
 owned generation recoverably and preserves unrelated files; the response contains
 a new `sequence_id` and `replaced_sequence_id`. Do not use a folder-deletion tool.
-On a lost reply or `sequence_replacement_pending`, recover only by replaying the
-identical original Start-over POST/body/key/fingerprint against the original ID,
-then observe the returned new ID. Never mint a new key or inspect a new body to
+On a lost reply, recover by replaying the identical original Start-over
+POST/body/key/fingerprint against the original ID, then observe the returned new
+ID. After restart, `sequence_replacement_pending` exposes a bounded `replacement`
+reference (old/new IDs, request hash and phase) and `recover_start_over:true`. Use
+`control_shader_sequence(action="recover_start_over",sequence_id=<old>,
+new_sequence_id=<observed new>,destination_folder=<same chosen folder>,
+project_context_witness=<current>,confirmed=true)` to resume that exact retained
+transaction. The native owner loads the original request locally; its private
+request body never enters MCP results. Never mint a new key or inspect a new body to
 restart an unfinished replacement. The short archive transaction settles
 atomically or remains recoverable, so it has no mid-move cancellation; after new
 render admission, use normal native status and Stop with its observed `run_id`.

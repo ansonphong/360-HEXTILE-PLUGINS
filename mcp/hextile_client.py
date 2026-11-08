@@ -1886,12 +1886,19 @@ def project_shader_sequence_recovery(data: Mapping[str, Any]) -> dict[str, Any]:
         out["counts_verified"] = data["counts_verified"]
     capabilities = data.get("capabilities")
     if type(capabilities) is dict:
-        safe = {key: capabilities[key] for key in ("use_saved_settings", "start_over")
+        safe = {key: capabilities[key] for key in ("use_saved_settings", "start_over", "recover_start_over")
                 if type(capabilities.get(key)) is bool}
         reason = capabilities.get("start_over_reason")
         if type(reason) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", reason):
             safe["start_over_reason"] = reason
         out["capabilities"] = safe
+    replacement = data.get('replacement')
+    if (type(replacement) is dict and {'sequence_id', 'new_sequence_id', 'request_hash', 'phase'} <= set(replacement)
+            and all(type(replacement[key]) is str and re.fullmatch(r'seq_[0-9a-f]{32}', replacement[key])
+                    for key in ('sequence_id', 'new_sequence_id'))
+            and type(replacement['request_hash']) is str and _WORKSPACE_DIGEST.fullmatch(replacement['request_hash'])
+            and type(replacement['phase']) is str and re.fullmatch(r'[a-z][a-z0-9_]{0,63}', replacement['phase'])):
+        out['replacement'] = {key: replacement[key] for key in ('sequence_id', 'new_sequence_id', 'request_hash', 'phase')}
     rows = data.get("differences")
     if type(rows) is list and len(rows) <= len(_SHADER_DIFFERENCE_LABELS):
         safe = []
@@ -3995,7 +4002,7 @@ class Client:
         sid = args["sequence_id"]
         intent = {key: args[key] for key in ("destination_folder", "format", "quality_if_jpg") if key in args}
         if (type(sid) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", sid) is None
-                or not _shader_folder_intent(intent)):
+                or intent.get("format") not in {"PNG", "JPG"} or not _shader_folder_intent(intent)):
             raise HextileClientError("Invalid Shader folder export intent", kind="other", status_code=422)
         body = {"destination_folder": intent["destination_folder"], "format": intent["format"],
                 "quality_if_jpg": intent.get("quality_if_jpg")}
@@ -4074,6 +4081,17 @@ class Client:
             suffix, body = "stop", {"run_id": args["run_id"]}
         elif action == "resume" and set(args) == {"sequence_id", "action"}:
             suffix, body = "resume", None
+        elif action == 'recover_start_over' and set(args) == {
+                'sequence_id', 'action', 'new_sequence_id', 'confirmed', 'project_context_witness', 'destination_folder'}:
+            if (args['confirmed'] is not True or type(args['new_sequence_id']) is not str
+                    or re.fullmatch(r'seq_[0-9a-f]{32}', args['new_sequence_id']) is None
+                    or type(args['project_context_witness']) is not str or not 1 <= len(args['project_context_witness']) <= 256
+                    or not _absolute_task_path(args['destination_folder']) or len(args['destination_folder']) > 4096):
+                raise HextileClientError('Invalid replacement recovery target', kind='other', status_code=422)
+            self._require_native_render(shader_recovery=True)
+            suffix, body = 'start-over/recover', {'new_sequence_id': args['new_sequence_id'], 'confirmed': True,
+                'destination_folder': args['destination_folder']}
+            headers = {'X-Hextile-Project-Witness': args['project_context_witness']}
         elif action in {"continue", "start_over"} and set(args) == {
                 "sequence_id", "action", "request", "inspection_fingerprint"} | ({"confirmed"} if action == "start_over" else set()):
             request = args["request"]
@@ -4099,10 +4117,11 @@ class Client:
             raise HextileClientError("Invalid closed Shader sequence control", kind="other", status_code=422)
         try:
             data = self.post_json(f"/api/shaders/sequences/{sid}/{suffix}", body, headers=headers,
-                                  timeout=LONG_OPERATION_TIMEOUT_S if action in {"continue", "start_over"} else None)
-            if action == "start_over":
+                                  timeout=LONG_OPERATION_TIMEOUT_S if action in {"continue", "start_over", "recover_start_over"} else None)
+            if action in {"start_over", "recover_start_over"}:
                 result = self._shader_sequence_receipt(data, preflight=False)
-                if data.get("replaced_sequence_id") != sid or result["sequence_id"] == sid:
+                if (data.get("replaced_sequence_id") != sid or result["sequence_id"] == sid
+                        or action == 'recover_start_over' and result['sequence_id'] != args['new_sequence_id']):
                     raise HextileClientError("Invalid replacement receipt", kind="other", status_code=202)
                 return {**result, "action": action, "replaced_sequence_id": sid}
             if not isinstance(data, Mapping) or data.get("sequence_id") != sid:
@@ -4131,6 +4150,10 @@ class Client:
         except HextileClientError as exc:
             if (exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500
                     or exc.kind == "other" and 200 <= exc.status_code < 300):
+                if action == 'recover_start_over':
+                    raise HextileClientError('Replacement recovery outcome unknown. Repeat only this exact original recovery target, then GET the known new_sequence_id.',
+                        status_code=exc.status_code, kind='shader_sequence_outcome_unknown',
+                        receipt={'status': 'unknown', 'sequence_id': sid, 'new_sequence_id': args['new_sequence_id'], 'action': action}) from exc
                 if action == "start_over":
                     raise HextileClientError(
                         "Start-over outcome unknown. Recover by replaying only the identical original start_over body, key and fingerprint against the original sequence_id; never mint a new key. Then GET its returned replacement sequence_id.",
@@ -4149,6 +4172,10 @@ class Client:
                                          status_code=409, kind="http", receipt={"sequence_id": sid, "code": "sequence_run_changed"}) from exc
             raise self._shader_sequence_error(exc) from exc
         except Exception as exc:
+            if action == 'recover_start_over':
+                raise HextileClientError('Replacement recovery outcome unknown. Repeat only this exact original recovery target.',
+                    kind='shader_sequence_outcome_unknown', receipt={'status': 'unknown', 'sequence_id': sid,
+                        'new_sequence_id': args['new_sequence_id'], 'action': action}) from exc
             if action == "start_over":
                 raise HextileClientError(
                     "Start-over outcome unknown. Recover only the identical original start_over body/key/fingerprint against the original sequence_id.",

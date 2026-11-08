@@ -858,7 +858,7 @@ _SHADER_ATTEMPT_ID = {"type": "string", "pattern": r"^attempt_[0-9a-f]{32}$"}
 _SHADER_FOLDER_EXPORT = _shader_closed({
     "sequence_id": _SHADER_SEQUENCE_ID,
     "destination_folder": _SHADER_FOLDER_INTENT["properties"]["destination_folder"],
-    "format": _SHADER_FOLDER_INTENT["properties"]["format"],
+    "format": {"type": "string", "enum": ["PNG", "JPG"]},
     "quality_if_jpg": _SHADER_FOLDER_INTENT["properties"]["quality_if_jpg"],
 }, ("quality_if_jpg",))
 _SHADER_FOLDER_EXPORT["allOf"] = _SHADER_FOLDER_INTENT["allOf"]
@@ -870,6 +870,10 @@ _SHADER_SEQUENCE_CONTROL = {"oneOf": [
                     "request": _SHADER_SEQUENCE_REQUEST, "inspection_fingerprint": _SHADER_DIGEST}),
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "start_over"},
                     "request": _SHADER_SEQUENCE_REQUEST, "inspection_fingerprint": _SHADER_DIGEST,
+                    "confirmed": {"const": True}}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "recover_start_over"},
+                    "new_sequence_id": _SHADER_SEQUENCE_ID, "destination_folder": _ABS_PATH,
+                    "project_context_witness": {"type": "string", "minLength": 1, "maxLength": 256},
                     "confirmed": {"const": True}}),
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"enum": ["cancel_export", "retry_export"]},
                     "attempt_id": _SHADER_ATTEMPT_ID}),
@@ -2597,12 +2601,12 @@ TOOLS: list[dict[str, Any]] = [
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
      "description": "Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request and fingerprint. "
-                    "Start_over requires confirmed:true after showing the destination and owned output; it archives owned direct output recoverably and returns a new sequence_id. Recover a lost Start-over reply only by the identical original POST/body/key/fingerprint. Publication controls require the observed attempt_id. A stale Stop needs a fresh GET, never an unscoped retry.",
+                    "Start_over requires confirmed:true after showing the destination and owned output; it archives owned direct output recoverably and returns a new sequence_id. Recover a lost Start-over reply by the identical original POST/body/key/fingerprint. Pending replacement references support recover_start_over with the observed new_sequence_id, same destination, current witness and confirmed:true. Publication controls require the observed attempt_id. A stale Stop needs a fresh GET, never an unscoped retry.",
      "inputSchema": _SHADER_SEQUENCE_CONTROL,
      "annotations": _annotations("control_shader_sequence")},
     {"name": "preflight_shader_sequence_export",
      "description": "Check verified native masters and an explicitly chosen existing local destination folder. "
-                    "JPG requires quality_if_jpg 1..100; PNG and EXR keep it null. Returns a fingerprint and deterministic attempt_id; "
+                    "JPG requires quality_if_jpg 1..100; PNG keeps it null. Deferred PNG masters cannot export EXR. Returns a fingerprint and deterministic attempt_id; "
                     "the caller must authorize this local destination before use. Private paths stay out of the receipt.",
      "inputSchema": _SHADER_FOLDER_EXPORT,
      "annotations": _annotations("preflight_shader_sequence_export")},
@@ -3504,7 +3508,7 @@ def _activity_subject(name: str, args: Mapping[str, Any], payload: Any = None) -
                   "resume_sequence", "retry_sequence_failed_frames", "control_shader_sequence",
                   "rename_sequence", "set_sequence_lifecycle", "set_sequence_tags", "get_sequence_tags"}:
         kind, value = "sequence", args.get("sequence_id")
-        if name == "control_shader_sequence" and args.get("action") == "start_over" and isinstance(payload, Mapping):
+        if name == "control_shader_sequence" and args.get("action") in {"start_over", "recover_start_over"} and isinstance(payload, Mapping):
             value = payload.get("sequence_id") or value
     elif name == "create_sequence" and isinstance(payload, Mapping):
         kind, value = "sequence", payload.get("sequence_id")
@@ -3946,7 +3950,7 @@ class HextileMcpServer:
         sequence_recovery = derived_sequence_control or original_upscale_recovery or name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
             name in {"control_fractal_sequence", "control_shader_sequence"}
             and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export")
-                or name == "control_shader_sequence" and arguments.get("action") == "start_over")
+                or name == "control_shader_sequence" and arguments.get("action") in {"start_over", "recover_start_over"})
         )
         if (
             not self.internal_mode
