@@ -941,3 +941,84 @@ def test_upscale_scope_discovery_and_create_never_exposes_project_locator():
     with pytest.raises(HextileClientError) as old:
         _client({}, {'sequence_upscale': {'version': 1}}).inspect_sequence_upscale('seq_source')
     assert old.value.status_code == 501
+
+
+def test_shader_saved_recipe_and_replacement_recover_original_request_without_private_data(monkeypatch):
+    from hextile_client import validate_shader_sequence_request, project_shader_sequence_recovery, _native_inspection_result
+    digest, old, new = 'sha256:' + 'a' * 64, 'seq_' + 'b' * 32, 'seq_' + 'c' * 32
+    request = {'shader_ref': {'origin': 'project', 'id': 'aurora'},
+        'project_context_witness': 'witness', 'working_revision': 2,
+        'document_hash': digest, 'source_hash': digest, 'idempotency_key': 'replacement-1',
+        'name': 'Aurora', 'frame_rate': {'num': 24, 'den': 1}, 'frame_count': 24,
+        'start_time': {'num': '0', 'den': '1'}, 'end_time': {'num': '1', 'den': '1'},
+        'width': 2048, 'height': 1024, 'seed': 7,
+        'output': {'projection': 'equirectangular', 'pan': 0, 'tilt': 0, 'roll': 0},
+        'folder_export': {'destination_folder': 'C:/private/frames', 'format': 'JPG', 'quality_if_jpg': 91},
+        'saved_sequence': {'sequence_id': old, 'recipe_hash': digest}}
+    tools = {row['name']: row for row in HextileMcpServer(client=Client()).handle_rpc(
+        {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}})['result']['tools']}
+    action = {'sequence_id': old, 'action': 'start_over', 'request': request,
+              'inspection_fingerprint': digest, 'confirmed': True}
+    validate_shader_sequence_request(request)
+    jsonschema.validate(request, tools['render_shader_sequence']['inputSchema'])
+    jsonschema.validate(action, tools['control_shader_sequence']['inputSchema'])
+    for bad in ({**request['saved_sequence'], 'source': 'private'}, {'sequence_id': old, 'recipe_hash': 'invalid'}):
+        with pytest.raises(HextileClientError):
+            validate_shader_sequence_request({**request, 'saved_sequence': bad})
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**request, 'saved_sequence': bad}, tools['render_shader_sequence']['inputSchema'])
+    private = {**request, 'input_sample': {'source': 'private shader source'},
+               'input_capture_id': 'private-input', 'name': 'private-name'}
+    details = {'counts_verified': False, 'capabilities': {'use_saved_settings': True, 'start_over': True,
+        'private': 'private'}, 'saved_settings': private, 'differences': [
+        {'field': 'dimensions', 'label': 'private', 'saved': [2048, 1024], 'current': [4096, 2048]},
+        {'field': 'source', 'saved': digest, 'current': digest},
+        {'field': 'source', 'saved': 'private shader source', 'current': digest},
+        {'field': 'inputs', 'saved': {'private': 'private'}, 'current': None}]}
+    projected = project_shader_sequence_recovery(details)
+    assert projected['counts_verified'] is False
+    assert projected['saved_settings']['saved_sequence'] == request['saved_sequence']
+    assert projected['saved_settings']['folder_export'] == {'format': 'JPG', 'quality_if_jpg': 91}
+    assert [row['field'] for row in projected['differences']] == ['dimensions', 'source']
+    assert 'private' not in json.dumps(projected) and 'witness' not in json.dumps(projected)
+    inspected = _native_inspection_result({**details, 'status': 'conflict', 'sequence_id': old,
+        'producer': 'shader', 'render_identity': digest, 'recipe_hash': digest,
+        'inspection_fingerprint': digest, 'destination_folder': 'C:/private/frames',
+        'format': 'EXR', 'quality_if_jpg': None, 'frames_completed': 3, 'frame_count': 24,
+        'native_status': 'incomplete', 'publication_state': 'direct'}, 'shader')
+    assert inspected['sequence_id'] == old and inspected['status'] == 'conflict'
+    assert inspected['differences'] == projected['differences']
+    assert 'private' not in json.dumps(inspected)
+    calls = []
+    client = Client()
+    capabilities = {'native_render': {'contract': 'native-render/1', 'sequences': {'shader': {
+        'recovery': {'profile': 'shader-sequence-recovery/1'}}}, 'stills': {}}}
+    monkeypatch.setattr(client, 'get_capabilities', lambda: capabilities)
+    def reply(path, body, **kwargs):
+        calls.append((path, body, kwargs))
+        return {'sequence_id': new, 'replaced_sequence_id': old, 'status': 'queued',
+                'request_hash': digest, 'recipe_hash': digest, 'archive_folder': 'C:/private/archive'}
+    monkeypatch.setattr(client, 'post_json', reply)
+    result = client.control_shader_sequence(action)
+    assert result == {'sequence_id': new, 'replaced_sequence_id': old, 'status': 'queued',
+                      'request_hash': digest, 'recipe_hash': digest, 'action': 'start_over'}
+    assert calls[-1][0] == f'/api/shaders/sequences/{old}/start-over'
+    assert calls[-1][1] == {'request': request, 'inspection_fingerprint': digest, 'confirmed': True}
+    for confirmed in (False, 1, None):
+        with pytest.raises(HextileClientError):
+            client.control_shader_sequence({**action, 'confirmed': confirmed})
+    assert len(calls) == 1
+    def lost(*args, **kwargs):
+        raise HextileClientError('C:/private/transport', kind='app_down')
+    monkeypatch.setattr(client, 'post_json', lost)
+    with pytest.raises(HextileClientError) as error:
+        client.control_shader_sequence(action)
+    assert error.value.kind == 'shader_sequence_outcome_unknown'
+    assert error.value.receipt == {'status': 'unknown', 'sequence_id': old, 'action': 'start_over',
+        'inspection_fingerprint': digest, 'idempotency_key': request['idempotency_key']}
+    assert 'identical original' in str(error.value) and 'private' not in str(error.value)
+    monkeypatch.setattr(client, 'get_capabilities', lambda: {'native_render': {
+        'contract': 'native-render/1', 'sequences': {}, 'stills': {}}})
+    with pytest.raises(HextileClientError) as old_peer:
+        client.control_shader_sequence(action)
+    assert old_peer.value.status_code == 501

@@ -254,3 +254,40 @@ After a lost still reply, keep original request/preflight UUID/profile and read
 that exact job. Do not capture a replacement frame or choose another filename to
 hide the unknown outcome. Source/native capability checks and create-only
 publication remain authoritative.
+
+
+Shader sequence recovery requires
+`native_render.sequences.shader.recovery.profile:"shader-sequence-recovery/1"`.
+Inspect the destination first. `counts_verified:false` means saved counts are last
+reported; native Resume verifies journal-backed files before reuse. Setting
+`differences` are bounded public values. `saved_settings` contains a
+`saved_sequence:{sequence_id,recipe_hash}` selector and reusable render controls;
+it omits the private destination, witness, request key, live capture and name.
+Retain the original chosen folder locally and supply the current Project witness,
+a caller-owned name and request key when constructing the exact request. Reapply
+the returned folder encoding to that same chosen destination.
+
+Use saved render settings selects the checked frozen source/resources and opaque
+inputs without replacing or saving authoring. For a preview, keep the current
+mounted owner/base/edit identity and send the `saved_sequence` selector with
+`mode:"sequence"`, explicit output geometry, supersampling and exact
+`sequence_sample`. The APP obtains the original seed/capture from the owned
+recipe. Dirty authoring remains untouched and needs no new live-frame capture.
+Observe/release that native inspector by its original request ID. Continue uses
+the same frozen selector, exact render controls and fresh inspection fingerprint.
+A changed selector, recipe or output refuses; IDs alone never grant authority.
+
+Start over means rendering from frame zero with the displayed request. Confirm
+the chosen destination and affected owned output with the user before sending
+`control_shader_sequence(action="start_over",sequence_id=<old>,request=...,
+inspection_fingerprint=...,confirmed=true)`. Only owned direct generated output
+supports replacement; legacy output advertises
+`sequence_replacement_legacy_unsupported`. Native replacement archives the old
+owned generation recoverably and preserves unrelated files; the response contains
+a new `sequence_id` and `replaced_sequence_id`. Do not use a folder-deletion tool.
+On a lost reply or `sequence_replacement_pending`, recover only by replaying the
+identical original Start-over POST/body/key/fingerprint against the original ID,
+then observe the returned new ID. Never mint a new key or inspect a new body to
+restart an unfinished replacement. The short archive transaction settles
+atomically or remains recoverable, so it has no mid-move cancellation; after new
+render admission, use normal native status and Stop with its observed `run_id`.

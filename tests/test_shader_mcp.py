@@ -291,7 +291,8 @@ def test_shader_preview_binary_transport_requires_explicit_image_opt_in() -> Non
     assert "image=true" in seen[-1].full_url
 
 
-def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_recipe(monkeypatch):
+@pytest.mark.parametrize("saved_recipe", [False, True])
+def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_recipe(monkeypatch, saved_recipe):
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     descriptor = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_preview")
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
@@ -304,13 +305,19 @@ def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_rec
         "mode": "sequence", "width": 4096, "height": 4096, "sequence_sample": sample,
         "output": {"projection": "fulldome_angular", "diameter": 4096, "fov_deg": 180,
                    "pan": 0, "tilt": 0, "roll": 0, "supersampling": 1.5}}
+    if saved_recipe:
+        request['saved_sequence'] = {'sequence_id': 'seq_' + 'b' * 32, 'recipe_hash': digest}
     jsonschema.validate(request, descriptor["inputSchema"])
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({key: value for key, value in request.items() if key != "sequence_sample"}, descriptor["inputSchema"])
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**request, "mode": "still"}, descriptor["inputSchema"])
     client = Client()
-    monkeypatch.setattr(client, "get_capabilities", _inspector_capabilities)
+    def capabilities():
+        result = _inspector_capabilities()
+        result['native_render']['sequences']['shader'] = {'recovery': {'profile': 'shader-sequence-recovery/1'}}
+        return result
+    monkeypatch.setattr(client, "get_capabilities", capabilities)
     calls = []
     def reply(method, path, body=None, **kwargs):
         calls.append((method, path, body))
@@ -320,7 +327,7 @@ def test_full_quality_preview_contract_binds_exact_samples_and_refuses_wrong_rec
     assert calls[-1][2] == request
     for patch in ({"height": 2048}, {"sequence_sample": {**sample, "index": 30}},
                   {"sequence_sample": {**sample, "frame_count": 29}}, {"sequence_sample": None},
-                  {"output": {**request["output"], "supersampling": 1.234}}):
+                  {"output": {**request["output"], "supersampling": float("inf")}}):
         with pytest.raises(HextileClientError):
             client.request_shader_preview({**request, **patch})
     assert len(calls) == 1  # Invalid settings never cross mutation admission.

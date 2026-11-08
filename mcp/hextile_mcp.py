@@ -806,7 +806,12 @@ _RENDER_ROUTE = _shader_closed({
     "route": {"enum": list(_RENDER_ROUTES)},
     "browser_codec": _BROWSER_CODEC,
 }, ("browser_codec",))
+_SHADER_SAVED_SEQUENCE = _shader_closed({
+    "sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"},
+    "recipe_hash": _SHADER_DIGEST,
+})
 _SHADER_SEQUENCE_REQUEST = _shader_closed({
+    "saved_sequence": _SHADER_SAVED_SEQUENCE,
     "input_capture_id": {"type": "string", "pattern": r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
     "shader_ref": _shader_closed({"origin": {"enum": ["builtin", "user", "project"]},
                                   "id": {"type": "string", "minLength": 1,
@@ -836,7 +841,7 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "folder_export": {"oneOf": [_SHADER_FOLDER_INTENT, {"type": "null"}]},
     "publication_mode": {"oneOf": [{"const": "deferred"}, {"type": "null"}]},
     "render_route": _RENDER_ROUTE,
-}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy", "render_route"))
+}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy", "render_route", "saved_sequence"))
 _SHADER_SEQUENCE_REQUEST["allOf"] = [
     {"if": {"properties": {"publication_mode": {"const": "deferred"}}, "required": ["publication_mode"]},
      "then": {"properties": {"folder_export": {"type": "null"}}},
@@ -863,6 +868,9 @@ _SHADER_SEQUENCE_CONTROL = {"oneOf": [
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "resume"}}),
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "continue"},
                     "request": _SHADER_SEQUENCE_REQUEST, "inspection_fingerprint": _SHADER_DIGEST}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "start_over"},
+                    "request": _SHADER_SEQUENCE_REQUEST, "inspection_fingerprint": _SHADER_DIGEST,
+                    "confirmed": {"const": True}}),
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"enum": ["cancel_export", "retry_export"]},
                     "attempt_id": _SHADER_ATTEMPT_ID}),
 ]}
@@ -2572,7 +2580,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("preflight_shader_sequence")},
     {"name": "inspect_shader_sequence_output",
-     "description": "Inspect one selected Shader destination with metadata only. Continue only the matching unfinished receipt and fingerprint; a conflict never overwrites files.",
+     "description": "Inspect one selected Shader destination with metadata only. Counts are last reported until Resume verifies saved files. Reports bounded setting differences, detached saved_settings and action capabilities; keep the chosen destination locally. Continue revalidates the exact request/fingerprint.",
      "inputSchema": _SHADER_INSPECT, "annotations": _annotations("inspect_shader_sequence_output")},
     {"name": "render_shader_sequence",
      "description": "Queue only the exact saved Shader request already preflighted, with its caller-known "
@@ -2589,7 +2597,7 @@ TOOLS: list[dict[str, Any]] = [
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
      "description": "Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request and fingerprint. "
-                    "Publication controls require the observed attempt_id. A stale Stop needs a fresh GET, never an unscoped retry.",
+                    "Start_over requires confirmed:true after showing the destination and owned output; it archives owned direct output recoverably and returns a new sequence_id. Recover a lost Start-over reply only by the identical original POST/body/key/fingerprint. Publication controls require the observed attempt_id. A stale Stop needs a fresh GET, never an unscoped retry.",
      "inputSchema": _SHADER_SEQUENCE_CONTROL,
      "annotations": _annotations("control_shader_sequence")},
     {"name": "preflight_shader_sequence_export",
@@ -2947,11 +2955,12 @@ SHADER_EXTENSION_TOOLS = [
               ["project_context_witness"]),
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_request_preview", "Request shader-export-preview/2 at the selected full dimensions and supersampling. Still freezes the completed frame; Sequence evaluates the exact end-exclusive rational sample and native replay. Requires advertised native limits and the private clean saved mounted Capture owner. Recover the original operation ID; never repost under a new ID. Absent render_route stays native. A WebGL route is delivered as shader_render_produce to the mounted Workshop; this tool does not produce frames.",
+    _tool_def("shader_request_preview", "Request shader-export-preview/2 at the selected full dimensions and supersampling. Still freezes the completed frame; Sequence evaluates the exact end-exclusive rational sample and native replay. Requires advertised native limits and the private clean saved mounted Capture owner. Sequence saved_sequence previews the owned frozen recipe while preserving authoring; requires shader-sequence-recovery/1. Recover the original operation ID; never repost under a new ID. Absent render_route stays native. A WebGL route is delivered as shader_render_produce to the mounted Workshop; this tool does not produce frames.",
               {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT, "mode": {"enum": ["still", "sequence"]},
                "width": {"type": "integer", "minimum": 2, "maximum": 16384},
                "height": {"type": "integer", "minimum": 1, "maximum": 8192},
-               "sequence_sample": _PREVIEW_SAMPLE, "render_route": _RENDER_ROUTE},
+               "sequence_sample": _PREVIEW_SAMPLE, "render_route": _RENDER_ROUTE,
+               "saved_sequence": _SHADER_SAVED_SEQUENCE},
               _OUTPUT_OWNER_REQUIRED + ["output", "mode", "width", "height"]),
     _tool_def("shader_capture_sequence_input", "Freeze camera pose and persistent toggles from the current completed Shader frame for offline sequences; no GPU work or private input bytes. Recover the original ticket with shader_get_operation (asset scope). Once applied, pass the same request_id as input_capture_id to sequence preflight/render. Continue uses its stored recipe without a fresh capture.",
               _OUTPUT_OWNER, _OUTPUT_OWNER_REQUIRED),
@@ -3219,6 +3228,8 @@ next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_pre
     {"if": {"properties": {"mode": {"const": "sequence"}}, "required": ["mode"]},
      "then": {"required": ["sequence_sample"]},
      "else": {"not": {"required": ["sequence_sample"]}}},
+    {"if": {"required": ["saved_sequence"]},
+     "then": {"properties": {"mode": {"const": "sequence"}}}},
 ]
 
 for _name, _variants in {
@@ -3493,6 +3504,8 @@ def _activity_subject(name: str, args: Mapping[str, Any], payload: Any = None) -
                   "resume_sequence", "retry_sequence_failed_frames", "control_shader_sequence",
                   "rename_sequence", "set_sequence_lifecycle", "set_sequence_tags", "get_sequence_tags"}:
         kind, value = "sequence", args.get("sequence_id")
+        if name == "control_shader_sequence" and args.get("action") == "start_over" and isinstance(payload, Mapping):
+            value = payload.get("sequence_id") or value
     elif name == "create_sequence" and isinstance(payload, Mapping):
         kind, value = "sequence", payload.get("sequence_id")
     elif name in {"get_batch", "get_batch_items", "pause_batch", "resume_batch", "cancel_batch", "retry_batch"}:
@@ -3932,7 +3945,8 @@ class HextileMcpServer:
                                      and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", arguments["request_id"]) is not None)
         sequence_recovery = derived_sequence_control or original_upscale_recovery or name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
             name in {"control_fractal_sequence", "control_shader_sequence"}
-            and isinstance(arguments, dict) and arguments.get("action") in ("stop", "cancel_export")
+            and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export")
+                or name == "control_shader_sequence" and arguments.get("action") == "start_over")
         )
         if (
             not self.internal_mode

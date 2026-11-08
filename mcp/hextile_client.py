@@ -1005,7 +1005,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
         "sequence_input": (_OUTPUT_OWNER, set()),
-        "preview": (_OUTPUT_OWNER | {"output", "mode", "width", "height"}, {"sequence_sample", "render_route"}),
+        "preview": (_OUTPUT_OWNER | {"output", "mode", "width", "height"}, {"sequence_sample", "render_route", "saved_sequence"}),
         "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision", "render_route"}),
         "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, {"render_route"}),
         "get_preview": (common, {"image"}),
@@ -1041,6 +1041,9 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     if operation in {"preflight", "still", "get_job", "stop_job"} and (
             type(args["profile"]) is not str or args["profile"] not in _OUTPUT_PROFILES):
         raise HextileClientError("Unsupported Shader still profile", status_code=422, kind="other")
+    if "saved_sequence" in args and (operation != "preview" or args.get("mode") != "sequence"
+            or not _valid_saved_sequence(args["saved_sequence"])):
+        raise HextileClientError("Invalid frozen sequence selector", status_code=422, kind="other")
     if operation in {"preview", "preflight"}:
         output = args["output"]
         if not isinstance(output, Mapping):
@@ -1565,7 +1568,7 @@ _SHADER_SEQUENCE_REQUIRED = {
 }
 _SHADER_SEQUENCE_OPTIONAL = {"resource_manifest_hash", "selected_resource_frames",
                              "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy",
-                             "render_route"}
+                             "render_route", "saved_sequence"}
 _RENDER_ROUTE_NAMES = {
     "native", "webgl-raw-float", "webgl-display-native-encode",
     "webgl-browser-encode-desktop", "webgl-browser-encode-backend",
@@ -1788,14 +1791,167 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+_SHADER_DIFFERENCE_LABELS = {
+    "shader_ref": "Shader", "source": "Shader source", "resources": "Resources",
+    "appearance": "Appearance", "frame_rate": "Frame rate", "frame_count": "Frame count",
+    "interval": "Time range", "dimensions": "Dimensions", "output": "Projection and framing",
+    "seed": "Seed", "supersampling": "Supersampling", "encoding": "Encoding",
+    "raster_policy": "Processing", "render_route": "Render pipeline", "inputs": "Captured inputs",
+}
+
+
+def _valid_saved_sequence(value: Any) -> bool:
+    return (type(value) is dict and set(value) == {"sequence_id", "recipe_hash"}
+            and type(value["sequence_id"]) is str
+            and re.fullmatch(r"seq_[0-9a-f]{32}", value["sequence_id"]) is not None
+            and type(value["recipe_hash"]) is str
+            and _WORKSPACE_DIGEST.fullmatch(value["recipe_hash"]) is not None)
+
+
+def _public_shader_setting(value: Any, depth: int = 0) -> Any:
+    """Bound settings without copying private source, input bytes or filesystem paths."""
+    if depth > 4:
+        raise ValueError("setting depth")
+    if value is None or type(value) is bool:
+        return value
+    if type(value) in (int, float) and math.isfinite(value):
+        return value
+    if type(value) is str and len(value) <= 256 and (
+            re.fullmatch(r"[A-Za-z0-9 _.:+-]{0,256}", value)
+            or re.fullmatch(r"[a-z][a-z0-9-]*/[0-9]+", value)):
+        return value
+    if type(value) is list and len(value) <= 64:
+        return [_public_shader_setting(item, depth + 1) for item in value]
+    if type(value) is dict and len(value) <= 24 and all(
+            type(key) is str and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", key) for key in value):
+        return {key: _public_shader_setting(item, depth + 1) for key, item in value.items()}
+    raise ValueError("private or oversized setting")
+
+
+def _shader_identity_difference(value: Any) -> Any:
+    if value is None or type(value) is bool:
+        return value
+    if type(value) is str and _WORKSPACE_DIGEST.fullmatch(value):
+        return value
+    if type(value) is dict and len(value) <= 8 and all(
+            key in {"source_hash", "document_hash", "resource_manifest_hash", "input_hash", "changed"}
+            for key in value):
+        return {key: _shader_identity_difference(item) for key, item in value.items()}
+    raise ValueError("private identity detail")
+
+
+def _shader_setting_difference(field: str, value: Any) -> Any:
+    if value is None:
+        return None
+    keys = {
+        'shader_ref': {'origin', 'id'}, 'frame_rate': {'num', 'den'},
+        'output': {'projection', 'diameter', 'fov_deg', 'pan', 'tilt', 'roll', 'preserve_360', 'preserve_360_profile'},
+        'encoding': {'format', 'quality_if_jpg'},
+        'raster_policy': {'profile', 'processing', 'png_compress_level'},
+        'render_route': {'profile', 'route', 'browser_codec'},
+    }
+    if field in keys and (type(value) is not dict or set(value) - keys[field]):
+        raise ValueError('private setting detail')
+    if field == 'shader_ref' and (set(value) != keys[field] or value.get('origin') not in {'user', 'project', 'builtin'}
+            or type(value.get('id')) is not str or re.fullmatch(r'[A-Za-z0-9_-]{1,256}', value['id']) is None):
+        raise ValueError('invalid Shader identity')
+    if field == 'frame_rate' and (set(value) != keys[field] or any(type(item) is not int or item <= 0 for item in value.values())):
+        raise ValueError('invalid frame rate')
+    if field == 'output' and (value.get('projection') not in {'equirectangular', 'fulldome', 'fulldome_angular'}
+            or not _valid_preservation(value) or any(type(item) not in (int, float) for key, item in value.items()
+                if key not in {'projection', 'preserve_360', 'preserve_360_profile'})):
+        raise ValueError('invalid output geometry')
+    if field == 'encoding' and not _shader_folder_intent({'destination_folder': 'C:/selected', **value}):
+        raise ValueError('invalid encoding')
+    if field == 'raster_policy' and not _valid_raster_policy(value, 'PNG' if 'png_compress_level' in value else 'JPG'):
+        raise ValueError('invalid raster policy')
+    if field == 'render_route' and not _checked_render_route(value):
+        raise ValueError('invalid render route')
+    if field in {'frame_count', 'seed', 'supersampling'} and type(value) not in (int, float):
+        raise ValueError('invalid numeric setting')
+    if field in {'interval', 'dimensions'} and (type(value) is not list or len(value) != 2):
+        raise ValueError('invalid paired setting')
+    if field == 'dimensions' and any(type(item) is not int or item <= 0 for item in value):
+        raise ValueError('invalid dimensions')
+    if field == 'interval' and any(type(item) is not dict or set(item) != {'num', 'den'} or any(
+            type(part) not in (int, str) or re.fullmatch(r'[0-9]{1,32}', str(part)) is None
+            for part in item.values()) for item in value):
+        raise ValueError('invalid interval')
+    return _public_shader_setting(value)
+
+
+def project_shader_sequence_recovery(data: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    if type(data.get("counts_verified")) is bool:
+        out["counts_verified"] = data["counts_verified"]
+    capabilities = data.get("capabilities")
+    if type(capabilities) is dict:
+        safe = {key: capabilities[key] for key in ("use_saved_settings", "start_over")
+                if type(capabilities.get(key)) is bool}
+        reason = capabilities.get("start_over_reason")
+        if type(reason) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", reason):
+            safe["start_over_reason"] = reason
+        out["capabilities"] = safe
+    rows = data.get("differences")
+    if type(rows) is list and len(rows) <= len(_SHADER_DIFFERENCE_LABELS):
+        safe = []
+        for row in rows:
+            if type(row) is not dict or row.get("field") not in _SHADER_DIFFERENCE_LABELS:
+                continue
+            try:
+                project = (_shader_identity_difference if row["field"] in {
+                    "source", "resources", "appearance", "inputs"} else
+                    lambda value: _shader_setting_difference(row['field'], value))
+                safe.append({"field": row["field"], "label": _SHADER_DIFFERENCE_LABELS[row["field"]],
+                             "saved": project(row.get("saved")),
+                             "current": project(row.get("current"))})
+            except (ValueError, OverflowError):
+                continue
+        out["differences"] = safe
+    settings = data.get("saved_settings")
+    if type(settings) is dict:
+        allowed = (_SHADER_SEQUENCE_REQUIRED | _SHADER_SEQUENCE_OPTIONAL) - {
+            "project_context_witness", "idempotency_key", "input_capture_id", "name"}
+        candidate = {key: settings[key] for key in allowed & settings.keys()}
+        for key in ("start_time", "end_time"):
+            value = candidate.get(key)
+            if type(value) is dict and set(value) == {"num", "den"} and all(
+                    type(value[part]) is int and value[part] >= (0 if part == "num" else 1)
+                    for part in value):
+                candidate[key] = {part: str(value[part]) for part in value}
+        folder = candidate.get("folder_export")
+        if type(folder) is dict:
+            candidate["folder_export"] = {key: folder[key] for key in ("format", "quality_if_jpg") if key in folder}
+            candidate["folder_export"]["destination_folder"] = "C:/selected"
+        candidate.update(project_context_witness="projection", idempotency_key="projection", name="Saved render")
+        try:
+            validate_shader_sequence_request(candidate)
+        except HextileClientError:
+            return out
+        safe = {}
+        for key in allowed & candidate.keys():
+            value = candidate[key]
+            if key == "folder_export" and type(value) is dict:
+                value = {part: value[part] for part in ("format", "quality_if_jpg") if part in value}
+            try:
+                safe[key] = _public_shader_setting(value)
+            except (ValueError, OverflowError):
+                continue
+        if _valid_saved_sequence(safe.get("saved_sequence")):
+            out["saved_settings"] = safe
+    return out
+
+
 def _native_inspection_result(data: Any, producer: str) -> dict[str, Any]:
     if type(data) is not dict or data.get("status") not in {
             "new", "unfinished", "completed", "unavailable", "conflict"}:
         raise HextileClientError("Invalid native destination inspection", kind="other")
     result: dict[str, Any] = {"status": data["status"]}
+    if producer == "shader":
+        result.update(project_shader_sequence_recovery(data))
     if type(data.get("code")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", data["code"]):
         result["code"] = data["code"]
-    if data["status"] in {"new", "unavailable", "conflict"}:
+    if data["status"] in {"new", "unavailable"} or data["status"] == "conflict" and "sequence_id" not in data:
         return result
     required = ("sequence_id", "producer", "render_identity", "recipe_hash", "destination_folder",
                 "format", "frames_completed", "frame_count", "native_status", "publication_state",
@@ -1806,7 +1962,7 @@ def _native_inspection_result(data: Any, producer: str) -> dict[str, Any]:
                    for key in ("render_identity", "recipe_hash", "inspection_fingerprint"))
             or not _absolute_task_path(data["destination_folder"])
             or len(data["destination_folder"]) > 4096
-            or data["format"] not in {"PNG", "JPG"}
+            or data["format"] not in ({"PNG", "JPG", "EXR"} if producer == "shader" else {"PNG", "JPG"})
             or any(type(data[key]) is not int or data[key] < 0 for key in ("frames_completed", "frame_count"))
             or data["frames_completed"] > data["frame_count"]
             or data["publication_state"] not in {"direct", "admitted", "not_admitted", "legacy"}
@@ -1814,7 +1970,7 @@ def _native_inspection_result(data: Any, producer: str) -> dict[str, Any]:
         raise HextileClientError("Invalid native destination inspection", kind="other")
     quality = data.get("quality_if_jpg")
     if (data["format"] == "JPG" and (type(quality) is not int or not 1 <= quality <= 100)
-            or data["format"] == "PNG" and quality is not None):
+            or data["format"] in {"PNG", "EXR"} and quality is not None):
         raise HextileClientError("Invalid native destination encoding", kind="other")
     result.update({key: data[key] for key in required if key != "destination_folder"})
     result["quality_if_jpg"] = quality
@@ -1868,6 +2024,8 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
             or set(body) - _SHADER_SEQUENCE_REQUIRED - _SHADER_SEQUENCE_OPTIONAL):
         refuse()
     if "render_route" in body and not _checked_render_route(body["render_route"]):
+        refuse()
+    if "saved_sequence" in body and not _valid_saved_sequence(body["saved_sequence"]):
         refuse()
     mode = body.get("publication_mode")
     folder = body.get("folder_export")
@@ -3159,6 +3317,7 @@ class Client:
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,
                                sequence_inputs: bool = False, preview_inspector: bool = False,
+                               shader_recovery: bool = False,
                                preservation: bool = False, raster_policy: bool = False,
                                render_route: Mapping[str, Any] | None = None) -> None:
         """New native semantics require an explicitly advertised peer contract."""
@@ -3175,6 +3334,9 @@ class Client:
                 or type(native.get("stills")) is not dict
                 or preview_inspector and (type(native.get("shader_preview")) is not dict
                     or native["shader_preview"].get("profile") != "shader-export-preview/2")
+                or shader_recovery and (type(native['sequences'].get('shader')) is not dict
+                    or type(native['sequences']['shader'].get('recovery')) is not dict
+                    or native['sequences']['shader']['recovery'].get('profile') != 'shader-sequence-recovery/1')
                 or still_profile is not None and still_profile not in native["stills"]
                 or raster_policy and (type(native.get("shader_raster_policy")) is not dict
                     or native["shader_raster_policy"].get("profile") != "shader-raster-policy/1")
@@ -3693,8 +3855,8 @@ class Client:
         route = body.get("render_route") if isinstance(body.get("render_route"), Mapping) else None
         if (body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1
                 or 'input_capture_id' in body or 'preserve_360' in body.get('output', {})
-                or route is not None):
-            self._require_native_render(sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}), raster_policy='raster_policy' in body, render_route=route)
+                or route is not None or 'saved_sequence' in body):
+            self._require_native_render(shader_recovery='saved_sequence' in body, sequence_inputs='input_capture_id' in body, preservation='preserve_360' in body.get('output', {}), raster_policy='raster_policy' in body, render_route=route)
         path = "/api/shaders/sequences/preflight" if preflight else "/api/shaders/sequences"
         try:
             data = self.post_json(path, dict(body),
@@ -3716,7 +3878,7 @@ class Client:
         validate_shader_sequence_request(request)
         if request.get("folder_export") is None:
             raise HextileClientError("Inspection needs a selected Shader destination", kind="other", status_code=422)
-        self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}), raster_policy='raster_policy' in request)
+        self._require_native_render(shader_recovery='saved_sequence' in request, sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}), raster_policy='raster_policy' in request)
         try:
             data = self.post_json("/api/shaders/sequences/inspect", {"request": dict(request)},
                                   headers={"X-Hextile-Project-Witness": request["project_context_witness"]},
@@ -3912,14 +4074,21 @@ class Client:
             suffix, body = "stop", {"run_id": args["run_id"]}
         elif action == "resume" and set(args) == {"sequence_id", "action"}:
             suffix, body = "resume", None
-        elif action == "continue" and set(args) == {"sequence_id", "action", "request", "inspection_fingerprint"}:
+        elif action in {"continue", "start_over"} and set(args) == {
+                "sequence_id", "action", "request", "inspection_fingerprint"} | ({"confirmed"} if action == "start_over" else set()):
             request = args["request"]
             validate_shader_sequence_request(request)
             if (request.get("folder_export") is None or type(args["inspection_fingerprint"]) is not str
                     or _WORKSPACE_DIGEST.fullmatch(args["inspection_fingerprint"]) is None):
                 raise HextileClientError("Continue requires the inspected Shader destination", kind="other", status_code=422)
-            self._require_native_render(sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}), raster_policy='raster_policy' in request)
-            suffix, body = "continue", {"request": dict(request), "inspection_fingerprint": args["inspection_fingerprint"]}
+            if action == "start_over" and args["confirmed"] is not True:
+                raise HextileClientError("Start over requires explicit destination confirmation", kind="other", status_code=422)
+            self._require_native_render(shader_recovery=action == "start_over" or 'saved_sequence' in request,
+                sequence_inputs='input_capture_id' in request, preservation='preserve_360' in request.get('output', {}), raster_policy='raster_policy' in request)
+            suffix = "start-over" if action == "start_over" else "continue"
+            body = {"request": dict(request), "inspection_fingerprint": args["inspection_fingerprint"]}
+            if action == "start_over":
+                body["confirmed"] = True
             headers = {"X-Hextile-Project-Witness": request["project_context_witness"]}
         elif action in {"cancel_export", "retry_export"} and set(args) == {"sequence_id", "action", "attempt_id"}:
             attempt = args["attempt_id"]
@@ -3930,7 +4099,12 @@ class Client:
             raise HextileClientError("Invalid closed Shader sequence control", kind="other", status_code=422)
         try:
             data = self.post_json(f"/api/shaders/sequences/{sid}/{suffix}", body, headers=headers,
-                                  timeout=LONG_OPERATION_TIMEOUT_S if action == "continue" else None)
+                                  timeout=LONG_OPERATION_TIMEOUT_S if action in {"continue", "start_over"} else None)
+            if action == "start_over":
+                result = self._shader_sequence_receipt(data, preflight=False)
+                if data.get("replaced_sequence_id") != sid or result["sequence_id"] == sid:
+                    raise HextileClientError("Invalid replacement receipt", kind="other", status_code=202)
+                return {**result, "action": action, "replaced_sequence_id": sid}
             if not isinstance(data, Mapping) or data.get("sequence_id") != sid:
                 raise HextileClientError("Invalid Shader sequence control acknowledgement", kind="other", status_code=202)
             statuses = {"queued", "processing", "completed", "completed_with_errors", "failed",
@@ -3957,6 +4131,13 @@ class Client:
         except HextileClientError as exc:
             if (exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500
                     or exc.kind == "other" and 200 <= exc.status_code < 300):
+                if action == "start_over":
+                    raise HextileClientError(
+                        "Start-over outcome unknown. Recover by replaying only the identical original start_over body, key and fingerprint against the original sequence_id; never mint a new key. Then GET its returned replacement sequence_id.",
+                        status_code=exc.status_code, kind="shader_sequence_outcome_unknown",
+                        receipt={"status": "unknown", "sequence_id": sid, "action": action,
+                                 "inspection_fingerprint": args["inspection_fingerprint"],
+                                 "idempotency_key": args["request"]["idempotency_key"]}) from exc
                 raise HextileClientError(
                     "Shader control POST outcome unknown. GET the known sequence_id and original run/attempt/inspection receipt before another action.",
                     status_code=exc.status_code, kind="shader_sequence_outcome_unknown",
@@ -3968,6 +4149,12 @@ class Client:
                                          status_code=409, kind="http", receipt={"sequence_id": sid, "code": "sequence_run_changed"}) from exc
             raise self._shader_sequence_error(exc) from exc
         except Exception as exc:
+            if action == "start_over":
+                raise HextileClientError(
+                    "Start-over outcome unknown. Recover only the identical original start_over body/key/fingerprint against the original sequence_id.",
+                    kind="shader_sequence_outcome_unknown", receipt={"status": "unknown", "sequence_id": sid,
+                        "action": action, "inspection_fingerprint": args["inspection_fingerprint"],
+                        "idempotency_key": args["request"]["idempotency_key"]}) from exc
             raise HextileClientError(
                 "Shader control POST outcome unknown. GET the known sequence_id and original intent before another action.",
                 kind="shader_sequence_outcome_unknown", receipt={"status": "unknown", "sequence_id": sid}) from exc
@@ -6783,7 +6970,7 @@ class Client:
 
     def request_shader_preview(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("preview", args)
-        self._require_native_render(preview_inspector=True,
+        self._require_native_render(preview_inspector=True, shader_recovery='saved_sequence' in args,
             preservation="preserve_360" in args.get("output", {}),
             raster_policy="raster_policy" in args.get("output", {}),
             render_route=args.get("render_route") if isinstance(args.get("render_route"), Mapping) else None)
