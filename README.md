@@ -1,6 +1,6 @@
 # 360-hextile-agent
 
-**v0.5.5**
+**v0.5.6**
 
 Claude Code plugin + Codex twin that drive **360 Hextile** over localhost HTTP.
 
@@ -8,7 +8,7 @@ Primary marketplace: **`ansonphong/360-hextile-plugins`** — the shared 360 Hex
 Standalone marketplace (footnote): **`ansonphong/360-hextile-agent`** — this repo on its own, install id **`360-hextile@hextile-agent`**.
 
 The MCP process is a thin **stdio** JSON-RPC ↔ HTTP proxy (`python3`, stdlib only).  
-All merge, validation, and render logic stay in the running app at `http://127.0.0.1:8000`.
+All merge, validation, and render logic stay in the running app. The client reads `local-endpoint.json` and does not assume port 8000.
 
 ## Quick Shader connection
 
@@ -43,7 +43,7 @@ reconnect only when the matching APP/content cutover is ready for your smoke tes
 
 | Requirement | Notes |
 |-------------|--------|
-| **360 Hextile running** | Backend on `127.0.0.1:8000` |
+| **360 Hextile running** | The client reads `local-endpoint.json` and does not assume port 8000. |
 | **python3 ≥ 3.9** | On PATH — powers the MCP proxy (zero pip installs). On Windows, Claude `.mcp.json` `command` should be `python` or `py -3`, not `python3`. Optional launcher: `mcp/hextile-mcp.cmd` (picks `python` / `python3` / `py -3`). Committed `.mcp.json` stays `python3`. Codex installer already writes `sys.executable`. |
 | App with `POST /api/workflows/run` | Workflow automation P0+ |
 | Claude Code **or** Codex ≥ 0.34.0 | Install path below |

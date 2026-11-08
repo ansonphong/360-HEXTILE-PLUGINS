@@ -1,6 +1,7 @@
 """Thin HTTP client for the local 360 Hextile backend.
 
-Stdlib only (urllib). Default base URL: http://127.0.0.1:8000.
+Stdlib only (urllib). The live MCP client reads local-endpoint.json and does
+not assume port 8000. DEFAULT_BASE_URL is only the explicit Client() default.
 No app logic — pure proxy helpers for the MCP server and Codex install.
 """
 
@@ -13,7 +14,9 @@ import math
 import os
 import re
 import socket
+import subprocess
 import uuid
+from dataclasses import dataclass
 from fractions import Fraction
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -26,6 +29,269 @@ from typing import Any, Callable, Mapping, Optional
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_S = 30.0
 LONG_OPERATION_TIMEOUT_S = 300.0  # Export, sequence extraction, and local vision
+_ENDPOINT_LEAF = "360-hextile"
+_ENDPOINT_HOST = "127.0.0.1"
+_ENDPOINT_MIN_PORT = 1024
+_ENDPOINT_MAX_PORT = 65535
+_ENDPOINT_MAX_RECEIPTS = 8
+_ENDPOINT_MAX_BYTES = 65536
+_ENDPOINT_CONNECT_TIMEOUT_S = 0.4
+_ENDPOINT_QUERY_TIMEOUT_S = 5.0
+ENDPOINT_UNVERIFIED = "endpoint_unverified"
+UNSUPPORTED_CONNECTIVITY = "unsupported_connectivity"
+_ENDPOINT_MESSAGES = {
+    ENDPOINT_UNVERIFIED: "The local endpoint record is missing, foreign, or unverified.",
+    UNSUPPORTED_CONNECTIVITY: "The Windows loopback endpoint cannot be reached.",
+}
+
+
+@dataclass(frozen=True)
+class LocalEndpointResolution:
+    """One bootstrap-record result. ``base`` is set only when ``status`` is ok."""
+
+    status: str
+    base: str | None = None
+    instance_id: str | None = None
+    generation: int | None = None
+    receipts: tuple[Mapping[str, Any], ...] = ()
+    directory: str | None = None
+
+
+def _endpoint_unverified(directory: str | None = None) -> LocalEndpointResolution:
+    return LocalEndpointResolution(status=ENDPOINT_UNVERIFIED, directory=directory)
+
+
+def _one_line(text: str) -> str | None:
+    """Reject empty, relative-looking multi-line, and multiple command results."""
+    if type(text) is not str or "\x00" in text:
+        return None
+    lines = [line.strip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    lines = [line for line in lines if line]
+    if len(lines) != 1:
+        return None
+    return lines[0]
+
+
+def _absolute_windows_path(value: str) -> bool:
+    if any(char in value for char in "\r\n"):
+        return False
+    if value.startswith("\\\\"):
+        parts = [part for part in value[2:].replace("/", "\\").split("\\") if part]
+        return len(parts) >= 2
+    return len(value) >= 3 and value[0].isalpha() and value[1] == ":" and value[2] in "\\/"
+
+
+def _windows_endpoint_dir(appdata: str) -> str | None:
+    cleaned = appdata.strip()
+    if not _absolute_windows_path(cleaned):
+        return None
+    trimmed = cleaned.rstrip("\\/")
+    if len(trimmed) < 3:
+        return None
+    joined = trimmed + "\\" + _ENDPOINT_LEAF
+    leaf = joined.replace("/", "\\").rstrip("\\").split("\\")[-1]
+    if leaf != _ENDPOINT_LEAF:
+        return None
+    return joined
+
+
+def _translated_leaf(path: str) -> bool:
+    pure = PurePosixPath(path)
+    return (
+        pure.is_absolute()
+        and pure.name == _ENDPOINT_LEAF
+        and ".." not in pure.parts
+        and "." not in pure.parts
+    )
+
+
+def _run_command_text(args: list[str]) -> str:
+    try:
+        completed = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=_ENDPOINT_QUERY_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return completed.stdout or ""
+
+
+def _query_appdata_command() -> str:
+    """One process, one APPDATA query. No second lookup."""
+    return _run_command_text(["cmd.exe", "/d", "/c", "echo %APPDATA%"])
+
+
+def _wslpath_command(windows_dir: str) -> str:
+    """One translation of one absolute Windows path."""
+    return _run_command_text(["wslpath", "-u", windows_dir])
+
+
+def _discover_endpoint_directory(
+    env: Mapping[str, str],
+    *,
+    query_appdata: Callable[[], str] | None,
+    translate_windows_path: Callable[[str], str] | None,
+) -> str | None:
+    bootstrap = env.get("HEXTILE_BOOTSTRAP_DIR")
+    if type(bootstrap) is str and bootstrap.strip():
+        return bootstrap.strip()
+    appdata = env.get("APPDATA")
+    if type(appdata) is str and _absolute_windows_path(appdata.strip()):
+        windows_appdata = appdata.strip()
+    else:
+        raw = query_appdata() if query_appdata is not None else _query_appdata_command()
+        windows_appdata = _one_line(raw)
+        if windows_appdata is None:
+            return None
+    windows_dir = _windows_endpoint_dir(windows_appdata)
+    if windows_dir is None:
+        return None
+    if os.name == "nt" and translate_windows_path is None:
+        return windows_dir
+    translator = translate_windows_path or _wslpath_command
+    translated = _one_line(translator(windows_dir))
+    if translated is None or not _translated_leaf(translated):
+        return None
+    return translated
+
+
+def _endpoint_port(value: object) -> int | None:
+    if type(value) is not int or not _ENDPOINT_MIN_PORT <= value <= _ENDPOINT_MAX_PORT:
+        return None
+    return value
+
+
+def _endpoint_receipt(item: object, instance_id: str) -> bool:
+    if type(item) is not dict:
+        return False
+    change_id = item.get("change_id")
+    expected_generation = item.get("expected_generation")
+    expected_instance = item.get("expected_instance_id")
+    return bool(
+        item.get("instance_id") == instance_id
+        and type(change_id) is str
+        and 1 <= len(change_id) <= 128
+        and _endpoint_port(item.get("port")) is not None
+        and type(expected_generation) is int
+        and expected_generation >= 1
+        and type(expected_instance) is str
+        and expected_instance
+    )
+
+
+def _validated_endpoint_record(data: object) -> dict[str, Any] | None:
+    """Port and literal host only. Any base, url, or origin string is ignored."""
+    if type(data) is not dict:
+        return None
+    port = _endpoint_port(data.get("actual_port"))
+    if port is None or _endpoint_port(data.get("desired_port")) != port:
+        return None
+    if data.get("host") != _ENDPOINT_HOST:
+        return None
+    generation = data.get("generation")
+    instance_id = data.get("instance_id")
+    pid = data.get("pid")
+    receipts = data.get("receipts")
+    if (
+        type(generation) is not int or generation < 1
+        or type(instance_id) is not str or not instance_id or len(instance_id) > 80
+        or type(pid) is not int or pid < 0
+        or type(receipts) is not list or len(receipts) > _ENDPOINT_MAX_RECEIPTS
+        or not all(_endpoint_receipt(item, instance_id) for item in receipts)
+    ):
+        return None
+    return {
+        "port": port,
+        "generation": generation,
+        "instance_id": instance_id,
+        "receipts": tuple(receipts),
+    }
+
+
+def _read_endpoint_record(directory: str) -> dict[str, Any] | None:
+    path = Path(directory) / "local-endpoint.json"
+    try:
+        if not path.is_file() or path.stat().st_size > _ENDPOINT_MAX_BYTES:
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return _validated_endpoint_record(data)
+
+
+def _probe_loopback(host: str, port: int) -> bool:
+    """One connect to the derived Windows loopback. Not a port scan."""
+    if host != _ENDPOINT_HOST:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=_ENDPOINT_CONNECT_TIMEOUT_S):
+            return True
+    except OSError:
+        return False
+
+
+def resolve_local_endpoint(
+    *,
+    environ: Mapping[str, str] | None = None,
+    directory: str | None = None,
+    trusted_instance_id: str | None = None,
+    query_appdata: Callable[[], str] | None = None,
+    translate_windows_path: Callable[[str], str] | None = None,
+    probe_reachability: Callable[[str, int], bool] | None = None,
+) -> LocalEndpointResolution:
+    """Resolve the bootstrap record. Never fall back to port 8000.
+
+    ``HEXTILE_BOOTSTRAP_DIR`` wins. Otherwise one absolute Windows APPDATA,
+    then ``APPDATA/360-hextile``. From WSL that path is translated once.
+    A missing file, a failed check, or a foreign instance_id is
+    ``endpoint_unverified``. An unreachable ``127.0.0.1`` port is
+    ``unsupported_connectivity``.
+    """
+    env = os.environ if environ is None else environ
+    if trusted_instance_id is None:
+        given = env.get("HEXTILE_TRUSTED_INSTANCE_ID")
+        if type(given) is str and given:
+            trusted_instance_id = given
+    bootstrap = env.get("HEXTILE_BOOTSTRAP_DIR")
+    if type(bootstrap) is str and bootstrap.strip():
+        folder: str | None = bootstrap.strip()
+    elif directory:
+        folder = directory
+    else:
+        folder = _discover_endpoint_directory(
+            env,
+            query_appdata=query_appdata,
+            translate_windows_path=translate_windows_path,
+        )
+    if not folder:
+        return _endpoint_unverified()
+    record = _read_endpoint_record(folder)
+    if record is None:
+        return _endpoint_unverified(folder)
+    if trusted_instance_id is not None and trusted_instance_id != record["instance_id"]:
+        return _endpoint_unverified(folder)
+    port = int(record["port"])
+    probe = probe_reachability or _probe_loopback
+    if not probe(_ENDPOINT_HOST, port):
+        return LocalEndpointResolution(
+            status=UNSUPPORTED_CONNECTIVITY,
+            instance_id=record["instance_id"],
+            generation=record["generation"],
+            receipts=record["receipts"],
+            directory=folder,
+        )
+    return LocalEndpointResolution(
+        status="ok",
+        base=f"http://{_ENDPOINT_HOST}:{port}",
+        instance_id=record["instance_id"],
+        generation=record["generation"],
+        receipts=record["receipts"],
+        directory=folder,
+    )
+
 
 APP_DOWN_MSG = (
     "360 Hextile isn't running. Launch 360 Hextile, then retry."
@@ -1288,7 +1554,7 @@ class HextileClientError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
-        self.kind = kind  # app_down | upgrade | http | other
+        self.kind = kind  # app_down | upgrade | http | other | endpoint_unverified | unsupported_connectivity
         self.receipt = dict(receipt) if receipt is not None else None
 
 
@@ -2310,12 +2576,29 @@ class Client:
         timeout: float = DEFAULT_TIMEOUT_S,
         opener: Any = None,
         internal_mode: bool = False,
+        follow_record: bool = False,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         # Injectable for tests (callable urlopen or opener.open).
         self._opener = opener
         self.internal_mode = internal_mode
+        self.follow_record = follow_record
+        self._bootstrap_dir: str | None = None
+        self.endpoint_resolution: LocalEndpointResolution | None = None
+        if follow_record:
+            # A missing, foreign, or unreachable record is not port 8000.
+            self.base_url = ""
+            self._refresh_endpoint()
+        else:
+            self.base_url = base_url.rstrip("/")
+
+    def _refresh_endpoint(self) -> LocalEndpointResolution:
+        resolved = resolve_local_endpoint(directory=self._bootstrap_dir)
+        if resolved.directory:
+            self._bootstrap_dir = resolved.directory
+        self.endpoint_resolution = resolved
+        self.base_url = resolved.base or ""
+        return resolved
 
     @contextmanager
     def request_headers(self, headers: Mapping[str, str]):
@@ -6561,6 +6844,13 @@ class Client:
     # ── internals ───────────────────────────────────────────────────────
 
     def _url(self, path: str) -> str:
+        if self.follow_record:
+            resolved = self._refresh_endpoint()
+            if resolved.status != "ok" or not resolved.base:
+                raise HextileClientError(
+                    _ENDPOINT_MESSAGES.get(resolved.status, _ENDPOINT_MESSAGES[ENDPOINT_UNVERIFIED]),
+                    kind=resolved.status,
+                )
         if path.startswith("http://") or path.startswith("https://"):
             return path
         if not path.startswith("/"):

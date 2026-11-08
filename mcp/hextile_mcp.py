@@ -2,7 +2,7 @@
 """stdio MCP proxy for 360 Hextile (stdlib only — no pip).
 
 JSON-RPC 2.0 over newline-delimited stdin/stdout.
-Talks only to http://127.0.0.1:8000. No app logic, no local merge authority.
+Reads local-endpoint.json and does not assume port 8000. No app logic, no local merge authority.
 
 Catalog + persist + run + monitor + config + seed + models + guides + live context + live apply + sequences + batch.
 """
@@ -33,6 +33,8 @@ if str(_HERE) not in sys.path:
 
 from hextile_client import (  # noqa: E402
     APP_DOWN_MSG,
+    ENDPOINT_UNVERIFIED,
+    UNSUPPORTED_CONNECTIVITY,
     Client,
     HextileClientError,
     error_payload,
@@ -43,7 +45,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.5.5"
+SERVER_VERSION = "0.5.6"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -3647,7 +3649,7 @@ class HextileMcpServer:
     ) -> None:
         self.child_token = child_token if child_token is not None else os.environ.get(CHILD_TOKEN_ENV)
         self.internal_mode = bool(self.child_token)
-        self.client = client or Client(internal_mode=self.internal_mode)
+        self.client = client or Client(internal_mode=self.internal_mode, follow_record=True)
         self.notify = notify
         self.session_id: Optional[str] = None
         self.client_name: Optional[str] = None
@@ -3946,6 +3948,13 @@ class HextileMcpServer:
             if callable(probe):
                 try:
                     status = probe("GET", "/api/agent/mcp-status")
+                except HextileClientError as exc:
+                    if exc.kind in {ENDPOINT_UNVERIFIED, UNSUPPORTED_CONNECTIVITY}:
+                        return _err_result(error_payload(exc))
+                    return _err_result(error_payload(HextileClientError(
+                        "MCP availability could not be verified. Check 360 Hextile Settings → MCP and retry.",
+                        kind="mcp_disabled", status_code=403,
+                    )))
                 except Exception:
                     return _err_result(error_payload(HextileClientError(
                         "MCP availability could not be verified. Check 360 Hextile Settings → MCP and retry.",
@@ -5794,7 +5803,7 @@ def main() -> int:
 if __name__ == "__main__":
     # Quiet reminder on stderr only — never pollute stdout (MCP channel).
     sys.stderr.write(
-        f"{SERVER_NAME} MCP {SERVER_VERSION} — proxy to 127.0.0.1:8000\n"
+        f"{SERVER_NAME} MCP {SERVER_VERSION} — reads local-endpoint.json; does not assume port 8000\n"
     )
     sys.stderr.flush()
     raise SystemExit(main())
