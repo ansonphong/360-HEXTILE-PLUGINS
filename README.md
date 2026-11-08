@@ -10,6 +10,8 @@ Agent tools for **360 artists**. Add the catalog once. Install a plugin. Start w
 
 This repo is the **catalog** (an index). Product code lives in each plugin’s own git repo. Codex and Grok install those repos by HTTPS URL + SHA. Claude uses the `plugins/` gitlinks in this clone.
 
+Host pins follow the canonical `360-hextile` commit. Claude records that commit as the `plugins/360-hextile` gitlink. Codex records it as the SHA in `.agents/plugins/marketplace.json`. Grok records it as the SHA in `.grok-plugin/marketplace.json`.
+
 ---
 
 ## Install

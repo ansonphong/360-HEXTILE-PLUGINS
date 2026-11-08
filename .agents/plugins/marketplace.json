@@ -22,7 +22,7 @@
       "source": {
         "source": "url",
         "url": "https://github.com/ansonphong/360-hextile-agent.git",
-        "sha": "afc18ca7e05ae50d55aeaf99be74c889ca585d87"
+        "sha": "86343f148701d5df4df9e32d928ce367c06aa990"
       },
       "policy": {
         "installation": "AVAILABLE",
