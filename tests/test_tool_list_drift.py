@@ -35,6 +35,7 @@ from hextile_client import (  # noqa: E402
     HextileClientError,
     error_payload,
 )
+import hextile_mcp  # noqa: E402
 from hextile_mcp import (  # noqa: E402
     GUIDE_NAMES,
     TOOL_NAMES,
@@ -1600,6 +1601,340 @@ def test_mcp_get_guide_and_save_builtin() -> None:
     )
     assert err["isError"] is True
     assert "immutable" in err["content"][0]["text"].lower()
+
+
+_COOKBOOK_IDS = (
+    "coordinates",
+    "direction-ramp",
+    "clock-pose",
+    "playable-pose",
+    "heightfield",
+    "sphere-trace",
+    "repetition",
+    "still-image",
+    "history",
+    "palette-fog-light",
+    "graphic-print",
+    "poles-seam",
+    "landscape-flythrough",
+    "tunnel-flight",
+    "still-on-sphere",
+    "playable-flight",
+)
+_COOKBOOK_FIELDS = (
+    "Visual intent:",
+    "Prerequisites:",
+    "Construction:",
+    "Controls:",
+    "Variations:",
+    "Performance:",
+    "Troubleshooting:",
+    "360:",
+    "Combinations:",
+    "Provenance:",
+    "Evidence:",
+    "Adaptation:",
+)
+_COOKBOOK_TAGS = {
+    "direction", "camera", "playable", "heightfield", "march", "repetition",
+    "image", "history", "lighting", "palette", "graphic", "poles", "performance",
+}
+_TOKEN_RE = re.compile(
+    r"(?i)(?:bearer\s+)?(?:sk-|hf_|ghp_|glpat-|xai-)[A-Za-z0-9_.-]+"
+)
+_PERSONAL_ALIASES = (
+    "28d544abba10", "5bbc7a261cd4", "0141596f2afb", "d199fba6f51d",
+    "b96c13e83264", "63e49d6a35b0", "c042ecbf2cca", "44afa9d78275",
+    "2881cd4ab7a0", "4d7d2915748c",
+)
+
+
+def _canonical_guide_json(result: dict[str, Any]) -> bytes:
+    return json.dumps(
+        result, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+
+
+def _cookbook_server() -> HextileMcpServer:
+    client = Client(opener=lambda *_a, **_k: pytest.fail("guides must be local"))
+    client.post_activity = mock.Mock()
+    return HextileMcpServer(client=client)
+
+
+class _CookbookReadSpy:
+    def __init__(self, handle: Any, reads: list[int]) -> None:
+        self._handle = handle
+        self._reads = reads
+
+    def read(self, n: int = -1) -> bytes:
+        self._reads.append(n)
+        return self._handle.read(n)
+
+    def __enter__(self) -> "_CookbookReadSpy":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        self._handle.close()
+        return False
+
+
+def _spy_cookbook_reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    reads: list[int] = []
+    real_open = Path.open
+
+    def wrapped(self: Path, *args: Any, **kwargs: Any) -> Any:
+        handle = real_open(self, *args, **kwargs)
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if self.name == "shader-cookbook.md" and "r" in str(mode) and "w" not in str(mode):
+            return _CookbookReadSpy(handle, reads)
+        return handle
+
+    monkeypatch.setattr(Path, "open", wrapped)
+    return reads
+
+
+def _use_cookbook_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    monkeypatch.setattr(hextile_mcp, "_GUIDE_ROOT", root)
+
+
+def _expect_cookbook_error(message: str) -> None:
+    with pytest.raises(HextileClientError) as caught:
+        load_guide("shader-cookbook")
+    assert str(caught.value) == message
+    assert caught.value.kind == "other"
+
+
+@pytest.mark.parametrize("case", [
+    "missing-file",
+    "missing-split",
+    "duplicate-split",
+    "longer-heading-only",
+    "invalid-utf8",
+    "raw-40000-ok",
+    "raw-40001-refuse",
+    "raw-40001-non-utf8-before-decode",
+    "index-6000-ok",
+    "index-6001-refuse",
+    "trim-does-not-save-prefix",
+    "json-overflow",
+    "longer-heading-beside-exact",
+    "real-page",
+    "field-wins",
+    "malformed-detail",
+    "unknown-and-traversal",
+])
+def test_shader_cookbook_bounds_privacy_and_split(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads = _spy_cookbook_reads(monkeypatch)
+    page = tmp_path / "shader-cookbook.md"
+
+    def plant(payload: bytes) -> None:
+        page.write_bytes(payload)
+        _use_cookbook_root(monkeypatch, tmp_path)
+
+    if case == "missing-file":
+        _use_cookbook_root(monkeypatch, tmp_path)
+        _expect_cookbook_error("Guide file missing: shader-cookbook.md")
+        assert reads == []
+        return
+
+    if case == "missing-split":
+        plant(b"no marker\n")
+        _expect_cookbook_error("shader-cookbook is missing its cards split")
+        return
+
+    if case == "duplicate-split":
+        plant(b"idx\n## Cards\n## Cards\n")
+        _expect_cookbook_error("shader-cookbook has a malformed cards split")
+        return
+
+    if case == "longer-heading-only":
+        plant(b"## Cards tonight\nbody\n")
+        _expect_cookbook_error("shader-cookbook is missing its cards split")
+        return
+
+    if case == "invalid-utf8":
+        plant(b"abc\xff\n")
+        _expect_cookbook_error("Guide file is not UTF-8")
+        assert reads == [40001]
+        return
+
+    if case == "raw-40000-ok":
+        prefix = b"a\n"
+        marker = b"## Cards\n"
+        raw = prefix + marker + (b"x" * (40000 - len(prefix) - len(marker)))
+        assert len(raw) == 40000
+        plant(raw)
+        short = load_guide("shader-cookbook")
+        full = load_guide("shader-cookbook", detail=True)
+        assert short["markdown"] == "a\n"
+        assert full["markdown"].encode("utf-8") == raw
+        assert short["detail"] is False and full["detail"] is True
+        assert all(len(_canonical_guide_json(item)) <= 65536 for item in (short, full))
+        assert reads == [40001, 40001]
+        return
+
+    if case == "raw-40001-refuse":
+        head = b"a\n## Cards\n"
+        plant(head + (b"y" * (40001 - len(head))))
+        assert page.stat().st_size == 40001
+        _expect_cookbook_error("shader-cookbook exceeds its size bound")
+        assert reads == [40001]
+        return
+
+    if case == "raw-40001-non-utf8-before-decode":
+        plant(b"\xff" * 40001)
+        _expect_cookbook_error("shader-cookbook exceeds its size bound")
+        assert reads == [40001]
+        return
+
+    if case == "index-6000-ok":
+        prefix = b"a" * 5999 + b"\n"
+        assert len(prefix) == 6000
+        plant(prefix + b"## Cards\ncard\n")
+        short = load_guide("shader-cookbook")
+        full = load_guide("shader-cookbook", detail=True)
+        assert short["markdown"] == prefix.decode("utf-8")
+        assert len(short["markdown"].encode("utf-8")) == 6000
+        assert "## Cards" in full["markdown"]
+        assert "## Cards" not in short["markdown"]
+        return
+
+    if case == "index-6001-refuse":
+        plant((b"b" * 6000) + b"\n## Cards\ncard\n")
+        _expect_cookbook_error("shader-cookbook index exceeds its size bound")
+        return
+
+    if case == "trim-does-not-save-prefix":
+        prefix = (b" " * 6001) + b"\n"
+        assert len(prefix) > 6000
+        assert len((prefix.decode("utf-8").rstrip() + "\n").encode("utf-8")) <= 6000
+        plant(prefix + b"## Cards\ncard\n")
+        _expect_cookbook_error("shader-cookbook index exceeds its size bound")
+        return
+
+    if case == "json-overflow":
+        prefix = b"idx\n"
+        raw = prefix + b"## Cards\n" + (b"\x01" * 12000) + b"\n"
+        assert len(raw) <= 40000 and len(prefix) <= 6000
+        plant(raw)
+        alone = {
+            "name": "shader-cookbook",
+            "path": str(page),
+            "markdown": "idx\n",
+            "detail": False,
+        }
+        assert len(_canonical_guide_json(alone)) <= 65536
+        for flag in (False, True):
+            with pytest.raises(HextileClientError) as caught:
+                load_guide("shader-cookbook", detail=flag)
+            assert str(caught.value) == "shader-cookbook result exceeds its size bound"
+            assert caught.value.kind == "other"
+        return
+
+    if case == "longer-heading-beside-exact":
+        plant(b"## Cards tonight\n## Cards\nbody\n")
+        full = load_guide("shader-cookbook", detail=True)
+        assert full["markdown"] == "## Cards tonight\n## Cards\nbody\n"
+        assert full["detail"] is True
+        short = load_guide("shader-cookbook")
+        assert short["markdown"] == "## Cards tonight\n"
+        return
+
+    if case == "field-wins":
+        found = load_guide(name="not-a-guide", field="output.width")
+        assert found["answer"] == "width is top-level on shader_request_preview"
+        again = load_guide(name="../shader-cookbook", field="shader_request_preview.output")
+        assert again["records"]
+        assert reads == []
+        return
+
+    if case == "malformed-detail":
+        reply = _cookbook_server().call_tool(
+            "get_guide", {"detail": "yes", "field": "output.width"},
+        )
+        assert reply["isError"] is True
+        assert "detail must be a boolean" in reply["content"][0]["text"]
+        assert "width is top-level" not in reply["content"][0]["text"]
+        assert reads == []
+        return
+
+    if case == "unknown-and-traversal":
+        for name in ("../../private", "shader-cookbook/../../secrets", "../shader-cookbook"):
+            with pytest.raises(HextileClientError) as caught:
+                load_guide(name)
+            assert str(caught.value).startswith("Unknown guide ")
+            assert caught.value.kind == "other"
+        refused = _cookbook_server().handle_rpc({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "get_guide", "arguments": {"name": "../../private"}},
+        })
+        assert refused["result"]["isError"] is True
+        assert "Unknown guide" in refused["result"]["content"][0]["text"]
+        assert reads == []
+        return
+
+    if case != "real-page":
+        raise AssertionError(case)
+
+    short = load_guide("shader-cookbook")
+    full = load_guide("shader-cookbook", detail=True)
+    assert reads == [40001, 40001]
+    assert set(short) == {"name", "path", "markdown", "detail"}
+    assert set(full) == {"name", "path", "markdown", "detail"}
+    assert short["name"] == full["name"] == "shader-cookbook"
+    assert short["detail"] is False and full["detail"] is True
+    assert str(short["path"]).endswith("shader-cookbook.md")
+    assert short["path"] == full["path"]
+    assert isinstance(short["markdown"], str) and isinstance(full["markdown"], str)
+    disk = Path(full["path"]).read_bytes()
+    assert len(disk) <= 40000
+    assert b"\r" not in disk
+    text = disk.decode("utf-8")
+    assert full["markdown"] == text
+    lines = text.splitlines(keepends=True)
+    markers = [i for i, line in enumerate(lines) if line.rstrip("\r\n") == "## Cards"]
+    assert markers == [markers[0]] and len(markers) == 1
+    prefix = "".join(lines[:markers[0]])
+    assert len(prefix.encode("utf-8")) <= 6000
+    assert short["markdown"] == prefix.rstrip() + "\n"
+    assert len(short["markdown"].encode("utf-8")) <= 6000
+    assert "## Cards" not in short["markdown"]
+    assert "### coordinates" not in short["markdown"]
+    assert "## Cards" in full["markdown"]
+    for item in (short, full):
+        assert len(_canonical_guide_json(item)) <= 65536
+    positions = [short["markdown"].index(f"{name} —") for name in _COOKBOOK_IDS]
+    assert positions == sorted(positions)
+    headings = [full["markdown"].index(f"### {name}\n") for name in _COOKBOOK_IDS]
+    assert headings == sorted(headings)
+    for part in full["markdown"].split("\n### ")[1:]:
+        spots = [part.find("\n" + label) for label in _COOKBOOK_FIELDS]
+        assert all(spot >= 0 for spot in spots)
+        assert spots == sorted(spots)
+        tag_line = next(line for line in part.splitlines() if "Tags:" in line)
+        tags = [tag.strip() for tag in tag_line.split("Tags:", 1)[1].strip().rstrip(".").split(",") if tag.strip()]
+        assert 1 <= len(tags) <= 4
+        assert set(tags) <= _COOKBOOK_TAGS
+    assert _TOKEN_RE.search(full["markdown"]) is None
+    assert "```" not in full["markdown"]
+    assert all(alias not in full["markdown"] for alias in _PERSONAL_ALIASES)
+    listed = load_guide("index")
+    assert listed["hint"] == "Call get_guide with name= one of these titles."
+    assert 'A Shader technique question is get_guide(name="shader-cookbook") and does not open a Shader.' in listed["markdown"]
+    assert "A workflow starts with get_capabilities." in listed["markdown"]
+    guide = next(tool for tool in TOOLS if tool["name"] == "get_guide")
+    assert "shader cookbook" in guide["description"]
+    assert "shader-cookbook" in guide["inputSchema"]["properties"]["name"]["description"]
+    detail_help = guide["inputSchema"]["properties"]["detail"]["description"]
+    assert "Native render requests" in detail_help
+    assert "exact ## Cards" in detail_help
+    assert "list_360_loras" in load_guide("recipes")["markdown"]
+    skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
+    connect, _, edit = skill.partition("## Edit")
+    assert "shader-cookbook" not in connect
+    assert 'get_guide(name="shader-cookbook")' in edit
 
 
 def test_codex_install_copies_references(tmp_path: Path) -> None:

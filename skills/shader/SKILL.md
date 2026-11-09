@@ -36,10 +36,12 @@ not navigate, duplicate, attach, Apply, Save, render or take screenshots.
 Before any Shader change or specialized operation, read
 [the authoring procedure](references/authoring.md). It retains the native file,
 capability, provenance, control, diagnostics, output and original-ID recovery
-contracts. Load only the task-relevant guides it names. Shared reasoning runs in
-the coding host; APP owns attachment, checks, accepted state, compilation and
-Save. Read fresh `current_surface` and `shader_contract` before authoring;
-discovery metadata grants no authority.
+contracts. Load only the task-relevant guides it names. When the user asks for a
+Shader technique, scene type, or cookbook recipe, read
+`get_guide(name="shader-cookbook")` once, then `detail=true` only if the index
+names the cards. Shared reasoning runs in the coding host; APP owns attachment,
+checks, accepted state, compilation and Save. Read fresh `current_surface` and
+`shader_contract` before authoring; discovery metadata grants no authority.
 
 Current authoring uses document schema 4 and workspace schema 2. Require the
 acknowledged complete file set; older content needs offline migration, never a

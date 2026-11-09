@@ -441,6 +441,7 @@ GUIDE_NAMES = (
     "best-practices",
     "website-index",
     "recipes",
+    "shader-cookbook",
 )
 _GUIDE_INDEX = (
     "A workflow starts with get_capabilities. "
@@ -451,9 +452,15 @@ _GUIDE_INDEX = (
     "A sequence is preflight_shader_sequence then render_shader_sequence. "
     "Use the same saved hashes and the same frozen inputs. "
     "Width and height are top-level on shader_request_preview. "
-    "preserve_360 is dome-only."
+    "preserve_360 is dome-only. "
+    "A Shader technique question is get_guide(name=\"shader-cookbook\") and does not open a Shader."
 )
 _WORKFLOW_SCHEMA_SPLIT = "## Native render requests"
+_COOKBOOK_SPLIT = "## Cards"
+_COOKBOOK_RAW_CAP = 40_000
+_COOKBOOK_READ_CAP = 40_001
+_COOKBOOK_INDEX_CAP = 6_000
+_COOKBOOK_JSON_CAP = 65_536
 _FIELD_GUIDE_TOOLS = (
     "shader_request_preview",
     "shader_preflight_still_export",
@@ -1875,13 +1882,13 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def(
         "get_guide",
         "Read bundled agent documentation (schema, best practices, "
-        "website index, recipes). Pass name, or omit to list guides.",
+        "website index, recipes, shader cookbook). Pass name, or omit to list guides.",
         {
             "name": {
                 "type": "string",
                 "description": (
                     "workflow-schema | best-practices | website-index | "
-                    "recipes | index"
+                    "recipes | shader-cookbook | index"
                 ),
             },
             "field": {
@@ -1894,7 +1901,11 @@ TOOLS: list[dict[str, Any]] = [
             },
             "detail": {
                 "type": "boolean",
-                "description": "Return the full workflow-schema page. Default false stops before Native render requests.",
+                "description": (
+                    "Return the full workflow-schema page, or the whole shader-cookbook page. "
+                    "Default false stops workflow-schema before Native render requests and "
+                    "stops shader-cookbook before the exact ## Cards line."
+                ),
             },
         },
     ),
@@ -3399,6 +3410,51 @@ def _lookup_guide_field(field: str) -> dict[str, Any]:
     return {"field": field, "nearest": nearest}
 
 
+def _cookbook_error(message: str) -> HextileClientError:
+    return HextileClientError(message, status_code=None, kind="other")
+
+
+def _canonical_guide_json(result: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        result,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _load_shader_cookbook(path: Path, detail: bool) -> dict[str, Any]:
+    """Bounded shader-cookbook read. Both public results are checked before return."""
+    with path.open("rb") as handle:
+        raw = handle.read(_COOKBOOK_READ_CAP)
+    if len(raw) > _COOKBOOK_RAW_CAP:
+        raise _cookbook_error("shader-cookbook exceeds its size bound")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _cookbook_error("Guide file is not UTF-8") from None
+    lines = text.splitlines(keepends=True)
+    markers = [index for index, line in enumerate(lines) if line.rstrip("\r\n") == _COOKBOOK_SPLIT]
+    if not markers:
+        raise _cookbook_error("shader-cookbook is missing its cards split")
+    if len(markers) != 1:
+        raise _cookbook_error("shader-cookbook has a malformed cards split")
+    prefix = "".join(lines[:markers[0]])
+    if len(prefix.encode("utf-8")) > _COOKBOOK_INDEX_CAP:
+        raise _cookbook_error("shader-cookbook index exceeds its size bound")
+    index = prefix.rstrip() + "\n"
+    if len(index.encode("utf-8")) > _COOKBOOK_INDEX_CAP:
+        raise _cookbook_error("shader-cookbook index exceeds its size bound")
+    common = {"name": "shader-cookbook", "path": str(path)}
+    short = {**common, "markdown": index, "detail": False}
+    full = {**common, "markdown": text, "detail": True}
+    for result in (short, full):
+        if len(_canonical_guide_json(result)) > _COOKBOOK_JSON_CAP:
+            raise _cookbook_error("shader-cookbook result exceeds its size bound")
+    return full if detail else short
+
+
 def load_guide(name: str = "", *, field: Optional[str] = None, detail: bool = False) -> dict[str, Any]:
     """Read an allowlisted bundled guide. Unknown/empty name lists titles."""
     if isinstance(field, str) and field.strip():
@@ -3423,6 +3479,8 @@ def load_guide(name: str = "", *, field: Optional[str] = None, detail: bool = Fa
             status_code=None,
             kind="other",
         )
+    if requested == "shader-cookbook":
+        return _load_shader_cookbook(path, bool(detail))
     text = path.read_text(encoding="utf-8")
     if requested == "workflow-schema" and not detail:
         head, sep, _rest = text.partition(_WORKFLOW_SCHEMA_SPLIT)
