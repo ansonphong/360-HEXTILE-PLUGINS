@@ -337,7 +337,7 @@ python3 codex/install.py --uninstall --home /tmp/hextile-agent-codex-test
 
 ## Docs
 
-Bundled agent guides: `get_guide` (`workflow-schema`, `best-practices`, `website-index`, `recipes`, `shader-cookbook`). 
+Bundled agent guides: `get_guide` (`workflow-schema`, `best-practices`, `website-index`, `recipes`, `shader-cookbook`).
 `website-index` points at **existing** https://360hextile.com/docs/ pages (templates, pipelines, input, prompts). A dedicated Automation docs section is still 06-docs.
 
 ## License
