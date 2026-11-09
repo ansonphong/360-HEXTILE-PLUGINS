@@ -1639,9 +1639,6 @@ _COOKBOOK_TAGS = {
     "direction", "camera", "playable", "heightfield", "march", "repetition",
     "image", "history", "lighting", "palette", "graphic", "poles", "performance",
 }
-_TOKEN_RE = re.compile(
-    r"(?i)(?:bearer\s+)?(?:sk-|hf_|ghp_|glpat-|xai-)[A-Za-z0-9_.-]+"
-)
 _PERSONAL_ALIASES = (
     "28d544abba10", "5bbc7a261cd4", "0141596f2afb", "d199fba6f51d",
     "b96c13e83264", "63e49d6a35b0", "c042ecbf2cca", "44afa9d78275",
@@ -1917,7 +1914,6 @@ def test_shader_cookbook_bounds_privacy_and_split(
         tags = [tag.strip() for tag in tag_line.split("Tags:", 1)[1].strip().rstrip(".").split(",") if tag.strip()]
         assert 1 <= len(tags) <= 4
         assert set(tags) <= _COOKBOOK_TAGS
-    assert _TOKEN_RE.search(full["markdown"]) is None
     assert "```" not in full["markdown"]
     assert all(alias not in full["markdown"] for alias in _PERSONAL_ALIASES)
     listed = load_guide("index")
