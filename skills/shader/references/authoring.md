@@ -129,6 +129,14 @@ Conditionally, focused keyboard, a future MIDI note, OSC `/blast` with sender ev
 
 Legacy `propose_shader` and Copilot Board rows must preserve convention bytes, envelope rows/input refs/settings/envelope-sourced mappings and Playable capability declarations. Their existing schema-1 typed time/click/clock operations do not create envelopes. First creation or revision uses only the current server-attested workspace; no model flag grants that exception.
 
+## Human parameters during agent source editing
+
+A connected human may adjust existing fixed parameter values without taking source control. Keep editing acknowledged workspace source normally; APP saves these human values through the same native writer without rewriting your workspace files. Do not overwrite them by copying older values from your authoring snapshot. Source, parameter definitions, driver changes and input replacement still require the current source owner. Stop does not silently transfer that ownership; Take control is explicit.
+
+APP may compose your immutable registered source candidate with the current human-touched values before preview. That composition gets its own exact Prepare, compile and Save identity; the original candidate and its unperformed compile/preview remain unchanged. When `get_shader_update` includes `publication`, report its `composition_id`, `value_version`, `prepare_identity`, compile/preview/presentation and `save`/`saved` identity as the final combined result. Do not call the original content digest Saved, or infer Shown from published preview. Missing final fields remain unknown. A removed/retyped/out-of-range or newly driven human-touched parameter requires the named incompatibility to be resolved; do not discard the human value or repeatedly register unchanged bytes.
+
+Unknown Save replies must be recovered using their original request/update identities, never a replacement write. Same-session adoption of a preserved workspace carries witnessed human adjustments; after lost native attachment history, differing preserved workspace values may be ambiguous and must not silently replace accepted values. Follow the structured recovery reason. Do not bypass this with a direct asset writer or erase pending workspace bytes.
+
 ## Poll and repair
 
 Poll `get_shader_update(handle, change_id, project_context_witness=<witness returned by acknowledged open>)`. Do not replace that witness with a fresh discovery witness to revive an old handle. Require the receipt to identify the exact candidate, generation, content_digest and current check_attempt; use its separate `prepare`, `compile`, `preview`, `presentation`, `save`, `attachment_state`, reason and diagnostics. Report missing fields as unknown.

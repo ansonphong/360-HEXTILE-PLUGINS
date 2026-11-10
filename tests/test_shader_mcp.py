@@ -2240,6 +2240,10 @@ def test_workspace_located_get_exact_url_and_granted_ack(flag: Any) -> None:
     if flag is True:
         receipt["source_diagnostics"] = [{"phase": "compile", "severity": "error", "code": "compile",
                                           "message": "Unknown symbol", "logical_file": "lib/noise.glsl", "full_source_line": 4}]
+    receipt["publication"] = {"composition_id": "sc_final", "value_version": 3,
+        "prepare_identity": {"prepare_receipt_id": "pr_final", "document_hash": "df", "source_hash": "sf", "manifest_hash": None},
+        "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
+        "saved": {"working_revision": 4, "document_hash": "df", "source_hash": "sf", "manifest_hash": None}}
     seen = []
 
     def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:

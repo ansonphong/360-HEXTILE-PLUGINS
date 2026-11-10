@@ -309,3 +309,9 @@ request body never enters MCP results. Never mint a new key or inspect a new bod
 restart an unfinished replacement. The short archive transaction settles
 atomically or remains recoverable, so it has no mid-move cancellation; after new
 render admission, use normal native status and Stop with its observed `run_id`.
+
+### Shader source and concurrent human parameter values
+
+Mounted Shader source ownership does not require locking fixed human parameter values. APP admits value-only edits through its existing writer, preserves the agent workspace bytes and reconciles human-touched values into a separately checked final composition. Source/definition/driver/input-replacement edits retain their ownership checks. Ordinary Stop retains the source handoff requirement; Take control is explicit.
+
+`get_shader_update` can contain `publication` alongside the immutable original candidate/check. Its `composition_id`, `value_version`, `prepare_identity`, compile, preview, presentation, save and saved revision/hashes describe the final source-plus-values result. Preserve this object through clients. Original `compile:not_requested` is truthful when only the final composition was compiled. Preview published does not mean presentation shown. Resolve listed incompatible parameter IDs without discarding human values. Recover unknown outcomes by the original update/request IDs; do not blindly retry or re-register. An adopted workspace after lost attachment history can require recovery when its stale values cannot be distinguished from intentional edits.
