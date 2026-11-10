@@ -457,7 +457,13 @@ def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> 
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
     paste = {"request_id": request_id, "project_context_witness": "w", "action": "paste",
              "source": "// λ\r\nvoid main(){}\n"}
+    branches = descriptor["inputSchema"]["oneOf"]
+    assert set(branches[0]["properties"]) >= {"action", "request_id", "project_context_witness", "template_id", "space"}
+    assert set(branches[1]["properties"]) >= {"action", "request_id", "project_context_witness", "source", "title"}
+    assert branches[0]["properties"]["template_id"]["const"] == "hx_starter"
     jsonschema.validate(paste, descriptor["inputSchema"])
+    jsonschema.validate({"request_id": request_id, "project_context_witness": "w", "action": "new",
+                         "template_id": "hx_starter"}, descriptor["inputSchema"])
     for wrong in ({**paste, "template_id": "hx_starter"},
                   {**paste, "source": ""},
                   {**paste, "action": "new"}):

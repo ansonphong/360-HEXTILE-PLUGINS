@@ -3250,9 +3250,17 @@ next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_pre
 
 for _name, _variants in {
     "shader_create_asset": [
-        {"properties": {"action": {"const": "new"}}, "required": ["template_id"],
+        {"properties": {"action": {"const": "new"}, "request_id": _NATIVE_SHADER_REQUEST_ID,
+                        "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
+                        "template_id": {"const": "hx_starter"},
+                        "space": {"enum": ["direction_360", "equirect_map", "ray_360", "shadertoy_image"]}},
+         "required": ["request_id", "project_context_witness", "action", "template_id"],
          "not": {"anyOf": [{"required": ["source"]}, {"required": ["title"]}]}},
-        {"properties": {"action": {"const": "paste"}}, "required": ["source"],
+        {"properties": {"action": {"const": "paste"}, "request_id": _NATIVE_SHADER_REQUEST_ID,
+                        "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
+                        "source": {"type": "string", "minLength": 1, "maxLength": 2097152},
+                        "title": {"type": "string", "minLength": 1, "maxLength": 256}},
+         "required": ["request_id", "project_context_witness", "action", "source"],
          "not": {"anyOf": [{"required": ["template_id"]}, {"required": ["space"]}]}},
     ],
     "shader_set_capture": [
