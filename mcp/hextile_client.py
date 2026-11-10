@@ -5194,11 +5194,63 @@ class Client:
     def _recovery_result(data: Any, allowed: set[str], required: set[str]) -> dict:
         try:
             size = len(json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8"))
-        except (TypeError, ValueError, UnicodeError) as exc:
+        except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
             raise HextileClientError("Malformed Shader recovery receipt", kind="other") from exc
         if type(data) is not dict or size > 32768 or required - set(data) or set(data) - allowed:
             raise HextileClientError("Malformed or unbounded Shader recovery receipt", kind="other")
         return data
+
+    @staticmethod
+    def _workspace_human_values(data: dict) -> None:
+        if "human_values_recovery_required" in data and type(data["human_values_recovery_required"]) is not bool:
+            raise HextileClientError("Malformed Shader human value recovery", kind="other")
+        if "human_values" not in data:
+            return
+        human = data["human_values"]
+        if (type(human) is not dict or set(human) != {"value_version", "values"}
+                or type(human["value_version"]) is not int or not 0 <= human["value_version"] <= MAX_WORKSPACE_GENERATION
+                or type(human["values"]) is not dict or not 1 <= len(human["values"]) <= 32
+                or any(type(key) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,47}", key, re.ASCII) is None
+                       for key in human["values"])):
+            raise HextileClientError("Malformed Shader human value recovery", kind="other")
+
+    @staticmethod
+    def _workspace_publication(data: dict) -> None:
+        if "publication" not in data:
+            return
+        publication = data["publication"]
+        if (type(publication) is not dict or set(publication) != {"composition_id", "value_version", "prepare_identity",
+                "compile", "preview", "presentation", "save", "saved"}
+                or type(publication["composition_id"]) is not str
+                or re.fullmatch(r"sc_[0-9a-f]{32}", publication["composition_id"]) is None
+                or type(publication["value_version"]) is not int
+                or not 0 <= publication["value_version"] <= MAX_WORKSPACE_GENERATION
+                or any(type(publication[key]) is not str for key in ("compile", "preview", "presentation", "save"))
+                or (publication["compile"], publication["preview"]) not in
+                   {("passed", "published"), ("failed", "failed"), ("unavailable", "unavailable")}
+                or publication["presentation"] != "pending" or publication["save"] not in {"not_saved", "saved"}
+                or (publication["save"] == "saved" and (publication["compile"], publication["preview"]) != ("passed", "published"))):
+            raise HextileClientError("Malformed Shader publication recovery", kind="other")
+        identity = publication["prepare_identity"]
+        if (type(identity) is not dict or set(identity) != {"prepare_receipt_id", "source_hash", "document_hash",
+                "manifest_hash", "resource_manifest_hash", "receipt_hash"}
+                or type(identity["prepare_receipt_id"]) is not str
+                or re.fullmatch(r"prepare_[0-9a-f]{24}", identity["prepare_receipt_id"]) is None
+                or any(type(identity[key]) is not str or _WORKSPACE_DIGEST.fullmatch(identity[key]) is None
+                       for key in ("source_hash", "document_hash", "manifest_hash", "receipt_hash"))
+                or (identity["resource_manifest_hash"] is not None and
+                    (type(identity["resource_manifest_hash"]) is not str or
+                     _WORKSPACE_DIGEST.fullmatch(identity["resource_manifest_hash"]) is None))):
+            raise HextileClientError("Malformed Shader publication recovery", kind="other")
+        saved = publication["saved"]
+        if publication["save"] == "not_saved":
+            if saved is not None:
+                raise HextileClientError("Malformed Shader publication recovery", kind="other")
+        elif (type(saved) is not dict or set(saved) != {"working_revision", "document_hash", "source_hash", "manifest_hash"}
+              or type(saved["working_revision"]) is not int or not 1 <= saved["working_revision"] <= MAX_WORKSPACE_GENERATION
+              or any(type(saved[key]) is not str or _WORKSPACE_DIGEST.fullmatch(saved[key]) is None
+                     or saved[key] != identity[key] for key in ("document_hash", "source_hash", "manifest_hash"))):
+            raise HextileClientError("Malformed Shader publication recovery", kind="other")
 
     @staticmethod
     def _workspace_recovery_args(args: Mapping[str, Any], operation: str) -> None:
@@ -5253,8 +5305,10 @@ class Client:
                                                     params={"project_context_witness": witness})
         attachment = self._recovery_result(attachment,
             {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
-             "project_context_witness", "base", "candidate_id", "change_id", "activity"},
+             "project_context_witness", "base", "candidate_id", "change_id", "activity",
+             "human_values", "human_values_recovery_required"},
             {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
+        self._workspace_human_values(attachment)
         if attachment["handle"] != handle or attachment["project_context_witness"] != witness:
             raise HextileClientError("Shader attachment identity changed", kind="workspace_outcome_unknown")
         change_id = args.get("change_id") or attachment.get("change_id")
@@ -5266,10 +5320,11 @@ class Client:
                        "base", "project_context_witness", "studio_surface_id", "check_attempt",
                        "attachment_state", "prepare", "compile", "preview", "presentation", "save",
                        "check_deadline_at", "next_poll_ms", "reason", "saved", "diagnostics",
-                       "attribution_outcome"}
+                       "attribution_outcome", "publication"}
             raw = self._recovery_result(raw, allowed | {"raw_log"},
                                         {"handle", "change_id", "candidate_id", "generation",
                                          "content_digest", "check_attempt", "save"})
+            self._workspace_publication(raw)
             if (raw["handle"] != handle or raw["change_id"] != change_id or
                     raw.get("project_context_witness") != witness or
                     raw.get("studio_surface_id") != attachment["studio_surface_id"] or
@@ -5301,8 +5356,9 @@ class Client:
             {"handle", "change_id", "candidate_id", "generation", "content_digest", "shader", "base",
              "project_context_witness", "studio_surface_id", "check_attempt", "attachment_state", "prepare",
              "compile", "preview", "presentation", "save", "diagnostics", "reason", "saved",
-             "check_deadline_at", "next_poll_ms", "attribution_outcome"},
+             "check_deadline_at", "next_poll_ms", "attribution_outcome", "publication"},
             {"handle", "change_id", "candidate_id", "generation", "content_digest", "check_attempt"})
+        self._workspace_publication(result)
         if (result["handle"] != handle or result["change_id"] != change_id or
                 result["generation"] != args["generation"] or result["content_digest"] != args["content_digest"] or
                 result.get("studio_surface_id") != args["studio_surface_id"] or
@@ -5325,8 +5381,9 @@ class Client:
             raise
         result = self._recovery_result(result,
             {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
-             "project_context_witness", "base"},
+             "project_context_witness", "base", "human_values", "human_values_recovery_required"},
             {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
+        self._workspace_human_values(result)
         if (result["handle"] != handle or result["generation"] != args["generation"] or
                 result["project_context_witness"] != args["project_context_witness"] or
                 result["studio_surface_id"] != args["studio_surface_id"] or

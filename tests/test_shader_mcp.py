@@ -1076,7 +1076,8 @@ def test_native_shader_recovery_transport_before_registration_and_closed_stop(mo
     witness = "wit"
     attachment = {"handle": handle, "generation": 0, "attachment_state": "attached",
                   "studio_surface_id": "surface", "mount_generation": "mount", "project_context_witness": witness,
-                  "base": {}}
+                  "base": {}, "human_values": {"value_version": 2, "values": {"fog": 1}},
+                  "human_values_recovery_required": True}
 
     def request_json(method, path, body=None, **kwargs):
         calls.append((method, path, body, kwargs))
@@ -1092,6 +1093,8 @@ def test_native_shader_recovery_transport_before_registration_and_closed_stop(mo
     monkeypatch.setattr(client, "request_json", request_json)
     status = client.get_shader_workspace_status({"handle": handle, "project_context_witness": witness})
     assert status["receipt"] is None and status["attachment"]["generation"] == 0
+    assert status["attachment"]["human_values"]["values"] == {"fog": 1}
+    assert status["attachment"]["human_values_recovery_required"] is True
     assert [call[1] for call in calls] == [f"/api/agent/shader-workspaces/{handle}/attachment"]
     proposal = client.get_shader_proposal_status({"ticket_id": "spt_" + "a" * 32,
                                                    "project_context_witness": witness})
@@ -1101,6 +1104,8 @@ def test_native_shader_recovery_transport_before_registration_and_closed_stop(mo
     stopped = client.stop_shader_workspace({"handle": handle, "generation": 0,
         "studio_surface_id": "surface", "project_context_witness": witness})
     assert stopped["attachment_state"] == "stopped"
+    assert stopped["human_values"]["value_version"] == 2
+    assert stopped["human_values_recovery_required"] is True
     assert calls[-1][2] == {"generation": 0, "studio_surface_id": "surface",
                             "project_context_witness": witness}
     with pytest.raises(HextileClientError):
@@ -1119,6 +1124,23 @@ def test_native_shader_recovery_transport_before_registration_and_closed_stop(mo
     assert unknown.value.receipt == {"handle": handle}
 
 
+@pytest.mark.parametrize("extra", [
+    {"human_values_recovery_required": "true"},
+    {"human_values": {"value_version": True, "values": {"fog": 1}}},
+    {"human_values": {"value_version": 1, "values": {f"p{i}": i for i in range(33)}}},
+    {"human_values": {"value_version": 1, "values": {"fog": 1}, "source": "private"}},
+    {"human_values": {"value_version": 1, "values": {"fog": "x" * 32768}}},
+    {"human_values": {"value_version": 1, "values": {"fog": float("nan")}}},
+])
+def test_native_shader_recovery_refuses_malformed_human_value_metadata(monkeypatch, extra) -> None:
+    client = Client("http://127.0.0.1:9")
+    attachment = {"handle": "workspace_1", "generation": 0, "attachment_state": "attached",
+                  "studio_surface_id": "surface", "project_context_witness": "wit", **extra}
+    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: attachment)
+    with pytest.raises(HextileClientError):
+        client.get_shader_workspace_status({"handle": "workspace_1", "project_context_witness": "wit"})
+
+
 def test_native_shader_recheck_uses_same_candidate_and_source_free_status(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     handle = "workspace_1"
@@ -1132,6 +1154,12 @@ def test_native_shader_recheck_uses_same_candidate_and_source_free_status(monkey
                "generation": 1, "content_digest": digest, "check_attempt": 0,
                "studio_surface_id": "surface", "project_context_witness": "wit",
                "save": "not_saved", "prepare": "passed", "raw_log": "private"}
+    receipt["publication"] = {"composition_id": "sc_" + "b" * 32, "value_version": 3,
+        "prepare_identity": {"prepare_receipt_id": "prepare_" + "c" * 24,
+            "source_hash": digest, "document_hash": digest, "manifest_hash": digest,
+            "resource_manifest_hash": digest, "receipt_hash": digest},
+        "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
+        "saved": {"working_revision": 2, "document_hash": digest, "source_hash": digest, "manifest_hash": digest}}
 
     def request_json(method, path, body=None, **kwargs):
         calls.append((method, path, body, kwargs))
@@ -1148,6 +1176,7 @@ def test_native_shader_recheck_uses_same_candidate_and_source_free_status(monkey
     monkeypatch.setattr(client, "request_json", request_json)
     status = client.get_shader_workspace_status({"handle": handle, "project_context_witness": "wit"})
     assert status["receipt"]["candidate_id"] == "candidate"
+    assert status["receipt"]["publication"] == receipt["publication"]
     assert "raw_log" not in status["receipt"] and "source_diagnostics" not in status["receipt"]
     assert calls[1][3]["params"] == {"project_context_witness": "wit"}
     rechecked = client.recheck_shader_update({"handle": handle, "change_id": change_id,
@@ -1161,6 +1190,33 @@ def test_native_shader_recheck_uses_same_candidate_and_source_free_status(monkey
         client.recheck_shader_update({"handle": handle, "change_id": change_id,
             "generation": True, "content_digest": digest, "studio_surface_id": "surface",
             "project_context_witness": "wit"})
+
+
+@pytest.mark.parametrize("defect", ["extra", "compile_type", "saved_hash", "saved_revision", "saved_failed", "nonfinite"])
+def test_native_shader_publication_recovery_refuses_malformed_identity(monkeypatch, defect) -> None:
+    client = Client("http://127.0.0.1:9")
+    digest = "sha256:" + "a" * 64
+    identity = {"prepare_receipt_id": "prepare_" + "c" * 24, "source_hash": digest,
+        "document_hash": digest, "manifest_hash": digest, "resource_manifest_hash": digest, "receipt_hash": digest}
+    publication = {"composition_id": "sc_" + "b" * 32, "value_version": 3, "prepare_identity": identity,
+        "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
+        "saved": {"working_revision": 2, "document_hash": digest, "source_hash": digest, "manifest_hash": digest}}
+    if defect == "extra": publication["source"] = "private"
+    elif defect == "compile_type": publication["compile"] = []
+    elif defect == "saved_hash": publication["saved"]["document_hash"] = "sha256:" + "f" * 64
+    elif defect == "saved_revision": publication["saved"]["working_revision"] = True
+    elif defect == "saved_failed": publication.update(compile="failed", preview="failed")
+    else: publication["value_version"] = float("nan")
+    attachment = {"handle": "workspace_1", "generation": 1, "attachment_state": "attached",
+        "studio_surface_id": "surface", "project_context_witness": "wit", "candidate_id": "candidate",
+        "change_id": "workspace_1:1"}
+    receipt = {"handle": "workspace_1", "change_id": "workspace_1:1", "candidate_id": "candidate",
+        "generation": 1, "content_digest": digest, "check_attempt": 0, "save": "not_saved",
+        "project_context_witness": "wit", "studio_surface_id": "surface", "publication": publication}
+    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
+                        attachment if path.endswith("/attachment") else receipt)
+    with pytest.raises(HextileClientError):
+        client.get_shader_workspace_status({"handle": "workspace_1", "project_context_witness": "wit"})
 
 
 def test_native_shader_recovery_status_and_stop_bypass_only_disabled_preflight(monkeypatch) -> None:
