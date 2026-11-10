@@ -457,18 +457,23 @@ def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> 
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
     paste = {"request_id": request_id, "project_context_witness": "w", "action": "paste",
              "source": "// λ\r\nvoid main(){}\n"}
-    branches = descriptor["inputSchema"]["oneOf"]
-    assert set(branches[0]["properties"]) >= {"action", "request_id", "project_context_witness", "template_id", "space"}
-    assert set(branches[1]["properties"]) >= {"action", "request_id", "project_context_witness", "source", "title"}
-    assert branches[0]["properties"]["template_id"]["const"] == "hx_starter"
-    jsonschema.validate(paste, descriptor["inputSchema"])
+    schema = descriptor["inputSchema"]
+    # Hosts that collapse oneOf were hiding New/Paste arguments. The named tool lists them flat.
+    assert "oneOf" not in schema
+    assert set(schema["properties"]) >= {
+        "request_id", "project_context_witness", "action", "template_id", "space", "source", "title"}
+    assert schema["properties"]["template_id"]["const"] == "hx_starter"
+    jsonschema.validate(paste, schema)
     jsonschema.validate({"request_id": request_id, "project_context_witness": "w", "action": "new",
-                         "template_id": "hx_starter"}, descriptor["inputSchema"])
+                         "template_id": "hx_starter", "space": "direction_360"}, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**paste, "source": ""}, schema)
+    closed = Client(opener=lambda *_a, **_k: pytest.fail("exclusive variants do not reach HTTP"))
     for wrong in ({**paste, "template_id": "hx_starter"},
-                  {**paste, "source": ""},
-                  {**paste, "action": "new"}):
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(wrong, descriptor["inputSchema"])
+                  {**paste, "action": "new"},
+                  {"request_id": request_id, "project_context_witness": "w", "action": "new", "source": "void main(){}"}):
+        with pytest.raises(HextileClientError):
+            closed.create_shader_asset(wrong)
     client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
     calls = []
     def reply(method, path, body=None, **kwargs):
@@ -485,6 +490,38 @@ def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> 
         "project_context_witness": "w", "scope": "creation"})
     assert status["scope"] == "creation" and calls[-1][3]["params"]["scope"] == "creation"
     assert "origin" not in calls[-1][3]["params"]
+
+
+def test_workspace_refusal_and_unknown_outcome_keep_structured_fields(monkeypatch) -> None:
+    from hextile_client import workspace_refusal
+    secret = "C:\\Users\\secret\\shader.glsl"
+    projected = workspace_refusal({
+        "code": "provenance_protected",
+        "message": "Protected provenance fields cannot change.",
+        "recovery": "Preserve ai and adapted_source_hash.",
+        "accepted": False,
+        "files_preserved": True,
+        "retry_unchanged": False,
+        "next_action": "preserve_protected_bindings",
+        "fields": ["$.provenance.ai", "$.provenance.adapted_source_hash", secret],
+        "findings": [{"code": "provenance_protected", "field": "$.provenance.ai",
+                      "message": "Protected provenance binding cannot change."}],
+    })
+    assert projected["code"] == "provenance_protected"
+    assert projected["accepted"] is False and projected["retry_unchanged"] is False
+    assert secret not in json.dumps(projected)
+    assert projected["fields"] == ["$.provenance.ai", "$.provenance.adapted_source_hash"]
+    client = Client(opener=lambda *_a, **_k: pytest.fail("transport failed before HTTP"))
+    def broken(*_a, **_k):
+        raise http.client.HTTPException("connection reset")
+    monkeypatch.setattr(client, "request_json", broken)
+    with pytest.raises(HextileClientError) as unknown:
+        client._shader_workspace_request("POST", "/api/agent/shader-workspaces/open", {})
+    assert unknown.value.kind == "workspace_outcome_unknown"
+    assert unknown.value.receipt["code"] == "outcome_unknown"
+    assert unknown.value.receipt["retry_unchanged"] is False
+    assert unknown.value.receipt["recovery"] == (
+        "Rediscover the current attachment before another attempt. Do not assume nothing changed.")
 
 
 def test_shader_output_original_status_refuses_private_result(monkeypatch) -> None:
@@ -1464,11 +1501,15 @@ def test_expression_timeline_mcp_schema_and_teaching() -> None:
     status = {"operation": "status", "client_request_id": "known_1"}
     for args in (submit, status):
         jsonschema.validate(args, control["inputSchema"])
-    for malformed in ({**submit, "action": "pause"},
-                      {**status, "witness": witness},
-                      {**submit, "witness": {**witness, "owner_generation": None}}):
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(malformed, control["inputSchema"])
+    assert "oneOf" not in control["inputSchema"]
+    for key in ("operation", "client_request_id", "action", "time_seconds", "witness"):
+        assert key in control["inputSchema"]["properties"]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**submit, "witness": {**witness, "owner_generation": None}}, control["inputSchema"])
+    timeline = Client(opener=lambda *_a, **_k: pytest.fail("exclusive timeline variants do not reach HTTP"))
+    for malformed in ({**submit, "action": "pause"}, {**status, "witness": witness}):
+        with pytest.raises(HextileClientError):
+            timeline.control_shader_timeline(malformed)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**submit, "time_seconds": float("inf")}, control["inputSchema"])
     seen = []
@@ -1569,7 +1610,11 @@ def test_expression_timeline_mcp_schema_and_teaching() -> None:
         "client_request_id": "known_1", "ticket_id": "123e4567-e89b-42d3-a456-426614174000",
         "status": "refused", "action": "seek", "reason": "preview_unavailable"}
 
-    if importlib.util.find_spec("mcp") is not None:
+    try:
+        sdk_present = importlib.util.find_spec("mcp.client.stdio") is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        sdk_present = False
+    if sdk_present:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
         script = ("import sys; sys.path.insert(0, " + repr(str(ROOT / "mcp")) + "); "

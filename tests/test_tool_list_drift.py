@@ -1213,6 +1213,11 @@ def test_mcp_tools_list_rpc() -> None:
     opened = discovered["open_shader_workspace"]["inputSchema"]
     got = discovered["get_shader_update"]["inputSchema"]
     registered = discovered["register_shader_update"]["inputSchema"]
+    created = discovered["shader_create_asset"]["inputSchema"]
+    timeline = discovered["control_shader_timeline"]["inputSchema"]
+    assert "oneOf" not in created and "oneOf" not in timeline
+    assert {"request_id", "project_context_witness", "action", "template_id", "space", "source", "title"} <= set(created["properties"])
+    assert {"operation", "client_request_id", "action", "time_seconds", "witness"} <= set(timeline["properties"])
     assert opened["properties"]["workspace_schema"] == {"type": "integer", "const": 2, "default": 2}
     assert "workspace_schema" not in opened["required"]
     assert got["properties"]["include_source_diagnostics"] == {"type": "boolean", "default": False}

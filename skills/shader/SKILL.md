@@ -45,7 +45,10 @@ checks, accepted state, compilation and Save. Read fresh `current_surface` and
 
 Current authoring uses document schema 4 and workspace schema 2. Require the
 acknowledged complete file set; older content needs offline migration, never a
-workspace downgrade. Extension and transport versions are independent.
+workspace downgrade. Extension and transport versions are independent. Follow
+live `apply_policy`: `mounted` applies and saves one singular ready candidate;
+`unavailable` leaves Apply to the human. A source read for another Shader does
+not use this Shader's lease: open that reference first, then return.
 
 Keep native ownership, witness and base checks. Only acknowledged workspace open
 releases editable paths; register exact complete raw bytes and reconcile an

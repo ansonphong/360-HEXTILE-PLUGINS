@@ -2690,6 +2690,62 @@ def _project_license_status(payload: Any) -> dict[str, Any]:
     return projected
 
 
+_REFUSAL_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_REFUSAL_FIELD = re.compile(r"\$[A-Za-z0-9_.\[\]]{0,159}")
+
+
+def _refusal_text(value: Any, limit: int) -> Optional[str]:
+    if type(value) is not str or not value or len(value) > limit or _status_private_text(value):
+        return None
+    if ":\\" in value or value.startswith("\\\\") or "\n" in value:
+        return None
+    return value
+
+
+def workspace_refusal(detail: Any) -> Optional[dict]:
+    """Bounded store/API refusal. English text is not the contract."""
+    if type(detail) is not dict:
+        return None
+    code = detail.get("code")
+    if type(code) is not str or _REFUSAL_CODE.fullmatch(code) is None:
+        return None
+    projected: dict[str, Any] = {"code": code}
+    message = _refusal_text(detail.get("message"), 300)
+    recovery = _refusal_text(detail.get("recovery"), 400)
+    action = _refusal_text(detail.get("next_action"), 80)
+    if message:
+        projected["message"] = message
+    if recovery:
+        projected["recovery"] = recovery
+    if action and _REFUSAL_CODE.fullmatch(action):
+        projected["next_action"] = action
+    for key in ("accepted", "files_preserved", "retry_unchanged"):
+        if type(detail.get(key)) is bool:
+            projected[key] = detail[key]
+    fields = detail.get("fields")
+    if type(fields) is list:
+        projected["fields"] = [item for item in fields if type(item) is str and _REFUSAL_FIELD.fullmatch(item)][:16]
+    findings = detail.get("findings")
+    if type(findings) is list:
+        safe = []
+        for item in findings[:16]:
+            if type(item) is not dict:
+                continue
+            finding_code = item.get("code")
+            field = item.get("field")
+            finding_message = _refusal_text(item.get("message"), 300)
+            if (type(finding_code) is not str or _REFUSAL_CODE.fullmatch(finding_code) is None
+                    or type(field) is not str or _REFUSAL_FIELD.fullmatch(field) is None
+                    or not finding_message):
+                continue
+            safe.append({"code": finding_code, "field": field, "message": finding_message})
+        projected["findings"] = safe
+    category = _refusal_text(detail.get("category"), 64)
+    if category and _REFUSAL_CODE.fullmatch(category):
+        projected["category"] = category
+    return projected
+
+
 def _safe_detail(body: Optional[str]) -> Optional[str]:
     if not body:
         return None
@@ -5008,18 +5064,40 @@ class Client:
                                      timeout=15.0 if path.endswith("/open") else None,
                                      headers={"X-Hextile-Agent": "mcp"})
         except http.client.HTTPException as exc:
-            raise HextileClientError("Shader workspace outcome unknown; rediscover current authority before retrying.",
-                                     kind="workspace_outcome_unknown") from exc
+            raise HextileClientError(
+                "Shader workspace outcome unknown; rediscover current authority before retrying.",
+                kind="workspace_outcome_unknown",
+                receipt={
+                    "code": "outcome_unknown",
+                    "message": "The workspace result is unknown.",
+                    "accepted": False,
+                    "files_preserved": True,
+                    "retry_unchanged": False,
+                    "next_action": "rediscover_current_authority",
+                    "recovery": "Rediscover the current attachment before another attempt. Do not assume nothing changed.",
+                },
+            ) from exc
         except HextileClientError as exc:
             if exc.kind == "other" and exc.status_code is not None and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader workspace acknowledgement unknown; rediscover current authority before retrying.",
-                                         kind="workspace_outcome_unknown", status_code=exc.status_code) from exc
+                                         kind="workspace_outcome_unknown", status_code=exc.status_code,
+                                         receipt={
+                                             "code": "outcome_unknown",
+                                             "accepted": False,
+                                             "files_preserved": True,
+                                             "retry_unchanged": False,
+                                             "next_action": "rediscover_current_authority",
+                                             "recovery": "Rediscover the current attachment before another attempt. Do not assume nothing changed.",
+                                         }) from exc
             try:
                 detail = json.loads(exc.body or "{}").get("detail")
             except (ValueError, AttributeError):
                 detail = None
-            if isinstance(detail, dict):
-                exc.receipt = detail
+            projected = workspace_refusal(detail)
+            if projected is not None:
+                exc.receipt = projected
+            elif isinstance(detail, dict) and type(detail.get("code")) is str and _REFUSAL_CODE.fullmatch(detail["code"]):
+                exc.receipt = {"code": detail["code"]}
             if exc.status_code == 404 and detail == "Not Found":
                 raise HextileClientError("Upgrade 360 Hextile to a version with Shader workspaces, then retry.",
                                          kind="upgrade", status_code=404, body=exc.body) from exc

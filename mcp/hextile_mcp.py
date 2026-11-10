@@ -2631,7 +2631,7 @@ TOOLS: list[dict[str, Any]] = [
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
     {"name": "open_shader_workspace",
-     "description": "Reuse the original request id. Leave Apply to the human. Treat an unknown reply as unknown.",
+     "description": "Reuse the original request id. Follow live shader_contract.apply_policy: mounted applies and saves one singular ready candidate, and unavailable leaves Apply to the human. Treat an unknown reply as unknown.",
      "inputSchema": _shader_closed({
          "shader": _shader_closed({"origin": {"enum": ["project", "user"]}, "shaderId": {
              "type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_-]+$"}}),
@@ -3248,21 +3248,10 @@ next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_pre
      "then": {"properties": {"mode": {"const": "sequence"}}}},
 ]
 
+# New/Paste and timeline stay flat. Some hosts replace a parent schema with oneOf
+# and then show only the action discriminator, which hid request_id, witness,
+# template/source and seek time. The client still rejects exclusive mixtures.
 for _name, _variants in {
-    "shader_create_asset": [
-        {"properties": {"action": {"const": "new"}, "request_id": _NATIVE_SHADER_REQUEST_ID,
-                        "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
-                        "template_id": {"const": "hx_starter"},
-                        "space": {"enum": ["direction_360", "equirect_map", "ray_360", "shadertoy_image"]}},
-         "required": ["request_id", "project_context_witness", "action", "template_id"],
-         "not": {"anyOf": [{"required": ["source"]}, {"required": ["title"]}]}},
-        {"properties": {"action": {"const": "paste"}, "request_id": _NATIVE_SHADER_REQUEST_ID,
-                        "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
-                        "source": {"type": "string", "minLength": 1, "maxLength": 2097152},
-                        "title": {"type": "string", "minLength": 1, "maxLength": 256}},
-         "required": ["request_id", "project_context_witness", "action", "source"],
-         "not": {"anyOf": [{"required": ["template_id"]}, {"required": ["space"]}]}},
-    ],
     "shader_set_capture": [
         {"properties": {"action": {"const": "live_seed"}}, "required": ["seed"], "not": {"required": ["capture_defaults"]}},
         {"properties": {"action": {"const": "defaults"}}, "required": ["capture_defaults"], "not": {"required": ["seed"]}},
@@ -3275,16 +3264,6 @@ for _name, _variants in {
 }.items():
     next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == _name)["inputSchema"]["oneOf"] = _variants
 
-_timeline_tool = next(t for t in TOOLS if t["name"] == "control_shader_timeline")
-_timeline_tool["inputSchema"]["oneOf"] = [
-    {"properties": {"operation": {"const": "status"}},
-     "not": {"anyOf": [{"required": [key]} for key in ("action", "time_seconds", "witness")]}},
-    {"properties": {"operation": {"const": "submit"}, "action": {"const": "seek"}},
-     "required": ["action", "witness", "time_seconds"]},
-    {"properties": {"operation": {"const": "submit"},
-                    "action": {"enum": ["play", "pause", "reset"]}},
-     "required": ["action", "witness"], "not": {"required": ["time_seconds"]}},
-]
 _parameter_tool = next(t for t in TOOLS if t["name"] == "set_shader_parameter")
 _parameter_tool["inputSchema"]["oneOf"] = [
     {"properties": {"operation": {"const": "status"}},
