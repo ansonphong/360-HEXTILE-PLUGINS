@@ -1264,6 +1264,10 @@ def _broken_human_document(defect: str) -> dict[str, Any]:
     document = _human_document()
     if defect == "enum":
         document["baseline"] = "saved"
+    elif defect == "baseline_list":
+        document["baseline"] = []
+    elif defect == "baseline_dict":
+        document["baseline"] = {}
     elif defect == "hash":
         document["code_identity"] = "sha256:" + "g" * 64
     elif defect == "base":
@@ -1379,11 +1383,13 @@ def test_shader_code_lease_older_peer_absence_stays_unknown(monkeypatch) -> None
 
 @pytest.mark.parametrize("where,defect", [
     ("discovery", "contract"), ("discovery", "held"), ("discovery", "extra"),
-    ("attachment", "enum"), ("attachment", "hash"), ("attachment", "base"),
+    ("attachment", "enum"), ("attachment", "baseline_list"), ("attachment", "baseline_dict"),
+    ("attachment", "hash"), ("attachment", "base"),
     ("attachment", "version"), ("attachment", "clock"), ("attachment", "id_empty"),
     ("attachment", "id_long"), ("attachment", "id_count"), ("attachment", "id_dup"),
     ("attachment", "extra"), ("attachment", "unsupported"), ("attachment", "family"),
     ("attachment", "oversized"), ("update", "hash"), ("update", "extra"),
+    ("update", "baseline_list"), ("update", "baseline_dict"),
 ])
 def test_shader_code_lease_refuses_malformed_summary(monkeypatch, where: str, defect: str) -> None:
     client = Client("http://127.0.0.1:9")

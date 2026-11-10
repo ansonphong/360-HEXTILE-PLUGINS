@@ -5276,6 +5276,7 @@ class Client:
                 or not rows_ok
                 or type(document.get("omitted")) is not int
                 or not 0 <= document["omitted"] <= MAX_WORKSPACE_GENERATION
+                or type(document.get("baseline")) is not str
                 or document.get("baseline") not in {"acknowledged", "unavailable"}
                 or type(document.get("composition_required")) is not bool):
             raise HextileClientError("Malformed Shader human document summary", kind="other")
