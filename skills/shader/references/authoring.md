@@ -145,6 +145,19 @@ Never equate disk-written, registered, Prepare passed, compile passed, preview p
 
 Preserve authored files for every refusal. No recovery silently installs software, changes host permissions, overwrites files, retries Apply or claims that APP stopped the model.
 
+Honor structured refusal fields `accepted`, `files_preserved`, `retry_unchanged`,
+`fields`, `next_action` and `recovery`; `retry_unchanged:false` means do not repeat the same
+registration. `original_binding_legacy` identifies a proven legacy original-file
+metadata defect. Preserve the pending files and use an authorized native saved-base
+copy (`copy_and_replay`), then acknowledge its new workspace and replay the intended
+edits against the corrected base. Keep the new Shader identity and corrected
+provenance; do not overwrite them with the old workspace metadata. Recompute the
+complete digest and use ordinary check/preview/Save. This creates a new asset;
+copy/recovery must be covered by the user's request. `original_binding_invalid`
+requires restoration of verified original material or matching metadata
+(`restore_original`); never remove a protected hash or fabricate original bytes
+merely to pass validation. Neither refusal admits a candidate or proves a compile.
+
 | Result | Recovery |
 |---|---|
 | 403 MCP disabled / changed current writer | Reconnect MCP when disconnected, then rediscover the actual Workshop, source and current writer. |
