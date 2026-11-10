@@ -2702,6 +2702,18 @@ def _refusal_text(value: Any, limit: int) -> Optional[str]:
     return value
 
 
+def workspace_unknown_receipt() -> dict:
+    return {
+        "code": "outcome_unknown",
+        "message": "The workspace result is unknown.",
+        "accepted": False,
+        "files_preserved": True,
+        "retry_unchanged": False,
+        "next_action": "rediscover_current_authority",
+        "recovery": "Rediscover the current attachment before another attempt. Do not assume nothing changed.",
+    }
+
+
 def workspace_refusal(detail: Any) -> Optional[dict]:
     """Bounded store/API refusal. English text is not the contract."""
     if type(detail) is not dict:
@@ -5067,40 +5079,37 @@ class Client:
             raise HextileClientError(
                 "Shader workspace outcome unknown; rediscover current authority before retrying.",
                 kind="workspace_outcome_unknown",
-                receipt={
-                    "code": "outcome_unknown",
-                    "message": "The workspace result is unknown.",
-                    "accepted": False,
-                    "files_preserved": True,
-                    "retry_unchanged": False,
-                    "next_action": "rediscover_current_authority",
-                    "recovery": "Rediscover the current attachment before another attempt. Do not assume nothing changed.",
-                },
+                receipt=workspace_unknown_receipt(),
             ) from exc
         except HextileClientError as exc:
+            if exc.kind in {"app_down", "workspace_outcome_unknown"} or exc.status_code is None:
+                raise HextileClientError(
+                    "Shader workspace outcome unknown; rediscover current authority before retrying.",
+                    kind="workspace_outcome_unknown", status_code=exc.status_code,
+                    receipt=workspace_unknown_receipt(),
+                ) from exc
             if exc.kind == "other" and exc.status_code is not None and 200 <= exc.status_code < 300:
-                raise HextileClientError("Shader workspace acknowledgement unknown; rediscover current authority before retrying.",
-                                         kind="workspace_outcome_unknown", status_code=exc.status_code,
-                                         receipt={
-                                             "code": "outcome_unknown",
-                                             "accepted": False,
-                                             "files_preserved": True,
-                                             "retry_unchanged": False,
-                                             "next_action": "rediscover_current_authority",
-                                             "recovery": "Rediscover the current attachment before another attempt. Do not assume nothing changed.",
-                                         }) from exc
+                raise HextileClientError(
+                    "Shader workspace acknowledgement unknown; rediscover current authority before retrying.",
+                    kind="workspace_outcome_unknown", status_code=exc.status_code,
+                    receipt=workspace_unknown_receipt(),
+                ) from exc
             try:
                 detail = json.loads(exc.body or "{}").get("detail")
             except (ValueError, AttributeError):
                 detail = None
             projected = workspace_refusal(detail)
-            if projected is not None:
-                exc.receipt = projected
-            elif isinstance(detail, dict) and type(detail.get("code")) is str and _REFUSAL_CODE.fullmatch(detail["code"]):
-                exc.receipt = {"code": detail["code"]}
             if exc.status_code == 404 and detail == "Not Found":
                 raise HextileClientError("Upgrade 360 Hextile to a version with Shader workspaces, then retry.",
-                                         kind="upgrade", status_code=404, body=exc.body) from exc
+                                         kind="upgrade", status_code=404) from exc
+            if projected is not None:
+                raise HextileClientError(
+                    projected.get("message") or projected["code"],
+                    status_code=exc.status_code, kind="http", receipt=projected,
+                ) from exc
+            if isinstance(detail, dict) and type(detail.get("code")) is str and _REFUSAL_CODE.fullmatch(detail["code"]):
+                raise HextileClientError(detail["code"], status_code=exc.status_code, kind="http",
+                                         receipt={"code": detail["code"]}) from exc
             raise
 
     def open_shader_workspace(self, body: Mapping[str, Any]) -> Any:
@@ -5116,7 +5125,7 @@ class Client:
                 or result.get("studio_surface_id") != body["studio_surface_id"]
                 or result.get("attachment_state", "attached") != "attached"):
             raise HextileClientError("Shader workspace acknowledgement unknown; rediscover or make one identical open retry. No paths were released.",
-                                     kind="workspace_outcome_unknown")
+                                     kind="workspace_outcome_unknown", receipt=workspace_unknown_receipt())
         if (type(result.get("workspace_schema")) is not int or result["workspace_schema"] != 2
                 or type(result.get("schema")) is not int or result["schema"] != 2
                 or type(result.get("files")) is not list
@@ -5144,7 +5153,7 @@ class Client:
                 and _WORKSPACE_DIGEST.fullmatch(base["authoring_digest"]) is not None)
         if not valid_base:
             raise HextileClientError("Shader workspace base acknowledgement unknown; rediscover the current Shader. No paths were released.",
-                                     kind="workspace_outcome_unknown")
+                                     kind="workspace_outcome_unknown", receipt=workspace_unknown_receipt())
         return result
 
     def register_shader_update(self, args: Mapping[str, Any]) -> Any:
@@ -5164,7 +5173,7 @@ class Client:
                 or type(result.get("candidate_id")) is not str or not result["candidate_id"]):
             raise HextileClientError(
                 "Shader workspace registration acknowledgement unknown; read the current receipt before retrying.",
-                kind="workspace_outcome_unknown")
+                kind="workspace_outcome_unknown", receipt=workspace_unknown_receipt())
         return result
 
     def get_shader_update(self, args: Mapping[str, Any]) -> Any:

@@ -522,6 +522,23 @@ def test_workspace_refusal_and_unknown_outcome_keep_structured_fields(monkeypatc
     assert unknown.value.receipt["retry_unchanged"] is False
     assert unknown.value.receipt["recovery"] == (
         "Rediscover the current attachment before another attempt. Do not assume nothing changed.")
+    secret = "C:\\Users\\secret\\shader.glsl"
+    body = json.dumps({"detail": {
+        "code": "provenance_protected",
+        "message": "see " + secret,
+        "fields": ["$.provenance.ai", "$.provenance." + secret],
+        "accepted": False, "files_preserved": True, "retry_unchanged": False,
+        "next_action": "preserve_protected_bindings",
+    }})
+    def leaked(*_a, **_k):
+        raise HextileClientError(body, kind="http", status_code=409, body=body)
+    monkeypatch.setattr(client, "request_json", leaked)
+    with pytest.raises(HextileClientError) as refused:
+        client._shader_workspace_request("POST", "/api/agent/shader-workspaces/h/updates", {})
+    assert secret not in str(refused.value)
+    assert secret not in json.dumps(refused.value.receipt)
+    assert refused.value.receipt["code"] == "provenance_protected"
+    assert refused.value.receipt["fields"] == ["$.provenance.ai"]
 
 
 def test_shader_output_original_status_refuses_private_result(monkeypatch) -> None:
@@ -2394,7 +2411,10 @@ def test_workspace_v2_uncertain_mutations_do_not_replay_or_release_paths(operati
     handler = server._open_shader_workspace if operation == "open_shader_workspace" else server._register_shader_update
     with pytest.raises(HextileClientError) as caught:
         handler(args)
-    assert caught.value.kind == "app_down" and caught.value.receipt is None  # Existing transport classification.
+    assert caught.value.kind == "workspace_outcome_unknown"
+    assert caught.value.receipt["code"] == "outcome_unknown"
+    assert caught.value.receipt["retry_unchanged"] is False
+    assert "nothing changed" in caught.value.receipt["recovery"]
     assert len(calls) == 1
 
 
