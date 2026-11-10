@@ -1219,6 +1219,219 @@ def test_native_shader_publication_recovery_refuses_malformed_identity(monkeypat
         client.get_shader_workspace_status({"handle": "workspace_1", "project_context_witness": "wit"})
 
 
+def _lease_digest(char: str = "a") -> str:
+    return "sha256:" + char * 64
+
+
+def _code_lease() -> dict[str, Any]:
+    return {"contract": "shader-code-lease/1",
+            "held": ["code_body", "modules", "file_inventory"],
+            "human_document_families": ["parameters", "values", "fields", "header", "extensions",
+                                        "modulators", "mappings", "expressions"],
+            "composition_authority": "registered-candidate/1"}
+
+
+def _human_document(**patch: Any) -> dict[str, Any]:
+    digest = _lease_digest()
+    changed = {family: [] for family in ("parameters", "values", "fields", "header", "extensions",
+                                         "modulators", "mappings", "expressions")}
+    changed["parameters"] = ["glow"]
+    document = {"contract": "shader-code-lease/1", "version": 2, "code_identity": digest,
+                "accepted_base": {"kind": "saved", "working_revision": 2, "document_hash": digest,
+                                  "source_hash": _lease_digest("b")},
+                "changed": changed, "omitted": 1, "baseline": "acknowledged", "composition_required": True}
+    document.update(patch)
+    return document
+
+
+def _shader_discovery(*, lease: bool = True) -> dict[str, Any]:
+    digest = _lease_digest()
+    shader = {"origin": "user", "shaderId": "aurora"}
+    contract: dict[str, Any] = {"revision": 1, "apply_policy": "mounted", "blockers": []}
+    if lease:
+        contract["code_lease"] = _code_lease()
+    return {"view": "shader", "schema": 1, "mcp_enabled": True,
+            "current_surface": {"kind": "shader_workshop", "studio_surface_id": "surface",
+                                "project_context_witness": "wit", "shader": shader, "draft_state": "clean",
+                                "base": {"kind": "saved", "working_revision": 2, "document_hash": digest,
+                                         "source_hash": _lease_digest("b")}},
+            "shader_contract": contract,
+            "shader_summary": {"name": "Aurora", "metadata_status": "available", "shader": shader,
+                               "draft_state": "clean", "save_state": "saved", "editable": True, "blockers": []}}
+
+
+def _broken_human_document(defect: str) -> dict[str, Any]:
+    document = _human_document()
+    if defect == "enum":
+        document["baseline"] = "saved"
+    elif defect == "hash":
+        document["code_identity"] = "sha256:" + "g" * 64
+    elif defect == "base":
+        document["accepted_base"] = {"kind": "saved", "working_revision": 2,
+                                     "document_hash": _lease_digest(), "path": "D:/private.glsl"}
+    elif defect == "version":
+        document["version"] = True
+    elif defect == "clock":
+        document["version"] = 3
+    elif defect == "id_empty":
+        document["changed"]["parameters"] = [""]
+    elif defect == "id_long":
+        document["changed"]["parameters"] = ["p" * 257]
+    elif defect == "id_count":
+        document["changed"]["parameters"] = [f"p{i}" for i in range(17)]
+    elif defect == "id_dup":
+        document["changed"]["parameters"] = ["glow", "glow"]
+    elif defect == "extra":
+        document["source"] = "void main(){}"
+    elif defect == "unsupported":
+        document["contract"] = "shader-code-lease/2"
+    elif defect == "family":
+        document["changed"].pop("expressions")
+    elif defect == "oversized":
+        document["changed"]["parameters"] = ["p" * 40000]
+    else:
+        raise AssertionError(defect)
+    return document
+
+
+def test_shader_code_lease_summary_survives_discovery_attachment_update_and_stop(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    document = _human_document()
+    digest = _lease_digest()
+    handle, witness, change_id = "workspace_1", "wit", "workspace_1:1"
+    attachment = {"handle": handle, "generation": 1, "attachment_state": "attached",
+                  "studio_surface_id": "surface", "project_context_witness": witness,
+                  "base": document["accepted_base"], "candidate_id": "candidate", "change_id": change_id,
+                  "human_values": {"value_version": 2, "values": {"fog": 1}}, "human_document": document}
+    publication = {"composition_id": "sc_" + "b" * 32, "value_version": 2,
+                   "prepare_identity": {"prepare_receipt_id": "prepare_" + "c" * 24, "source_hash": digest,
+                                        "document_hash": digest, "manifest_hash": digest,
+                                        "resource_manifest_hash": None, "receipt_hash": digest},
+                   "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
+                   "saved": {"working_revision": 2, "document_hash": digest, "source_hash": digest,
+                             "manifest_hash": digest}}
+    receipt = {"handle": handle, "change_id": change_id, "candidate_id": "candidate", "generation": 1,
+               "content_digest": digest, "check_attempt": 0, "save": "not_saved", "prepare": "not_requested",
+               "project_context_witness": witness, "studio_surface_id": "surface",
+               "publication": publication, "human_document": document, "raw_log": "private"}
+
+    def request_json(method, path, body=None, **kwargs):
+        if path.endswith("/attachment"):
+            return attachment
+        if method == "GET" and "/updates/" in path:
+            return receipt
+        if method == "DELETE":
+            stopped_view = {key: value for key, value in attachment.items()
+                            if key not in {"candidate_id", "change_id"}}
+            return {**stopped_view, "attachment_state": "stopped"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    monkeypatch.setattr(client, "get_json", lambda *_args, **_kwargs: _shader_discovery())
+    discovered = client.get_live_context(view="shader")
+    assert discovered["shader_contract"]["code_lease"] == _code_lease()
+    assert discovered["shader_contract"]["revision"] == 1
+    assert "lease_id" not in json.dumps(discovered)
+    status = client.get_shader_workspace_status({"handle": handle, "change_id": change_id,
+                                                 "project_context_witness": witness})
+    assert status["attachment"]["human_document"] == document
+    assert status["attachment"]["human_values"]["value_version"] == document["version"]
+    assert status["receipt"]["human_document"] == document
+    assert status["receipt"]["candidate_id"] == "candidate"
+    assert status["receipt"]["prepare"] == "not_requested"
+    assert status["receipt"]["publication"] == publication
+    assert "raw_log" not in status["receipt"]
+    stopped = client.stop_shader_workspace({"handle": handle, "generation": 1, "studio_surface_id": "surface",
+                                            "project_context_witness": witness})
+    assert stopped["attachment_state"] == "stopped"
+    assert stopped["human_document"] == document
+    assert stopped["handle"] == handle
+    direct = client.get_shader_update({"handle": handle, "change_id": change_id,
+                                       "project_context_witness": witness})
+    assert direct["human_document"] == document and direct["prepare"] == "not_requested"
+    unaccepted = _human_document(version=0, code_identity=None, baseline="unavailable", omitted=0,
+                                 composition_required=False,
+                                 accepted_base={"kind": "unaccepted", "authoring_digest": digest},
+                                 changed={family: [] for family in document["changed"]})
+    quiet = {key: value for key, value in attachment.items() if key not in {"human_values", "candidate_id", "change_id"}}
+    quiet.update(generation=0, human_document=unaccepted)
+    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: quiet)
+    recovered = client.get_shader_workspace_status({"handle": handle, "project_context_witness": witness})
+    assert recovered["receipt"] is None
+    assert recovered["attachment"]["human_document"]["code_identity"] is None
+    assert recovered["attachment"]["human_document"]["accepted_base"]["kind"] == "unaccepted"
+
+
+def test_shader_code_lease_older_peer_absence_stays_unknown(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    monkeypatch.setattr(client, "get_json", lambda *_args, **_kwargs: _shader_discovery(lease=False))
+    discovered = client.get_live_context(view="shader")
+    assert "code_lease" not in discovered["shader_contract"]
+    assert discovered["shader_contract"]["apply_policy"] == "mounted"
+    attachment = {"handle": "workspace_1", "generation": 0, "attachment_state": "attached",
+                  "studio_surface_id": "surface", "project_context_witness": "wit",
+                  "human_values": {"value_version": 2, "values": {"fog": 1}}}
+    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: attachment)
+    status = client.get_shader_workspace_status({"handle": "workspace_1", "project_context_witness": "wit"})
+    assert "human_document" not in status["attachment"]
+    assert status["attachment"]["human_values"]["value_version"] == 2
+
+
+@pytest.mark.parametrize("where,defect", [
+    ("discovery", "contract"), ("discovery", "held"), ("discovery", "extra"),
+    ("attachment", "enum"), ("attachment", "hash"), ("attachment", "base"),
+    ("attachment", "version"), ("attachment", "clock"), ("attachment", "id_empty"),
+    ("attachment", "id_long"), ("attachment", "id_count"), ("attachment", "id_dup"),
+    ("attachment", "extra"), ("attachment", "unsupported"), ("attachment", "family"),
+    ("attachment", "oversized"), ("update", "hash"), ("update", "extra"),
+])
+def test_shader_code_lease_refuses_malformed_summary(monkeypatch, where: str, defect: str) -> None:
+    client = Client("http://127.0.0.1:9")
+    if where == "discovery":
+        payload = _shader_discovery()
+        lease = payload["shader_contract"]["code_lease"]
+        if defect == "contract":
+            lease["contract"] = "shader-code-lease/9"
+        elif defect == "held":
+            lease["held"] = ["code_body"]
+        else:
+            lease["lease_id"] = "private"
+        monkeypatch.setattr(client, "get_json", lambda *_args, **_kwargs: payload)
+        with pytest.raises(HextileClientError) as caught:
+            client.get_live_context(view="shader")
+        assert caught.value.kind == "unsupported"
+        return
+    document = _broken_human_document(defect)
+    handle, witness = "workspace_1", "wit"
+    valid = _human_document()
+    attachment = {"handle": handle, "generation": 1, "attachment_state": "attached",
+                  "studio_surface_id": "surface", "project_context_witness": witness,
+                  "human_values": {"value_version": 2, "values": {"fog": 1}},
+                  "human_document": valid if where == "update" else document}
+    if where == "update":
+        digest = _lease_digest()
+        receipt = {"handle": handle, "change_id": handle + ":1", "candidate_id": "candidate", "generation": 1,
+                   "content_digest": digest, "check_attempt": 0, "save": "not_saved",
+                   "project_context_witness": witness, "studio_surface_id": "surface", "human_document": document}
+        attachment.update(candidate_id="candidate", change_id=handle + ":1")
+
+        def request_json(method, path, body=None, **kwargs):
+            return attachment if path.endswith("/attachment") else receipt
+
+        monkeypatch.setattr(client, "request_json", request_json)
+        with pytest.raises(HextileClientError) as caught:
+            client.get_shader_workspace_status({"handle": handle, "change_id": handle + ":1",
+                                                "project_context_witness": witness})
+    else:
+        monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: attachment)
+        with pytest.raises(HextileClientError) as caught:
+            client.get_shader_workspace_status({"handle": handle, "project_context_witness": witness})
+    if defect == "oversized":
+        assert "unbounded" in str(caught.value)
+    else:
+        assert "human document" in str(caught.value)
+
+
 def test_native_shader_recovery_status_and_stop_bypass_only_disabled_preflight(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     calls = []

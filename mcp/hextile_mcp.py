@@ -1444,6 +1444,8 @@ TOOLS: list[dict[str, Any]] = [
         "403 studio_not_present if the FE RAM slot is empty. "
         "Use view=shader for a compact open-Shader name, Saved/draft state, editability and blockers; "
         "no capability handshake or source read is needed for this read-only question. "
+        "Optional shader_contract.code_lease is shader-code-lease/1 and means MCP holds code only. "
+        "A missing code_lease is unknown coauthoring support, not permission to replace the human document. "
         "Default full response is unchanged. Does not merge; discovery never proves Apply or Save.",
         {
             "view": {"type": "string", "enum": ["full", "shader"], "default": "full",
@@ -2631,7 +2633,8 @@ TOOLS: list[dict[str, Any]] = [
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
     {"name": "open_shader_workspace",
-     "description": "Reuse the original request id. Follow live shader_contract.apply_policy: mounted applies and saves one singular ready candidate, and unavailable leaves Apply to the human. Treat an unknown reply as unknown.",
+     "description": "Reuse the original request id. Follow live shader_contract.apply_policy: mounted applies and saves one singular ready candidate, and unavailable leaves Apply to the human. Treat an unknown reply as unknown. "
+                    "MCP holds code only when code_lease is present. Do not rewrite lagged human header or document bytes from this open.",
      "inputSchema": _shader_closed({
          "shader": _shader_closed({"origin": {"enum": ["project", "user"]}, "shaderId": {
              "type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_-]+$"}}),
@@ -2649,6 +2652,7 @@ TOOLS: list[dict[str, Any]] = [
      }, "annotations": _annotations("open_shader_workspace")},
     _tool_def("register_shader_update",
         "Register native file bytes once for automatic APP prepare/compile/preview. "
+        "Registration freezes code only and does not replace the human document. "
         "change_id is <handle>:<expected_generation+1>, never an arbitrary ID. "
         "Exact retained replay returns its receipt after generation advances; changed retained inputs refuse idempotency_conflict, "
         "expired historical receipts stay 410. Do not send GLSL, paths or Apply authority. "
@@ -2668,7 +2672,9 @@ TOOLS: list[dict[str, Any]] = [
         "and acknowledges bounded logical source_diagnostics (64 rows, 2 KiB messages), never code, native paths or Apply authority. "
         "Unsupported APP requires upgrade/reconnect; do not silently downgrade. "
         "Honor next_poll_ms and check_deadline_at; polling never extends the attempt or saves. "
-        "410 receipt_expired/workspace_expired remains terminal; rediscover current authority without deleting files.",
+        "410 receipt_expired/workspace_expired remains terminal; rediscover current authority without deleting files. "
+        "Optional human_document is a source-free shader-code-lease/1 summary: version is the native value_version, "
+        "changed lists at most 16 IDs, and omitted is a gap in this summary, not the document or a rollback log.",
         {"handle": _WORKSPACE_ID, "change_id": _WORKSPACE_CHANGE, "project_context_witness": _WORKSPACE_WITNESS,
          "include_source_diagnostics": {"type": "boolean", "default": False}},
         required=["handle", "change_id", "project_context_witness"]),
@@ -3129,7 +3135,8 @@ SHADER_EXTENSION_TOOLS = [
               {"ticket_id": {"type": "string", "pattern": "^spt_[0-9a-f]{32}$"},
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
               ["ticket_id", "project_context_witness"]),
-    _tool_def("shader_get_workspace", "Recover an existing workspace attachment and current source-free candidate receipt, including before first registration.",
+    _tool_def("shader_get_workspace", "Recover an existing workspace attachment and current source-free candidate receipt, including before first registration. "
+              "Optional human_document is the same bounded summary. Its absence is an older peer, not a grant to replace the human document.",
               {"handle": _NATIVE_WORKSPACE_HANDLE,
                "change_id": _NATIVE_WORKSPACE_CHANGE,
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
@@ -3141,7 +3148,7 @@ SHADER_EXTENSION_TOOLS = [
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
               ["handle", "change_id", "generation", "content_digest", "studio_surface_id",
                "project_context_witness"]),
-    _tool_def("shader_stop_workspace", "Stop only this current workspace attachment and preserve files. This does not transfer human ownership or stop reasoning.",
+    _tool_def("shader_stop_workspace", "Stop only this current workspace attachment and preserve files. Stop is cancellation, not automatic code possession. This does not transfer human ownership or stop reasoning.",
               {"handle": _NATIVE_WORKSPACE_HANDLE,
                "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
                "studio_surface_id": _NATIVE_WORKSPACE_WITNESS,

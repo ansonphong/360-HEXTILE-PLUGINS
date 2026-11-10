@@ -2278,6 +2278,37 @@ def _valid_shader_connection_surface(surface: Any) -> bool:
             and ("manifest_hash" not in base or _duplicate_digest(base["manifest_hash"], null=True)))
 
 
+def _valid_code_lease(value: Any) -> bool:
+    """Optional discovery. Absence stays unknown; a present lease is this exact contract."""
+    return (type(value) is dict and set(value) == {"contract", "held", "human_document_families", "composition_authority"}
+            and value["contract"] == "shader-code-lease/1"
+            and type(value["held"]) is list and value["held"] == ["code_body", "modules", "file_inventory"]
+            and type(value["human_document_families"]) is list
+            and value["human_document_families"] == ["parameters", "values", "fields", "header", "extensions",
+                                                     "modulators", "mappings", "expressions"]
+            and value["composition_authority"] == "registered-candidate/1")
+
+
+def _valid_closed_shader_base(base: Any) -> bool:
+    """Saved or unaccepted workspace base. Same digest rule as open acknowledgement."""
+    if type(base) is not dict:
+        return False
+    if base.get("kind") == "unaccepted":
+        return (set(base) == {"kind", "authoring_digest"} and type(base["authoring_digest"]) is str
+                and _WORKSPACE_DIGEST.fullmatch(base["authoring_digest"]) is not None)
+    if (base.get("kind") != "saved" or not {"kind", "working_revision", "document_hash", "source_hash"} <= set(base)
+            or set(base) - {"kind", "working_revision", "document_hash", "source_hash", "manifest_hash"}
+            or type(base.get("working_revision")) is not int
+            or not 1 <= base["working_revision"] <= MAX_WORKSPACE_GENERATION
+            or any(type(base.get(key)) is not str or _WORKSPACE_DIGEST.fullmatch(base[key]) is None
+                   for key in ("document_hash", "source_hash"))):
+        return False
+    if "manifest_hash" not in base:
+        return True
+    manifest = base["manifest_hash"]
+    return manifest is None or (type(manifest) is str and _WORKSPACE_DIGEST.fullmatch(manifest) is not None)
+
+
 def _valid_shader_connection(result: Any) -> bool:
     """Closed public metadata only. Unknown APP shapes never become compact success."""
     if (type(result) is not dict or set(result) != {
@@ -2288,7 +2319,10 @@ def _valid_shader_connection(result: Any) -> bool:
     summary, contract, surface = result["shader_summary"], result["shader_contract"], result["current_surface"]
     if (type(summary) is not dict or set(summary) != {
             "name", "metadata_status", "shader", "draft_state", "save_state", "editable", "blockers"}
-            or type(contract) is not dict or set(contract) != {"revision", "apply_policy", "blockers"}
+            or type(contract) is not dict
+            or not {"revision", "apply_policy", "blockers"} <= set(contract)
+            or set(contract) - {"revision", "apply_policy", "blockers", "code_lease"}
+            or ("code_lease" in contract and not _valid_code_lease(contract["code_lease"]))
             or type(contract["revision"]) is not int or contract["revision"] != 1
             or type(contract["apply_policy"]) is not str or contract["apply_policy"] not in {"mounted", "unavailable"}
             or not _valid_shader_connection_surface(surface)):
@@ -5188,6 +5222,8 @@ class Client:
                 not isinstance(result, dict) or type(result.get("source_diagnostics")) is not list):
             raise HextileClientError("Upgrade 360 Hextile and reconnect for bounded source diagnostics; this APP did not acknowledge support.",
                                      kind="upgrade")
+        if isinstance(result, dict):
+            self._workspace_human_document(result)
         return result
 
     @staticmethod
@@ -5213,6 +5249,39 @@ class Client:
                 or any(type(key) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,47}", key, re.ASCII) is None
                        for key in human["values"])):
             raise HextileClientError("Malformed Shader human value recovery", kind="other")
+
+    @staticmethod
+    def _workspace_human_document(data: dict) -> None:
+        """Optional source-free summary. version is the native value_version clock."""
+        if "human_document" not in data:
+            return
+        document = data["human_document"]
+        families = ("parameters", "values", "fields", "header", "extensions",
+                    "modulators", "mappings", "expressions")
+        changed = document.get("changed") if type(document) is dict else None
+        version = document.get("version") if type(document) is dict else None
+        identity = document.get("code_identity") if type(document) is dict else None
+        rows_ok = (type(changed) is dict and set(changed) == set(families)
+                   and all(type(changed[family]) is list for family in families)
+                   and sum(len(changed[family]) for family in families) <= 16
+                   and all(type(item) is str and item and len(item) <= 256 and changed[family].count(item) == 1
+                           for family in families for item in changed[family]))
+        if (type(document) is not dict or set(document) != {"contract", "version", "code_identity", "accepted_base",
+                "changed", "omitted", "baseline", "composition_required"}
+                or document.get("contract") != "shader-code-lease/1"
+                or type(version) is not int or not 0 <= version <= MAX_WORKSPACE_GENERATION
+                or (identity is not None and (type(identity) is not str
+                                              or _WORKSPACE_DIGEST.fullmatch(identity) is None))
+                or not _valid_closed_shader_base(document.get("accepted_base"))
+                or not rows_ok
+                or type(document.get("omitted")) is not int
+                or not 0 <= document["omitted"] <= MAX_WORKSPACE_GENERATION
+                or document.get("baseline") not in {"acknowledged", "unavailable"}
+                or type(document.get("composition_required")) is not bool):
+            raise HextileClientError("Malformed Shader human document summary", kind="other")
+        human = data.get("human_values")
+        if type(human) is dict and human.get("value_version") != version:
+            raise HextileClientError("Malformed Shader human document summary", kind="other")
 
     @staticmethod
     def _workspace_publication(data: dict) -> None:
@@ -5306,9 +5375,10 @@ class Client:
         attachment = self._recovery_result(attachment,
             {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
              "project_context_witness", "base", "candidate_id", "change_id", "activity",
-             "human_values", "human_values_recovery_required"},
+             "human_values", "human_values_recovery_required", "human_document"},
             {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
         self._workspace_human_values(attachment)
+        self._workspace_human_document(attachment)
         if attachment["handle"] != handle or attachment["project_context_witness"] != witness:
             raise HextileClientError("Shader attachment identity changed", kind="workspace_outcome_unknown")
         change_id = args.get("change_id") or attachment.get("change_id")
@@ -5320,11 +5390,12 @@ class Client:
                        "base", "project_context_witness", "studio_surface_id", "check_attempt",
                        "attachment_state", "prepare", "compile", "preview", "presentation", "save",
                        "check_deadline_at", "next_poll_ms", "reason", "saved", "diagnostics",
-                       "attribution_outcome", "publication"}
+                       "attribution_outcome", "publication", "human_document"}
             raw = self._recovery_result(raw, allowed | {"raw_log"},
                                         {"handle", "change_id", "candidate_id", "generation",
                                          "content_digest", "check_attempt", "save"})
             self._workspace_publication(raw)
+            self._workspace_human_document(raw)
             if (raw["handle"] != handle or raw["change_id"] != change_id or
                     raw.get("project_context_witness") != witness or
                     raw.get("studio_surface_id") != attachment["studio_surface_id"] or
@@ -5381,9 +5452,11 @@ class Client:
             raise
         result = self._recovery_result(result,
             {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
-             "project_context_witness", "base", "human_values", "human_values_recovery_required"},
+             "project_context_witness", "base", "human_values", "human_values_recovery_required",
+             "human_document"},
             {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
         self._workspace_human_values(result)
+        self._workspace_human_document(result)
         if (result["handle"] != handle or result["generation"] != args["generation"] or
                 result["project_context_witness"] != args["project_context_witness"] or
                 result["studio_surface_id"] != args["studio_surface_id"] or
