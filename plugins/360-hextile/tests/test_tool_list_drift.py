@@ -1264,7 +1264,7 @@ def test_mcp_initialize() -> None:
     )
     assert resp is not None
     assert resp["result"]["serverInfo"]["name"] == "hextile"
-    assert resp["result"]["serverInfo"]["version"] == "0.6.0"
+    assert resp["result"]["serverInfo"]["version"] == "0.6.1"
     assert resp["result"]["protocolVersion"] == "2024-11-05"
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]
@@ -1950,6 +1950,11 @@ def _tool_schema(name: str) -> dict[str, Any]:
         if tool["name"] == name:
             return tool["inputSchema"]
     raise AssertionError(f"missing tool {name}")
+
+
+def test_every_tool_input_schema_is_a_top_level_object() -> None:
+    # Claude Code rejects the whole tools/list when any inputSchema lacks type:object.
+    assert [tool["name"] for tool in TOOLS if tool["inputSchema"].get("type") != "object"] == []
 
 
 def test_batch_tool_schemas_forbid_additional_properties() -> None:

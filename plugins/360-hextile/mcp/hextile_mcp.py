@@ -45,7 +45,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.0"
+SERVER_VERSION = "0.6.1"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -870,7 +870,7 @@ _SHADER_FOLDER_EXPORT = _shader_closed({
     "quality_if_jpg": _SHADER_FOLDER_INTENT["properties"]["quality_if_jpg"],
 }, ("quality_if_jpg",))
 _SHADER_FOLDER_EXPORT["allOf"] = _SHADER_FOLDER_INTENT["allOf"]
-_SHADER_SEQUENCE_CONTROL = {"oneOf": [
+_SHADER_SEQUENCE_CONTROL = {"type": "object", "oneOf": [
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "stop"},
                     "run_id": {"type": "string", "pattern": r"^[0-9a-f]{32}$"}}),
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "resume"}}),
@@ -1081,7 +1081,7 @@ _FRACTAL_EXPORT_SUBMIT = _shader_closed({
     "transaction_fingerprint": _FRACTAL_SHA,
 }, ("quality_if_jpg",))
 _FRACTAL_EXPORT_SUBMIT["allOf"] = _FRACTAL_EXPORT["allOf"]
-_FRACTAL_SEQUENCE_CONTROL = {"oneOf": [
+_FRACTAL_SEQUENCE_CONTROL = {"type": "object", "oneOf": [
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "stop"},
                     "run_id": {"type": "string", "pattern": r"^[0-9a-f]{32}$"}}),
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "resume"}}),
