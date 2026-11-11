@@ -45,7 +45,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.3"
+SERVER_VERSION = "0.6.4"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -3585,6 +3585,27 @@ def _activity_subject(name: str, args: Mapping[str, Any], payload: Any = None) -
     return {"kind": kind}
 
 
+_ACTIVITY_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+
+
+def _activity_error_code(exc: "HextileClientError") -> Optional[str]:
+    """Closed refusal token for the activity row; never a message or body snippet."""
+    found: Any = None
+    body = getattr(exc, "body", None)
+    if isinstance(body, str) and body:
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            parsed = None
+        detail = parsed.get("detail") if isinstance(parsed, dict) else None
+        found = detail.get("code") if isinstance(detail, dict) else parsed.get("code") if isinstance(parsed, dict) else None
+    if found is None and isinstance(exc.receipt, Mapping):
+        found = exc.receipt.get("code")
+    if found is None and exc.kind not in {"http", "other"}:
+        found = exc.kind
+    return found if type(found) is str and _ACTIVITY_CODE.fullmatch(found) else None
+
+
 def _activity_outcome(name: str, data: Any) -> Optional[str]:
     if name in {"apply_config_delta", "set_shader_parameter"} and isinstance(data, Mapping):
         status = data.get("status")
@@ -4136,6 +4157,7 @@ class HextileMcpServer:
                     "kind": exc.kind,
                     "status_code": exc.status_code,
                     "message": safe_error["error"] if name in _LAYER_TOOLS else str(exc),
+                    "code": _activity_error_code(exc),
                 },
                 seed=_seed_activity(name, args),
                 overrides_keys=overrides_keys,
@@ -4284,12 +4306,14 @@ class HextileMcpServer:
             envelope["seed"] = dict(seed)
         if error:
             status = error.get("status_code")
+            code = error.get("code")
             # Body snippets echo config/override/prompt values — never on the bus.
+            # Only a closed refusal token rides beside the status, inside the message.
             envelope["error"] = {
                 "kind": error.get("kind", "other"),
                 "status_code": status,
                 "message": (
-                    f"HTTP {status}"
+                    f"HTTP {status}" + (f" {code}" if type(code) is str and _ACTIVITY_CODE.fullmatch(code) else "")
                     if status is not None
                     else str(error.get("kind") or "other")
                 ),

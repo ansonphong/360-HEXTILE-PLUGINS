@@ -192,6 +192,39 @@ def test_mcp_activity_minilog_projects_only_confirmed_safe_facts() -> None:
     assert all("secret" not in json.dumps(row) and "private" not in json.dumps(row) for row in client.events)
 
 
+def test_activity_refusal_carries_only_a_closed_reason_token() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    from hextile_client import HextileClientError
+    from hextile_mcp import HextileMcpServer
+
+    class FakeClient:
+        def __init__(self):
+            self.events = []
+
+        def request_json(self, method, path):  # noqa: ANN001
+            return {"enabled": True}
+
+        def post_activity(self, envelope):  # noqa: ANN001
+            self.events.append(envelope)
+
+    client = FakeClient()
+    server = HextileMcpServer(client=client, child_token="")
+    bodies = iter([
+        '{"detail": {"code": "attachment_not_ready", "message": "secret detail"}}',
+        '{"detail": {"code": "Not A Token <secret>"}}',
+    ])
+
+    def refuse(_args):  # noqa: ANN001, ANN202
+        raise HextileClientError("secret message", status_code=409, body=next(bodies))
+
+    server._handlers["get_status"] = refuse
+    assert server.call_tool("get_status", {"run_id": "run_1"})["isError"] is True
+    assert server.call_tool("get_status", {"run_id": "run_1"})["isError"] is True
+    failed = [row["error"]["message"] for row in client.events if row["phase"] == "failed"]
+    assert failed == ["HTTP 409 attachment_not_ready", "HTTP 409"]
+    assert all("secret" not in json.dumps(row) for row in client.events)
+
+
 def test_describe_image_exact_body_timeout_and_text_only_result() -> None:
     sys.path.insert(0, str(ROOT / "mcp"))
     from hextile_client import Client
