@@ -323,6 +323,13 @@ _WORKSPACE_HANDLE = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 _WORKSPACE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _WORKSPACE_SUFFIX = re.compile(r"[1-9][0-9]{0,15}\Z")
 MAX_WORKSPACE_GENERATION = 2**53 - 1
+# APP keeps every loss row and only folds kept/clamped into the leftover room
+# under a 64-row cap. Drivers cap at 1024, so 512 would refuse a legal delete.
+_MERGE_MAX_ENTRIES = 2048
+_MERGE_MAX_FAMILY = 64
+_MERGE_MAX_ID = 256
+_MERGE_MAX_FIELD = 64
+_MERGE_OUTCOMES = frozenset({"kept", "clamped", "lost_to_human", "fell_back", "removed"})
 
 _OUTPUT_PROFILES = {"png-master/1", "shader-linear-rgba-exr/1", "dome-png/1",
                     "shader-raster-still/1"}
@@ -5211,6 +5218,8 @@ class Client:
             raise HextileClientError(
                 "Shader workspace registration acknowledgement unknown; read the current receipt before retrying.",
                 kind="workspace_outcome_unknown", receipt=workspace_unknown_receipt())
+        if "merge" in result:
+            result["merge"] = self._workspace_merge(result["merge"])
         return result
 
     def get_shader_update(self, args: Mapping[str, Any]) -> Any:
@@ -5227,7 +5236,31 @@ class Client:
                                      kind="upgrade")
         if isinstance(result, dict):
             self._workspace_human_document(result)
+            if "merge" in result:
+                result["merge"] = self._workspace_merge(result["merge"])
         return result
+
+    @staticmethod
+    def _workspace_merge(value: Any) -> dict:
+        """Closed composition report. Callers leave a missing key unknown."""
+        entries = value.get("entries") if type(value) is dict else None
+        omitted = value.get("omitted") if type(value) is dict else None
+        if (type(value) is not dict or set(value) != {"schema", "entries", "omitted"}
+                or type(value.get("schema")) is not int or value["schema"] != 1
+                or type(entries) is not list or len(entries) > _MERGE_MAX_ENTRIES
+                or type(omitted) is not dict or set(omitted) != {"kept", "clamped"}
+                or any(type(omitted[key]) is not int or not 0 <= omitted[key] <= MAX_WORKSPACE_GENERATION
+                       for key in ("kept", "clamped"))):
+            raise HextileClientError("Malformed Shader merge report", kind="other")
+        for row in entries:
+            field = row.get("field") if type(row) is dict else None
+            if (type(row) is not dict or set(row) != {"family", "id", "field", "outcome"}
+                    or type(row.get("family")) is not str or not 1 <= len(row["family"]) <= _MERGE_MAX_FAMILY
+                    or type(row.get("id")) is not str or not 1 <= len(row["id"]) <= _MERGE_MAX_ID
+                    or not (field is None or (type(field) is str and 1 <= len(field) <= _MERGE_MAX_FIELD))
+                    or row.get("outcome") not in _MERGE_OUTCOMES):
+                raise HextileClientError("Malformed Shader merge report", kind="other")
+        return value
 
     @staticmethod
     def _recovery_result(data: Any, allowed: set[str], required: set[str]) -> dict:
@@ -5390,6 +5423,9 @@ class Client:
         if change_id is not None:
             raw = self.get_shader_update({"handle": handle, "change_id": change_id,
                                           "project_context_witness": witness})
+            # Already validated. Keep it off the closed 32 KiB recovery check so a
+            # long loss list still passes through, and absence stays absent.
+            merge = raw.pop("merge") if type(raw) is dict and "merge" in raw else None
             allowed = {"handle", "change_id", "candidate_id", "generation", "content_digest", "shader",
                        "base", "project_context_witness", "studio_surface_id", "check_attempt",
                        "attachment_state", "prepare", "compile", "preview", "presentation", "save",
@@ -5409,6 +5445,8 @@ class Client:
                 raise HextileClientError("Shader workspace changed during recovery; read again",
                                          kind="workspace_outcome_unknown")
             receipt = {key: raw[key] for key in allowed if key in raw and key != "diagnostics"}
+            if merge is not None:
+                receipt["merge"] = merge
         return self._recovery_result({"schema": 1, "attachment": {key: attachment[key] for key in attachment
             if key != "activity"}, "receipt": receipt}, {"schema", "attachment", "receipt"},
             {"schema", "attachment", "receipt"})

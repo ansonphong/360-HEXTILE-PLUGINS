@@ -1382,6 +1382,127 @@ def test_shader_code_lease_older_peer_absence_stays_unknown(monkeypatch) -> None
     assert status["attachment"]["human_values"]["value_version"] == 2
 
 
+def _shader_merge_report() -> dict[str, Any]:
+    return {"schema": 1, "entries": [
+        {"family": "parameters", "id": "glow", "field": "default", "outcome": "lost_to_human"},
+        {"family": "values", "id": "fog", "field": None, "outcome": "fell_back"},
+        {"family": "expressions", "id": "shader.params.glow", "field": None, "outcome": "removed"},
+        {"family": "parameters", "id": "hue", "field": "ui.min", "outcome": "clamped"},
+        {"family": "header", "id": "space", "field": None, "outcome": "kept"},
+    ], "omitted": {"kept": 3, "clamped": 1}}
+
+
+def _shader_merge_losses(count: int) -> dict[str, Any]:
+    return {"schema": 1, "entries": [
+        {"family": "expressions", "id": f"shader.params.p{index}", "field": None, "outcome": "removed"}
+        for index in range(count)
+    ], "omitted": {"kept": 0, "clamped": 0}}
+
+
+def _broken_shader_merge(defect: str) -> Any:
+    report = _shader_merge_report()
+    if defect == "extra":
+        report["source"] = "private"
+    elif defect == "entry":
+        report["entries"][0]["value"] = 1
+    elif defect == "outcome":
+        report["entries"][0]["outcome"] = "won"
+    elif defect == "schema":
+        report["schema"] = 2
+    elif defect == "schema_bool":
+        report["schema"] = True
+    elif defect == "omitted_bool":
+        report["omitted"]["kept"] = True
+    elif defect == "omitted_negative":
+        report["omitted"]["clamped"] = -1
+    elif defect == "omitted_key":
+        report["omitted"]["lost"] = 1
+    elif defect == "omitted_missing":
+        report["omitted"].pop("clamped")
+    elif defect == "id_empty":
+        report["entries"][0]["id"] = ""
+    elif defect == "id_long":
+        report["entries"][0]["id"] = "p" * 257
+    elif defect == "field_long":
+        report["entries"][0]["field"] = "f" * 65
+    elif defect == "field_type":
+        report["entries"][0]["field"] = 1
+    elif defect == "family_empty":
+        report["entries"][0]["family"] = ""
+    elif defect == "entries":
+        report["entries"] = {}
+    elif defect == "bound":
+        return _shader_merge_losses(4096)
+    elif defect == "shape":
+        return ["kept"]
+    else:
+        raise AssertionError(defect)
+    return report
+
+
+def test_shader_merge_report_parses_and_absence_stays_unknown(monkeypatch) -> None:
+    """A present merge is a closed report. Absence stays unknown, never 'no conflicts'."""
+    client = Client("http://127.0.0.1:9")
+    merge = _shader_merge_report()
+    sent: list[Any] = []
+    mode: dict[str, Any] = {"merge": deepcopy(merge)}
+
+    def request_json(method, path, body=None, **kwargs):
+        sent.append((method, path, body))
+        if str(path).endswith("/attachment"):
+            return {"handle": "sw_test", "generation": 1, "attachment_state": "attached",
+                    "studio_surface_id": "surface", "project_context_witness": "wit",
+                    "candidate_id": "candidate", "change_id": "sw_test:1"}
+        receipt = {"handle": "sw_test", "change_id": "sw_test:1", "candidate_id": "candidate",
+                   "generation": 1, "content_digest": "sha256:" + "ef" * 32, "check_attempt": 0,
+                   "save": "not_saved", "project_context_witness": "wit", "studio_surface_id": "surface"}
+        if mode["merge"] is not None:
+            receipt["merge"] = deepcopy(mode["merge"])
+        return receipt
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    assert Client._workspace_merge(deepcopy(merge)) == merge
+    empty = {"schema": 1, "entries": [], "omitted": {"kept": 0, "clamped": 0}}
+    assert Client._workspace_merge(empty) == empty
+    long_id = deepcopy(merge)
+    long_id["entries"][0]["id"] = "g" * 256
+    assert Client._workspace_merge(long_id)["entries"][0]["id"] == "g" * 256
+    # Above the 64 kept/clamped cap and the 1024 driver cap: every loss row stays.
+    assert len(Client._workspace_merge(_shader_merge_losses(1600))["entries"]) == 1600
+    registered = client.register_shader_update(_workspace_register())
+    assert registered["merge"] == merge
+    assert set(sent[0][2]) == {"change_id", "expected_generation", "content_digest"}
+    fetched = client.get_shader_update({"handle": "sw_test", "change_id": "sw_test:1",
+                                        "project_context_witness": "wit"})
+    assert fetched["merge"] == merge
+    status = client.get_shader_workspace_status({"handle": "sw_test", "change_id": "sw_test:1",
+                                                 "project_context_witness": "wit"})
+    assert status["receipt"]["merge"] == merge
+    mode["merge"] = None
+    quiet = client.get_shader_update({"handle": "sw_test", "change_id": "sw_test:1",
+                                      "project_context_witness": "wit"})
+    assert "merge" not in quiet
+    assert "no conflicts" not in json.dumps(quiet)
+    quiet_status = client.get_shader_workspace_status({"handle": "sw_test", "change_id": "sw_test:1",
+                                                       "project_context_witness": "wit"})
+    assert quiet_status["receipt"] is not None and "merge" not in quiet_status["receipt"]
+    for name in ("register_shader_update", "get_shader_update"):
+        description = _schema(name)["description"]
+        assert "merge" in description and "unknown" in description
+    for defect in ("extra", "entry", "outcome", "schema", "schema_bool", "omitted_bool", "omitted_negative",
+                   "omitted_key", "omitted_missing", "id_empty", "id_long", "field_long", "field_type",
+                   "family_empty", "entries", "bound", "shape"):
+        with pytest.raises(HextileClientError) as caught:
+            Client._workspace_merge(_broken_shader_merge(defect))
+        assert caught.value.kind == "other"
+        mode["merge"] = _broken_shader_merge(defect)
+        with pytest.raises(HextileClientError):
+            client.register_shader_update(_workspace_register())
+        with pytest.raises(HextileClientError):
+            client.get_shader_update({"handle": "sw_test", "change_id": "sw_test:1",
+                                      "project_context_witness": "wit"})
+
+
 @pytest.mark.parametrize("where,defect", [
     ("discovery", "contract"), ("discovery", "held"), ("discovery", "extra"),
     ("attachment", "enum"), ("attachment", "baseline_list"), ("attachment", "baseline_dict"),

@@ -45,7 +45,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.4"
+SERVER_VERSION = "0.6.5"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -2658,7 +2658,9 @@ TOOLS: list[dict[str, Any]] = [
         "Exact retained replay returns its receipt after generation advances; changed retained inputs refuse idempotency_conflict, "
         "expired historical receipts stay 410. Do not send GLSL, paths or Apply authority. "
         "Use the negotiated raw-byte full-set digest described by APP open instructions; include unused modules and manifest changes. "
-        "Preserve exact candidate/digest/generation and check_attempt; new registration invalidates old located diagnostics.",
+        "Preserve exact candidate/digest/generation and check_attempt; new registration invalidates old located diagnostics. "
+        "When a composition exists the receipt includes merge (schema 1): entries with outcome kept, clamped, lost_to_human, fell_back or removed, and omitted kept/clamped counts. "
+        "There is no request flag. A missing merge is unknown, not no conflicts.",
         {"handle": _WORKSPACE_ID, "change_id": _WORKSPACE_CHANGE,
          "expected_generation": {"type": "integer", "minimum": 0, "maximum": 2**53 - 2},
          "content_digest": _WORKSPACE_DIGEST,
@@ -2675,7 +2677,9 @@ TOOLS: list[dict[str, Any]] = [
         "Honor next_poll_ms and check_deadline_at; polling never extends the attempt or saves. "
         "410 receipt_expired/workspace_expired remains terminal; rediscover current authority without deleting files. "
         "Optional human_document is a source-free shader-code-lease/1 summary: version is the native value_version, "
-        "changed lists at most 16 IDs, and omitted is a gap in this summary, not the document or a rollback log.",
+        "changed lists at most 16 IDs, and omitted is a gap in this summary, not the document or a rollback log. "
+        "When a composition exists the receipt includes merge (schema 1): entries with outcome kept, clamped, lost_to_human, fell_back or removed, and omitted kept/clamped counts. "
+        "There is no request flag. A missing merge is unknown, not no conflicts.",
         {"handle": _WORKSPACE_ID, "change_id": _WORKSPACE_CHANGE, "project_context_witness": _WORKSPACE_WITNESS,
          "include_source_diagnostics": {"type": "boolean", "default": False}},
         required=["handle", "change_id", "project_context_witness"]),

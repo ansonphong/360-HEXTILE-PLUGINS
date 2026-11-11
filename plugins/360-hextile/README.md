@@ -1,6 +1,6 @@
 # 360-hextile plugin
 
-**v0.6.4**
+**v0.6.5**
 
 One Claude Code / Codex / Grok plugin that drives **360 Hextile** over localhost HTTP and carries the Hextile Pipe studio matte tools.
 
