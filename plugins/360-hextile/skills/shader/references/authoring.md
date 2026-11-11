@@ -145,7 +145,7 @@ Unknown writes are recovered by their original request and update IDs, never a r
 
 The human edits everything except code while you work. APP merges per field, and the human wins the same field. Read `merge` on the `register_shader_update` and `get_shader_update` receipts after each registration. There is no request flag. A missing `merge` is unknown; it does not mean there were no conflicts.
 
-Because B advances to your candidate, a field the human won stays human-changed, so changing that field again in your file always loses. To re-propose a definition field, read the live value, write it into your file, register, then change it in a later registration. For a value, use `set_shader_parameter`. Header edits you wrote on disk before an APP restart and never registered are not proposed. Treat them like a field the human kept and follow that same path: write the live value, register, then change it.
+Because APP's merge base advances to your registered candidate, a field the human won stays human-changed, so changing that field again in your file always loses. To re-propose a definition field, read the live value, write it into your file, register, then change it in a later registration. For a value, use `set_shader_parameter`. Header edits you wrote on disk before an APP restart and never registered are not proposed. Treat them like a field the human kept and follow that same path: write the live value, register, then change it.
 
 Deleting a parameter removes its drivers. Transport, Look and parameter operations no longer need a quiet human. After `check_timeout` on an ended attachment, reopen with the receipt's exact-digest adopt and register the next change. Never re-register unchanged bytes to hurry a composition.
 
