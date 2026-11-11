@@ -1495,7 +1495,7 @@ def validate_shader_workspace(operation: str, args: Mapping[str, Any]) -> None:
             refuse()
         shader = args["shader"]
         if (type(shader) is not dict or set(shader) != {"origin", "shaderId"}
-                or shader["origin"] not in ("project", "user") or not text(shader["shaderId"], 128)
+                or shader["origin"] not in ("project", "user", "builtin") or not text(shader["shaderId"], 128)
                 or re.fullmatch(r"[A-Za-z0-9_-]+", shader["shaderId"]) is None
                 or not text(args["project_context_witness"]) or not text(args["studio_surface_id"])
                 or (supplied and (type(args["expected_working_revision"]) is not int or args["expected_working_revision"] < 1
@@ -2350,7 +2350,7 @@ def _valid_shader_connection(result: Any) -> bool:
     if summary["save_state"] == "saved" and (surface["draft_state"] != "clean" or surface["base"].get("kind") == "unaccepted"):
         return False
     return (not summary["editable"] or result["mcp_enabled"] and not summary["blockers"]
-            and contract["apply_policy"] == "mounted" and surface["shader"]["origin"] in {"user", "project"}
+            and contract["apply_policy"] == "mounted" and surface["shader"]["origin"] in {"user", "project", "builtin"}
             and surface["draft_state"] in {"clean", "external_attached"}
             and summary["save_state"] in {"saved", "unaccepted", "external_attached"})
 
@@ -4740,7 +4740,7 @@ class Client:
                      and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", target["shaderId"]) is not None
                      and target != ref)
         elif operation == "shader_save_asset":
-            valid = set(args) == common and ref["origin"] in {"user", "project"}
+            valid = set(args) == common
         elif operation == "shader_save_as":
             valid = (set(args) in (common, common | {"title"})
                      and ("title" not in args or type(args["title"]) is str

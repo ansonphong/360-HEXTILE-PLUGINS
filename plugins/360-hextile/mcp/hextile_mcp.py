@@ -45,7 +45,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.2"
+SERVER_VERSION = "0.6.3"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -2634,9 +2634,10 @@ TOOLS: list[dict[str, Any]] = [
      "annotations": _annotations("export_shader_sequence")},
     {"name": "open_shader_workspace",
      "description": "Reuse the original request id. Follow live shader_contract.apply_policy: mounted applies and saves one singular ready candidate, and unavailable leaves Apply to the human. Treat an unknown reply as unknown. "
-                    "MCP holds code only when code_lease is present. Do not rewrite lagged human header or document bytes from this open.",
+                    "MCP holds code only when code_lease is present. Do not rewrite lagged human header or document bytes from this open. "
+                    "Built-in opens only while APP source developer mode is on; otherwise Duplicate it first.",
      "inputSchema": _shader_closed({
-         "shader": _shader_closed({"origin": {"enum": ["project", "user"]}, "shaderId": {
+         "shader": _shader_closed({"origin": {"enum": ["project", "user", "builtin"]}, "shaderId": {
              "type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_-]+$"}}),
          "project_context_witness": _WORKSPACE_WITNESS,
          "expected_working_revision": {"type": "integer", "minimum": 1},

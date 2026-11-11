@@ -1,6 +1,6 @@
 {
   "name": "360-hextile",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Drive 360 Hextile from Claude Code — Workflows, Shader authoring, Fractal, GPU upres via /360-hextile:upres, renders and 360-LoRA seeds over the local MCP server, plus the Hextile Pipe studio matte CLIs (knockout, cutout, recolor, despeckle, trim) and Adobe export helpers.",
   "author": {
     "name": "Phong",

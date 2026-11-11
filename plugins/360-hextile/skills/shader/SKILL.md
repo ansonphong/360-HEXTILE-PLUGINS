@@ -17,7 +17,8 @@ print the whole catalog or inspect DevTools just to discover the Shader.
 Report the returned Shader name (or “name unavailable”), origin, `save_state`,
 `draft_state`, `editable` and actionable `blockers` in one short reply. A Builtin
 is readable; `shader_not_editable` means duplicate into My Library or a writable
-Project before source editing. `draft_dirty` means the human must resolve their
+Project before source editing. In APP source developer mode (`HEXTILE_DEV_MODE=1`)
+a Builtin reports `editable` and is edited in place like any other Shader. `draft_dirty` means the human must resolve their
 edits; `save_unknown` means reconcile the existing Save. `owner_missing` or
 `surface_missing` means open the Shader in Workshop and retry. Do not change
 anything to answer this question.

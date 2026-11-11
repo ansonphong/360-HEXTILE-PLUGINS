@@ -846,8 +846,9 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     save = {key: value for key, value in mounted.items() if key != "target"}
     assert client.save_shader_asset(save)["state"] == "applied"
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/save", save)
-    with pytest.raises(HextileClientError):
-        client.save_shader_asset({**save, "shader": {"origin": "builtin", "shaderId": "hx_starter"}})
+    builtin_save = {**save, "shader": {"origin": "builtin", "shaderId": "hx_starter"}}
+    assert client.save_shader_asset(builtin_save)["state"] == "applied"  # APP owns the developer-mode gate
+    assert sent[-1] == ("POST", "/api/shaders/agent-operations/save", builtin_save)
     as_copy = {**save, "title": "A copy"}
     assert client.save_shader_as(as_copy)["state"] == "applied"
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/save-as", as_copy)
@@ -2260,7 +2261,7 @@ def test_workspace_closed_schemas_and_transport_admission() -> None:
             jsonschema.validate(adopted, schema)
             malformed += [{**args, "shader": {**args["shader"], "path": "D:/other"}},
                           {**adopted, "existing_workspace": {**adopted["existing_workspace"], "force": True}},
-                          {**args, "shader": {"origin": "builtin", "shaderId": "aurora"}},
+                          {**args, "shader": {"origin": "stock", "shaderId": "aurora"}},
                           {**args, "existing_workspace": None}, {**args, "expected_working_revision": True}]
         for body in malformed:
             with pytest.raises(jsonschema.ValidationError):
