@@ -50,10 +50,12 @@ bash "$ROOT/pipe/scripts/fp-run.sh" recolor_png path/to/file.png --new --color "
 
 ## Adobe
 
-Illustrator / Photoshop are **reference only** — see `references/adobe-manual.md`. Do not pretend agent automation for JSX.
+Illustrator / Photoshop are **reference only** — see `pipe/references/adobe-manual.md`. Do not pretend agent automation for JSX.
 
 ## Install
 
 ```text
-hextile-pipe@360-hextile
+360-hextile@360-hextile
 ```
+
+Pipe ships inside the 360-hextile plugin; there is no separate Pipe plugin to install.

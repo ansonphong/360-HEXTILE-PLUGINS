@@ -333,7 +333,7 @@ def _allow_app_mcp_sdk_import() -> None:
     for key in list(sys.modules):
         if key == "mcp" or key.startswith("mcp."):
             loc = str(getattr(sys.modules[key], "__file__", "") or getattr(sys.modules[key], "__path__", ""))
-            if "hextile-agent" in loc:
+            if str((ROOT / "mcp").resolve()) in loc:
                 del sys.modules[key]
     held = sys.path[:]
     sys.path[:] = [entry for entry in sys.path if entry and Path(entry).resolve() != root]
