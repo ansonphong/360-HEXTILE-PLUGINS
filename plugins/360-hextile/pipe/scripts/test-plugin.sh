@@ -49,7 +49,7 @@ else
 fi
 
 # --- skills ---
-SKILLS=(hextile-pipe hextile-knockout hextile-cutout hextile-recolor-png hextile-recolor-svg hextile-despeckle)
+SKILLS=(hextile-pipe hextile-knockout hextile-cutout hextile-recolor-png hextile-recolor-svg hextile-despeckle hextile-trim)
 for s in "${SKILLS[@]}"; do
   f="$ROOT/skills/$s/SKILL.md"
   if [[ -f "$f" ]]; then
@@ -154,6 +154,32 @@ if ls "$SCRATCH"/*recolor.png >/dev/null 2>&1; then
   ok "recolor_png sidecar"
 else
   bad "recolor_png no sidecar"
+fi
+
+# transparent fixture for trim
+python3 - <<'PY' "$SCRATCH"
+import sys
+from pathlib import Path
+from PIL import Image
+d = Path(sys.argv[1])
+im = Image.new("RGBA", (100, 80), (0, 0, 0, 0))
+for y in range(10, 40):
+    for x in range(20, 50):
+        im.putpixel((x, y), (255, 0, 0, 255))
+im.save(d / "alpha_blob.png")
+print("trim fixture ok")
+PY
+
+bash "$ROOT/scripts/fp-run.sh" trim "$SCRATCH/alpha_blob.png" --new --margin 10
+if [[ -f "$SCRATCH/alpha_blob.trim.png" ]]; then
+  SZ="$(python3 -c "from PIL import Image; print(Image.open('$SCRATCH/alpha_blob.trim.png').size)")"
+  if [[ "$SZ" == "(50, 50)" ]]; then
+    ok "trim sidecar size $SZ"
+  else
+    bad "trim sidecar size $SZ (want (50, 50))"
+  fi
+else
+  bad "trim no sidecar"
 fi
 
 echo

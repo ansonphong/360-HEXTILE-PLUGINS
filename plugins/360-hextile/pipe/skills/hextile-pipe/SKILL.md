@@ -1,6 +1,6 @@
 ---
 name: hextile-pipe
-description: "Hub for 360 Hextile studio matte tools — route to knockout, cutout, recolor, despeckle; run doctor. Use when user says /hextile-pipe or needs studio matte help."
+description: "Hub for 360 Hextile studio matte tools — route to knockout, cutout, recolor, despeckle, trim; run doctor. Use when user says /hextile-pipe or needs studio matte help."
 user-invocable: true
 ---
 
@@ -31,6 +31,7 @@ If ROOT is empty, locate `scripts/fp-run.sh` from this skill's package (plugin i
 | White-on-black cutout | `/hextile-cutout` | `cutout` |
 | Art-on-black knockout | `/hextile-knockout` | `knockout` |
 | Dust / freckles | `/hextile-despeckle` | `despeckle` |
+| Crop to alpha / add margin | `/hextile-trim` | `trim` |
 
 Hub usage:
 
