@@ -1,0 +1,175 @@
+# =============================================================================
+# hextile-pipe — .gitignore
+# Python matte CLIs + Adobe ExtendScript tooling
+# =============================================================================
+
+# --- Secrets / local env -----------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+**/secrets/**
+credentials.json
+service-account*.json
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+develop-eggs/
+downloads/
+/lib/
+lib64/
+!scripts/lib/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+.installed.cfg
+*.manifest
+*.spec
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+env/
+.env/
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.cache/
+nosetests.xml
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Packaging / uv / poetry / pipenv (if added later)
+poetry.lock
+Pipfile.lock
+uv.lock
+
+# --- Node (if docs tooling ever lands) ---------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# --- OS ----------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*~
+
+# --- Editors / IDEs ----------------------------------------------------------
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+*.code-workspace
+
+# --- Adobe app / export junk -------------------------------------------------
+# Auto-save & recovery
+**/Adobe After Effects Auto-Save/
+**/Adobe Premiere Pro Auto-Save/
+**/Adobe Photoshop Auto-Save/
+**/*AutoRecover*
+**/*Auto-Save*/
+
+# Temp / lock / backup (Office + Adobe-ish)
+*.tmp
+*.temp
+~$*
+*.bak
+*.old
+*.orig
+*.swx
+.bridgeCache*
+BridgeCache*
+*.idlk
+*.lck
+
+# Local script prefs & run reports (machine-specific)
+**/prefs.txt
+**/export-report.txt
+**/*-export-report.txt
+**/export-report-*.txt
+
+# Illustrator / Photoshop scratch (if scripts write beside sources)
+*.ai.lock
+*.psd.lock
+
+# --- Generated matte outputs (re-run scripts; don't commit by accident) ------
+*.cutout.png
+*.knockout.png
+*.recolor.png
+*.recolor.svg
+*.white.png
+*.white.svg
+
+# Sample / fixture dumps (keep intentional fixtures under fixtures/ if needed)
+/tmp/
+/out/
+/output/
+/exports/
+**/_export/
+**/_exports/
+**/_out/
+
+# --- Logs --------------------------------------------------------------------
+*.log
+logs/
+
+# --- Nested / accidental repos -----------------------------------------------
+# This tree IS the git root — never nest another .git except worktrees
+# (worktrees managed outside ignore)
+
+# --- Misc --------------------------------------------------------------------
+*.stackdump
+core
+core.*
+*.pid
+.direnv/
+.nix-shell/
+EOF

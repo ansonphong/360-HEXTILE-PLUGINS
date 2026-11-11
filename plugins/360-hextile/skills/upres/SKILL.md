@@ -1,0 +1,85 @@
+---
+name: upres
+description: "GPU upres a still, a folder of stills, or a video through 360 Hextile Real-ESRGAN. Use when the user says /360-hextile:upres, /upres, upres this image, upscale this folder, upres this video, or Real-ESRGAN sequence. Not hextile-pipe. Do not invent upscale_image."
+user-invocable: true
+---
+
+# /360-hextile:upres
+
+GPU Real-ESRGAN upres through the running **360 Hextile** app (`hextile` MCP). Do **not** invent `upscale_image`. Do **not** send GPU upres through `hextile-pipe`.
+
+If a tool says the app is not running, tell the user verbatim:
+
+> Launch 360 Hextile, then retry
+
+Default scale **4**. Model **`realesrgan-x4plus`**. Use scale **2** only when the user asks (`upscale.scale_factor` is `2` or `4`). Optional `upscale.template` for 360 tiled DirectProcessor; empty = full-image.
+
+## Classify
+
+| Input | Door | Tools |
+|-------|------|-------|
+| One image file (`.png` `.jpg` `.jpeg` `.webp` `.tiff` `.tif` `.exr`) | stills | `validate_config` → `run_workflow` → `get_status` |
+| Directory of images | sequence | `create_sequence` → `start_sequence` → `get_sequence` |
+| Video (`.mp4` `.mpg` `.mpeg` `.m4v` `.mov`) | sequence | `extract_sequence_video` first, then the sequence tools |
+| Anything else | refuse | Name the three accepted shapes |
+
+`run_workflow` cannot create a `seq_*`. Folder and video **must** use sequence tools. Never loop `run_workflow` over frames.
+
+## GPU safety
+
+1. `get_capabilities` at session start.
+2. `list_runs` and/or `list_sequences` before queueing. If a run is `running` or a sequence is `processing`, call `cancel_run` or `stop_sequence` **only if the user asked to replace that job**. Otherwise refuse the second GPU job. After a stop request, observe active-frame/job and GPU-holder settlement before submitting replacement work; a sequence may report `cancelled` before its active frame drains.
+3. Never `get_status(seq_*)`. Never `get_sequence(render_id)`. A frame `render_id` is an ordinary render.
+4. Never poll forever.
+5. HTTP **402**: pass the APP licence/access detail. Standard includes basic folder/video frame processing and Real-ESRGAN; advanced temporal workflows have separate gates. Do not infer a Pro requirement from a basic sequence ID.
+
+## Stills door
+
+```
+validate_config(
+  workflow_id="upres-still",
+  origin="builtin",
+  overrides={
+    "input": { "path": "<absolute image path>", "source": "file" },
+    "upscale": { "scale_factor": 2 or 4 }
+  }
+)
+run_workflow(same)
+get_status(run_id) until completed / failed / cancelled / crashed
+```
+
+Omit the `upscale` override unless the user asked for 2× (builtin default is 4). Keep `run_id`. Use `list_runs` if lost. Abort with `cancel_run`.
+
+## Sequence door
+
+Tools: `extract_sequence_video`, `create_sequence`, `start_sequence`, `get_sequence`, `list_sequences`, `stop_sequence`.
+
+Video: `extract_sequence_video({video_path})` first. Use the returned `folder_path`.
+
+`create_sequence.config` **must** be a full `HextileConfig`. Never POST a partial `{pipeline, input, upscale}` stub — `HextileConfig` requires `pipeline`, `hextile.template`, and `diffusion.model` and will **422**.
+
+Clone, patch, POST:
+
+1. `get_workflow(origin=builtin, id=upres-still)`.
+2. That call returns the raw document (`pipeline` at top level — Recipe C: get_workflow → document; `WorkflowFreeformResponse` is extra=allow). Re-anchor on the live payload (if `upres-still` is missing, shape-check builtin `quick-scout`): if `pipeline` is top-level, that object is the document; if nested `document.pipeline` exists, use that nested object.
+3. Patch `input.mode=sequence`, `input.path=<folder_path>`, `input.source=file`, and optional `upscale.scale_factor`.
+4. POST the patched object as `create_sequence.config` with `folder_path` (optional `name`).
+5. `start_sequence` then `get_sequence`.
+
+Poll `get_sequence` while status is `queued` or `processing`. Stop and report on `paused` and `incomplete` (for legacy sequences, use the app for resume; derived upscale children use the run-fenced controls below). Terminal: `completed`, `completed_with_errors`, `failed`, `cancelled`. Request cancellation with `stop_sequence`; top-level `cancelled` alone does not prove active-frame/GPU drain.
+
+## Refuse
+
+- Inventing `upscale_image`.
+- GPU upres via `hextile-pipe`.
+- A `{pipeline, input, upscale}` stub as sequence config (422).
+- A second heavy GPU job unless the user asked to replace the first.
+- Inputs that are not one image file, a folder, or a video with the suffixes above.
+
+## Upscale an existing saved Sequence
+
+Call `get_capabilities` and use this door only when `sequence_upscale.scope_witness_version` is 1. Call `inspect_sequence_upscale(source_id)` before starting; report ineligibility. Retain its opaque `scope_witness`, one caller-generated UUID as `request_id`, source ID, scale (2 or 4), and optional name. Call `upscale_sequence` with those exact values and the witness. It creates a child Sequence and keeps the source intact; do not loop over frames.
+
+If the submission reply is lost, call `get_sequence_upscale_request` with the **same** UUID. Do not invent a replacement UUID while its outcome is unknown. Use `get_sequence` for bounded child status and `list_sequence_frames` for paged frame states/output handles. Keep the accepted `run_id` and pass it to `stop_sequence`, `resume_sequence`, or `retry_sequence_failed_frames`; wait for settlement before new GPU work. Native refusals and unsupported APP versions should be reported, not bypassed with raw HTTP.
+
+The original-request receipt retains the opaque scope witness, source ID, requested name and scale for scope-based requests, so the same body can be recovered after a restart. A `reserved` or `interrupted` receipt without a run ID is a reservation awaiting repair. Replay `upscale_sequence` with the same UUID and the same source, scope witness, scale and name; do not navigate to the child until that replay returns its recovered run. This repairs ownership without automatically starting GPU work.

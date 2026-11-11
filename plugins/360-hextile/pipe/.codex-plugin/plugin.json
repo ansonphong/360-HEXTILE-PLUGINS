@@ -1,0 +1,27 @@
+{
+  "name": "hextile-pipe",
+  "version": "0.1.0",
+  "description": "360 Hextile studio matte utilities — whiten, cutout, knockout, despeckle.",
+  "author": {
+    "name": "Phong",
+    "url": "https://github.com/ansonphong"
+  },
+  "homepage": "https://360hextile.com",
+  "repository": "https://github.com/ansonphong/hextile-pipe",
+  "license": "UNLICENSED",
+  "keywords": ["360-hextile", "studio", "matte", "assets"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Hextile Pipe",
+    "shortDescription": "Studio matte and Adobe export helpers for 360 Hextile.",
+    "longDescription": "Python matte CLIs as agent skills; Adobe JSX documented for manual run.",
+    "developerName": "Phong",
+    "category": "Productivity",
+    "capabilities": ["Write"],
+    "defaultPrompt": [
+      "Knock out the black background on this PNG with hextile-pipe.",
+      "Whiten this SVG silhouette.",
+      "Despeckle dust on this logo PNG."
+    ]
+  }
+}
