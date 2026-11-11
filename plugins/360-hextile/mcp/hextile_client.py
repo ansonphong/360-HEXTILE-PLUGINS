@@ -109,6 +109,9 @@ def _run_command_text(args: list[str]) -> str:
     try:
         completed = subprocess.run(
             args,
+            # Never inherit the MCP stdio pipe: under WSL, cmd.exe would read
+            # (and swallow) the client's JSON-RPC messages.
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=_ENDPOINT_QUERY_TIMEOUT_S,

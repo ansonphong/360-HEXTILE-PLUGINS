@@ -98,6 +98,20 @@ def test_unverified_file_refuses_8000(tmp_path: Path) -> None:
     assert missing.base is None and foreign.base is None and invalid.base is None
 
 
+def test_endpoint_queries_never_inherit_the_mcp_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    import hextile_client
+
+    seen: dict = {}
+
+    def fake_run(args, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout="C:\\Users\\x\\AppData\\Roaming\r\n")
+
+    monkeypatch.setattr(hextile_client.subprocess, "run", fake_run)
+    hextile_client._query_appdata_command()
+    assert seen.get("stdin") is subprocess.DEVNULL
+
+
 def test_one_wslpath_translation_of_one_windows_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     leaf = tmp_path / "360-hextile"
     leaf.mkdir()
