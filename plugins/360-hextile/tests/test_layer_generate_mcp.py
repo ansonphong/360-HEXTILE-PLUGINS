@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mcp"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "360-HEXTILE-APP"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "360-HEXTILE-APP"))
 from hextile_client import Client  # noqa: E402
 from hextile_mcp import HextileMcpServer, TOOLS  # noqa: E402
 

@@ -1,29 +1,18 @@
 {
   "name": "360-hextile",
-  "description": "360 Hextile \u2014 agent tools for 360 artists and studio workflows",
+  "description": "360 Hextile — agent tools for 360 artists and studio workflows",
   "owner": {
     "name": "Phong",
     "url": "https://github.com/ansonphong"
   },
   "plugins": [
     {
-      "name": "hextile-pipe",
-      "description": "Studio matte CLIs and Adobe export helpers",
-      "category": "productivity",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/ansonphong/hextile-pipe.git",
-        "sha": "83e97aab62f28ad909ee66711ab45c05dfdfe9bf"
-      }
-    },
-    {
       "name": "360-hextile",
-      "description": "List, save, run, and monitor 360 Hextile Workflows over localhost HTTP",
+      "description": "360 Hextile Workflows, Shader, Fractal and upres over the local MCP server, plus Hextile Pipe studio matte tools",
       "category": "productivity",
       "source": {
-        "source": "url",
-        "url": "https://github.com/ansonphong/360-hextile-agent.git",
-        "sha": "86343f148701d5df4df9e32d928ce367c06aa990"
+        "type": "local",
+        "path": "./plugins/360-hextile"
       }
     }
   ]

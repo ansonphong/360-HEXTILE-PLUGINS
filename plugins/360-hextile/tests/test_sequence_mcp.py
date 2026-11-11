@@ -329,7 +329,7 @@ def test_shader_render_export_mcp_tool_chain() -> None:
     import re
     example = json.loads(re.search(r"## Saved Shader native sequence.*?```json\n(.*?)\n```", guide, re.S).group(1))
     jsonschema.validate(example, tools["render_shader_sequence"]["inputSchema"])
-    sys.path.insert(0, str(ROOT.parent / "360-HEXTILE-APP"))
+    sys.path.insert(0, str(ROOT.parents[2] / "360-HEXTILE-APP"))
     from backend.api.routes.shaders_pkg.sequences import SequenceRequest
     example_request = SequenceRequest.model_validate(example)
     assert example_request.publication_mode is None and example_request.folder_export.format == 'JPG'

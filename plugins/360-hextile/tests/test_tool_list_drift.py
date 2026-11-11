@@ -363,7 +363,7 @@ def _allow_app_mcp_sdk_import() -> None:
 def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch):
     """Real native routes/settings persistence; only the in-process HTTP wire is adapted."""
     _allow_app_mcp_sdk_import()
-    sys.path.insert(0, str(ROOT.parent / "360-HEXTILE-APP"))
+    sys.path.insert(0, str(ROOT.parents[2] / "360-HEXTILE-APP"))
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from backend import settings
@@ -693,7 +693,7 @@ def _names_from_assign(source: str, target: str) -> set[str]:
 
 
 def test_app_tool_names_ast_equals() -> None:
-    app_path = ROOT.parent / "360-HEXTILE-APP" / "backend" / "api" / "routes" / "agent_events.py"
+    app_path = ROOT.parents[2] / "360-HEXTILE-APP" / "backend" / "api" / "routes" / "agent_events.py"
     assert app_path.is_file(), f"missing sibling APP inventory: {app_path}"
     app_names = _names_from_assign(app_path.read_text(encoding="utf-8"), "TOOL_NAMES")
     # T15.2 must publish the committed canonical inventory with its bundle.
@@ -1264,7 +1264,7 @@ def test_mcp_initialize() -> None:
     )
     assert resp is not None
     assert resp["result"]["serverInfo"]["name"] == "hextile"
-    assert resp["result"]["serverInfo"]["version"] == "0.5.6"
+    assert resp["result"]["serverInfo"]["version"] == "0.6.0"
     assert resp["result"]["protocolVersion"] == "2024-11-05"
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]

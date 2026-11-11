@@ -11,15 +11,15 @@ Crop a transparent PNG (or JPEG via sidecar) to the non-transparent content, and
 ## Run
 
 ```bash
-ROOT="${HEXTILE_PIPE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}}"
-bash "$ROOT/scripts/fp-run.sh" trim <path> --new [flags…]
+ROOT="${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}"
+bash "$ROOT/pipe/scripts/fp-run.sh" trim <path> --new [flags…]
 ```
 
 **Agent default:** always pass `--new` unless user insists on overwrite.
 
 ## Common flags
 
-Discover full set: `bash "$ROOT/scripts/fp-run.sh" trim -h`
+Discover full set: `bash "$ROOT/pipe/scripts/fp-run.sh" trim -h`
 
 | Flag | Meaning |
 |------|---------|
@@ -32,11 +32,11 @@ Discover full set: `bash "$ROOT/scripts/fp-run.sh" trim -h`
 ## Examples
 
 ```bash
-bash "$ROOT/scripts/fp-run.sh" trim icon.png --new
-bash "$ROOT/scripts/fp-run.sh" trim icon.png --new --margin 10
-bash "$ROOT/scripts/fp-run.sh" trim icon.png --new --margin 5%
-bash "$ROOT/scripts/fp-run.sh" trim icon.png --new --mode pad --margin 24
-bash "$ROOT/scripts/fp-run.sh" trim icon.png --new --threshold 4 --margin 8
+bash "$ROOT/pipe/scripts/fp-run.sh" trim icon.png --new
+bash "$ROOT/pipe/scripts/fp-run.sh" trim icon.png --new --margin 10
+bash "$ROOT/pipe/scripts/fp-run.sh" trim icon.png --new --margin 5%
+bash "$ROOT/pipe/scripts/fp-run.sh" trim icon.png --new --mode pad --margin 24
+bash "$ROOT/pipe/scripts/fp-run.sh" trim icon.png --new --threshold 4 --margin 8
 ```
 
 ## Path rules

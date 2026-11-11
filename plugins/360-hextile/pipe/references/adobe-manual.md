@@ -25,4 +25,4 @@ Illustrator and Photoshop scripts in this package are **reference / manual-run o
 
 - Point users at these paths under the plugin root.
 - Do not invent CLI wrappers for JSX.
-- Matte work uses Python via `scripts/fp-run.sh`, not Adobe.
+- Matte work uses Python via `pipe/scripts/fp-run.sh` in the 360-hextile plugin, not Adobe.

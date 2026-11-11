@@ -1,21 +1,24 @@
 {
   "name": "360-hextile",
-  "version": "0.5.7",
-  "description": "Drive 360 Hextile workflows from Claude Code — list/save templates, run and monitor renders, 360-LoRA seeds, GPU upres via /360-hextile:upres, trusted local file IO when Full Access is enabled, bundled guides.",
+  "version": "0.6.0",
+  "description": "Drive 360 Hextile from Claude Code — Workflows, Shader authoring, Fractal, GPU upres via /360-hextile:upres, renders and 360-LoRA seeds over the local MCP server, plus the Hextile Pipe studio matte CLIs (knockout, cutout, recolor, despeckle, trim) and Adobe export helpers.",
   "author": {
     "name": "Phong",
     "url": "https://github.com/ansonphong"
   },
-  "homepage": "https://github.com/ansonphong/360-hextile-agent",
-  "repository": "https://github.com/ansonphong/360-hextile-agent",
-  "license": "MIT",
+  "homepage": "https://github.com/ansonphong/360-HEXTILE-PLUGINS",
+  "repository": "https://github.com/ansonphong/360-HEXTILE-PLUGINS",
+  "license": "SEE LICENSE IN README.md",
   "keywords": [
     "360",
     "panorama",
     "hextile",
     "workflows",
     "diffusion",
-    "mcp"
+    "mcp",
+    "shader",
+    "matte",
+    "studio"
   ],
   "skills": "./skills/"
 }

@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Pipe lives at pipe/ inside the 360-hextile plugin; manifests and skills sit at the plugin root.
+PLUGIN="$(cd "$ROOT/.." && pwd)"
 export HEXTILE_PIPE_PLUGIN_ROOT="$ROOT"
 
 SCRATCH="${TMPDIR:-/tmp}/hextile-pipe-test-$$"
@@ -15,43 +17,45 @@ FAIL=0
 ok()  { echo "  OK  $*"; PASS=$((PASS + 1)); }
 bad() { echo "  FAIL $*"; FAIL=$((FAIL + 1)); }
 
-echo "hextile-pipe test-plugin"
+echo "360-hextile pipe test-plugin"
 echo "  root: $ROOT"
+echo "  plugin: $PLUGIN"
 echo "  scratch: $SCRATCH"
 
-# --- manifests ---
+# --- manifests (360-hextile plugin root) ---
 for m in .claude-plugin/plugin.json .codex-plugin/plugin.json; do
-  if [[ ! -f "$ROOT/$m" ]]; then
+  if [[ ! -f "$PLUGIN/$m" ]]; then
     bad "missing $m"
     continue
   fi
-  name="$(python3 -c "import json; print(json.load(open('$ROOT/$m'))['name'])")"
-  ver="$(python3 -c "import json; print(json.load(open('$ROOT/$m'))['version'])")"
-  if [[ "$name" == "hextile-pipe" ]]; then
+  name="$(python3 -c "import json; print(json.load(open('$PLUGIN/$m'))['name'])")"
+  ver="$(python3 -c "import json; print(json.load(open('$PLUGIN/$m'))['version'])")"
+  if [[ "$name" == "360-hextile" ]]; then
     ok "$m name=$name version=$ver"
   else
-    bad "$m name=$name (want hextile-pipe)"
+    bad "$m name=$name (want 360-hextile)"
   fi
 done
 
-CV="$(python3 -c "import json; print(json.load(open('$ROOT/.claude-plugin/plugin.json'))['version'])")"
-XV="$(python3 -c "import json; print(json.load(open('$ROOT/.codex-plugin/plugin.json'))['version'])")"
+CV="$(python3 -c "import json; print(json.load(open('$PLUGIN/.claude-plugin/plugin.json'))['version'])")"
+XV="$(python3 -c "import json; print(json.load(open('$PLUGIN/.codex-plugin/plugin.json'))['version'])")"
 if [[ "$CV" == "$XV" ]]; then
   ok "version lockstep $CV"
 else
   bad "version lockstep $CV vs $XV"
 fi
 
-if [[ -f "$ROOT/marketplace.json" ]] || [[ -f "$ROOT/.claude-plugin/marketplace.json" ]]; then
-  bad "marketplace.json must not live in the plugin package"
+if [[ -f "$PLUGIN/marketplace.json" ]] || [[ -f "$PLUGIN/.claude-plugin/marketplace.json" ]] \
+  || [[ -f "$PLUGIN/.grok-plugin/marketplace.json" ]] || [[ -d "$ROOT/.claude-plugin" ]] || [[ -d "$ROOT/.codex-plugin" ]]; then
+  bad "marketplace or nested plugin manifest inside the plugin package"
 else
-  ok "no marketplace.json in plugin package"
+  ok "no marketplace or nested Pipe manifest in plugin package"
 fi
 
 # --- skills ---
 SKILLS=(hextile-pipe hextile-knockout hextile-cutout hextile-recolor-png hextile-recolor-svg hextile-despeckle hextile-trim)
 for s in "${SKILLS[@]}"; do
-  f="$ROOT/skills/$s/SKILL.md"
+  f="$PLUGIN/skills/$s/SKILL.md"
   if [[ -f "$f" ]]; then
     n="$(grep -m1 '^name:' "$f" | sed 's/name:[[:space:]]*//')"
     if [[ "$n" == "$s" ]]; then
@@ -64,7 +68,7 @@ for s in "${SKILLS[@]}"; do
   fi
 done
 
-if grep -RIn --include='*.md' -E 'frog-pipe|/frog-' "$ROOT/skills" 2>/dev/null; then
+if grep -RIn --include='*.md' -E 'frog-pipe|/frog-' "$PLUGIN/skills" 2>/dev/null; then
   bad "frog brand leaked into skills/"
 else
   ok "no frog brand in skills/"

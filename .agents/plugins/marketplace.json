@@ -5,24 +5,10 @@
   },
   "plugins": [
     {
-      "name": "hextile-pipe",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/ansonphong/hextile-pipe.git",
-        "sha": "83e97aab62f28ad909ee66711ab45c05dfdfe9bf"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    },
-    {
       "name": "360-hextile",
       "source": {
-        "source": "url",
-        "url": "https://github.com/ansonphong/360-hextile-agent.git",
-        "sha": "86343f148701d5df4df9e32d928ce367c06aa990"
+        "source": "local",
+        "path": "./plugins/360-hextile"
       },
       "policy": {
         "installation": "AVAILABLE",

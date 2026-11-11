@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Health check for hextile-pipe plugin install.
+# Health check for the Pipe tools inside the 360-hextile plugin install.
 # Hard-fail: root, 6 matte scripts, Pillow. Soft-warn: numpy. Each --help must work.
 set -euo pipefail
 
@@ -18,7 +18,7 @@ ok()   { echo "  OK  $*"; PASS=$((PASS + 1)); }
 bad()  { echo "  FAIL $*"; FAIL=$((FAIL + 1)); }
 soft() { echo "  WARN $*"; WARN=$((WARN + 1)); }
 
-echo "hextile-pipe doctor"
+echo "360-hextile pipe doctor"
 echo "  root: $ROOT"
 
 if [[ -d "$ROOT/matte" && -d "$ROOT/scripts" ]]; then
@@ -63,14 +63,15 @@ for t in "${TOOLS[@]}"; do
   fi
 done
 
-# Version lockstep
-CLAUDE_V="$(python3 -c "import json; print(json.load(open('$ROOT/.claude-plugin/plugin.json'))['version'])" 2>/dev/null || echo missing)"
-CODEX_V="$(python3 -c "import json; print(json.load(open('$ROOT/.codex-plugin/plugin.json'))['version'])" 2>/dev/null || echo missing)"
-CLAUDE_N="$(python3 -c "import json; print(json.load(open('$ROOT/.claude-plugin/plugin.json'))['name'])" 2>/dev/null || echo missing)"
-CODEX_N="$(python3 -c "import json; print(json.load(open('$ROOT/.codex-plugin/plugin.json'))['name'])" 2>/dev/null || echo missing)"
+# Version lockstep (manifests live at the 360-hextile plugin root, one level above pipe/)
+PLUGIN="$(cd "$ROOT/.." && pwd)"
+CLAUDE_V="$(python3 -c "import json; print(json.load(open('$PLUGIN/.claude-plugin/plugin.json'))['version'])" 2>/dev/null || echo missing)"
+CODEX_V="$(python3 -c "import json; print(json.load(open('$PLUGIN/.codex-plugin/plugin.json'))['version'])" 2>/dev/null || echo missing)"
+CLAUDE_N="$(python3 -c "import json; print(json.load(open('$PLUGIN/.claude-plugin/plugin.json'))['name'])" 2>/dev/null || echo missing)"
+CODEX_N="$(python3 -c "import json; print(json.load(open('$PLUGIN/.codex-plugin/plugin.json'))['name'])" 2>/dev/null || echo missing)"
 
-if [[ "$CLAUDE_N" == "hextile-pipe" && "$CODEX_N" == "hextile-pipe" ]]; then
-  ok "plugin name hextile-pipe (claude+codex)"
+if [[ "$CLAUDE_N" == "360-hextile" && "$CODEX_N" == "360-hextile" ]]; then
+  ok "plugin name 360-hextile (claude+codex)"
 else
   bad "plugin name mismatch: claude=$CLAUDE_N codex=$CODEX_N"
 fi

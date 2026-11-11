@@ -1,4 +1,4 @@
-# ⬡ hextile-pipe
+# ⬡ Hextile Pipe
 
 Loose bag of **studio utility scripts** for art assets — not a product pipeline.
 
@@ -8,22 +8,23 @@ Loose bag of **studio utility scripts** for art assets — not a product pipelin
 
 Use whatever you need; nothing requires anything else.
 
-GitHub: [`github.com/ansonphong/hextile-pipe`](https://github.com/ansonphong/hextile-pipe)
+Ships inside the **`360-hextile`** plugin from [`github.com/ansonphong/360-HEXTILE-PLUGINS`](https://github.com/ansonphong/360-HEXTILE-PLUGINS) at `plugins/360-hextile/pipe/`. Install the plugin (`360-hextile@360-hextile`); there is no separate `hextile-pipe` plugin or repository any more. Paths below are relative to this `pipe/` folder.
 
 ## Layout
 
 ```
-hextile-pipe/
+plugins/360-hextile/pipe/
   matte/                 Python CLIs (Pillow) + colorutil
   illustrator/           ExtendScript (.jsx)
   photoshop/             Photoshop script design (WIP)
   fixtures/              Optional sample assets (LFS)
   scripts/               fp-run, doctor, plugin test, smoke
-  skills/                Claude/Codex plugin skills
   references/            Extra notes (adobe-manual.md)
   requirements.txt       pillow>=10 (numpy optional)
   README.md              SSOT docs (this file)
 ```
+
+The Pipe skills live with the other plugin skills in `plugins/360-hextile/skills/hextile-*`.
 
 **Conventions:** lowercase folders · Python `snake_case` · JSX/docs `kebab-case`.
 
@@ -319,7 +320,7 @@ bash scripts/fp-run.sh recolor_png sprite.png --color red --new
 | `knockout` | `matte/knockout.py` | — |
 | `despeckle` | `matte/despeckle.py` | — |
 
-Resolves the plugin root via `scripts/lib/plugin-root.sh` (env `HEXTILE_PIPE_PLUGIN_ROOT` / `CLAUDE_PLUGIN_ROOT` / `GROK_PLUGIN_ROOT` / `PLUGIN_ROOT`, else walk up from the script). Unknown tool → exit 2.
+Resolves the Pipe root via `scripts/lib/plugin-root.sh` (env `HEXTILE_PIPE_PLUGIN_ROOT` naming this `pipe/` folder, or `CLAUDE_PLUGIN_ROOT` / `GROK_PLUGIN_ROOT` / `PLUGIN_ROOT` naming the 360-hextile plugin root, whose `pipe/` is used; else walk up from the script). Unknown tool → exit 2.
 
 ### `fp-doctor.sh` — install health
 
@@ -389,7 +390,7 @@ PNG scale is searched so predicted pixels stay **≤ targetPx**. Root letter `A,
 
 ## Skills (plugin)
 
-Agent wrappers under `skills/` — they call `fp-run.sh`, they are not extra CLIs.
+Agent wrappers under the plugin's `skills/hextile-*` — they call `pipe/scripts/fp-run.sh`, they are not extra CLIs. Claude names them `/360-hextile:<skill>`.
 
 | Skill | Tool |
 |-------|------|
@@ -399,6 +400,7 @@ Agent wrappers under `skills/` — they call `fp-run.sh`, they are not extra CLI
 | `hextile-cutout` | `cutout` |
 | `hextile-knockout` | `knockout` |
 | `hextile-despeckle` | `despeckle` |
+| `hextile-trim` | `trim` |
 
 Agent default in skills: pass `--new` unless the user insists on overwrite.
 
@@ -417,8 +419,8 @@ Large binaries (PNG/JPG/PSD/AI/PDF/…) use **Git LFS**.
 
 ```bash
 git lfs install
-git clone https://github.com/ansonphong/hextile-pipe.git
-cd hextile-pipe && git lfs pull
+git clone https://github.com/ansonphong/360-HEXTILE-PLUGINS.git
+cd 360-HEXTILE-PLUGINS && git lfs pull
 ```
 
 | File | Role |
@@ -433,4 +435,4 @@ Don’t commit export dumps or machine prefs (`prefs.txt`, `export-report.txt`).
 
 ## License
 
-Private / studio tooling unless you add a LICENSE.
+Private / studio tooling (© Phong, all rights reserved; published as `UNLICENSED` in the former `hextile-pipe` repository) unless a LICENSE is added. The rest of the 360-hextile plugin is MIT; see the plugin README.

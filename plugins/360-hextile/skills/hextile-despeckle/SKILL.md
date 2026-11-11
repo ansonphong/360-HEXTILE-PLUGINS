@@ -11,15 +11,15 @@ Removes small islands on black-bg or transparent coverage (not RGB blur).
 ## Run
 
 ```bash
-ROOT="${HEXTILE_PIPE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}}"
-bash "$ROOT/scripts/fp-run.sh" despeckle <path> --new [flags…]
+ROOT="${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}"
+bash "$ROOT/pipe/scripts/fp-run.sh" despeckle <path> --new [flags…]
 ```
 
 **Agent default:** always pass `--new` unless user insists on overwrite.
 
 ## Common flags
 
-`bash "$ROOT/scripts/fp-run.sh" despeckle -h`
+`bash "$ROOT/pipe/scripts/fp-run.sh" despeckle -h`
 
 | Flag | Meaning |
 |------|---------|

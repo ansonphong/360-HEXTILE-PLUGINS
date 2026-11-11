@@ -1754,7 +1754,7 @@ def test_expression_timeline_mcp_schema_and_teaching() -> None:
         {"op": "set_parameter_mode", "target": "shader.params.mode",
          "mode": "modulator", "binding": typed_binding}]}}
     jsonschema.validate(mode_proposal, _schema("propose_shader")["inputSchema"])
-    sys.path.insert(0, str(ROOT.parent / "360-HEXTILE-APP"))
+    sys.path.insert(0, str(ROOT.parents[2] / "360-HEXTILE-APP"))
     from backend.modulation.contracts import _signature
     assert _signature(typed_binding["signature"], "binding.signature", typed=True)["choices"] == [0, 1, 2]
     for kind in ("int", "bool", "vec3", "ramp_color"):
@@ -2272,7 +2272,7 @@ def test_workspace_closed_schemas_and_transport_admission() -> None:
 def test_workspace_requests_validate_with_live_app_closed_models() -> None:
     # Load the real route models without importing unrelated desktop/GPU owners.
     # This cross-service boundary catches a closed field or type drifting in APP.
-    route = ROOT.parent / "360-HEXTILE-APP/backend/api/routes/agent_shader_workspaces.py"
+    route = ROOT.parents[2] / "360-HEXTILE-APP/backend/api/routes/agent_shader_workspaces.py"
     tree = ast.parse(route.read_text(encoding="utf-8"))
     imports = [node for node in tree.body if isinstance(node, ast.ImportFrom) and node.module in {"typing", "pydantic"}]
     names = {"ClosedModel", "ShaderRef", "ExistingWorkspace", "OpenIn", "RegisterIn",
@@ -2708,7 +2708,7 @@ def _playable_recipe() -> tuple[list[str], dict[str, Any]]:
 def test_playable_recipes_match_shipped_sources_and_bound_contracts() -> None:
     # These are the two accepted producer examples, not schema stubs. Read-only
     # admission checks keep a copied guide from teaching fields APP rejects.
-    app = ROOT.parent / "360-HEXTILE-APP"
+    app = ROOT.parents[2] / "360-HEXTILE-APP"
     sys.path.insert(0, str(app))
     from backend.modulation.conventions import validate_conventions
     from backend.modulation.contracts import validate_modulation
@@ -2732,7 +2732,7 @@ def test_playable_recipes_match_shipped_sources_and_bound_contracts() -> None:
 
 @pytest.mark.parametrize("variant", ["held", "instant", "orphan", "default_one", "schema_one"])
 def test_playable_recipe_variants_use_real_intrinsic_admission(variant: str) -> None:
-    sys.path.insert(0, str(ROOT.parent / "360-HEXTILE-APP"))
+    sys.path.insert(0, str(ROOT.parents[2] / "360-HEXTILE-APP"))
     from backend.modulation.contracts import ContractError, validate_modulation_intrinsic
 
     _, extensions = _playable_recipe()

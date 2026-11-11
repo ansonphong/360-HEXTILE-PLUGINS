@@ -8,27 +8,17 @@
   },
   "plugins": [
     {
-      "name": "hextile-pipe",
-      "source": "./plugins/hextile-pipe",
-      "category": "productivity",
-      "homepage": "https://github.com/ansonphong/hextile-pipe",
-      "tags": [
-        "studio",
-        "matte",
-        "assets",
-        "360-hextile"
-      ]
-    },
-    {
       "name": "360-hextile",
       "source": "./plugins/360-hextile",
       "category": "productivity",
-      "homepage": "https://github.com/ansonphong/360-hextile-agent",
+      "homepage": "https://github.com/ansonphong/360-HEXTILE-PLUGINS",
       "tags": [
         "360",
         "hextile",
         "mcp",
-        "workflows"
+        "workflows",
+        "studio",
+        "matte"
       ]
     }
   ]

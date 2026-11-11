@@ -12,15 +12,15 @@ Fully transparent / sub-floor pixels keep original RGB.
 ## Run
 
 ```bash
-ROOT="${HEXTILE_PIPE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}}"
-bash "$ROOT/scripts/fp-run.sh" recolor_png <path> --new [flags…]
+ROOT="${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}"
+bash "$ROOT/pipe/scripts/fp-run.sh" recolor_png <path> --new [flags…]
 ```
 
 **Agent default:** always pass `--new` unless user insists on overwrite.
 
 ## Flags
 
-`bash "$ROOT/scripts/fp-run.sh" recolor_png -h`
+`bash "$ROOT/pipe/scripts/fp-run.sh" recolor_png -h`
 
 | Flag | Meaning |
 |------|---------|

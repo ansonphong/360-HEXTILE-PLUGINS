@@ -862,7 +862,7 @@ def test_fractal_static_capture_recovery_keeps_frame_proof_and_rejects_mixed_rec
 def test_fractal_inspect_continue_preserves_intent_and_run_fence() -> None:
     intent = {"destination_folder": "D:\\chosen\\frames", "format": "PNG"}
     request = _sequence(destination_intent=intent, project_path="D:\\Projects\\Current")
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "360-HEXTILE-APP"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "360-HEXTILE-APP"))
     from plugins.fractal.backend.sequence_samples import FractalSequenceRequest
     frozen = FractalSequenceRequest.model_validate(request).model_dump(mode="json")
     expected_hash = "sha256:" + hashlib.sha256(json.dumps(

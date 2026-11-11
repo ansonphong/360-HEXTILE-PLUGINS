@@ -1,11 +1,10 @@
-# 360-hextile-agent
+# 360-hextile plugin
 
-**v0.5.7**
+**v0.6.0**
 
-Claude Code plugin + Codex twin that drive **360 Hextile** over localhost HTTP.
+One Claude Code / Codex / Grok plugin that drives **360 Hextile** over localhost HTTP and carries the Hextile Pipe studio matte tools.
 
-Primary marketplace: **`ansonphong/360-hextile-plugins`** — the shared 360 Hextile catalog. Install id **`360-hextile@360-hextile`**. The studio-matte plugin `hextile-pipe` ships from the same catalog.
-Standalone marketplace (footnote): **`ansonphong/360-hextile-agent`** — this repo on its own, install id **`360-hextile@hextile-agent`**.
+Source and the only marketplace: **[`ansonphong/360-HEXTILE-PLUGINS`](https://github.com/ansonphong/360-HEXTILE-PLUGINS)** (marketplace `360-hextile`). Install id **`360-hextile@360-hextile`**. Workflow, Shader, Fractal and upres skills, the `hextile` MCP proxy, and the Pipe matte CLIs (`pipe/`, skills `hextile-*`) all ship in this one plugin. The former standalone repositories `360-hextile-agent` and `hextile-pipe` and their marketplaces are retired; their histories are preserved as `provenance/*` tags in this repository.
 
 The MCP process is a thin **stdio** JSON-RPC ↔ HTTP proxy (`python3`, stdlib only).  
 All merge, validation, and render logic stay in the running app. The client reads `local-endpoint.json` and does not assume port 8000.
@@ -50,28 +49,21 @@ reconnect only when the matching APP/content cutover is ready for your smoke tes
 
 ## Install — Claude Code
 
-Primary — the 360 Hextile catalog (ships this plugin **and** `hextile-pipe`):
-
 ```bash
-/plugin marketplace add ansonphong/360-hextile-plugins
+/plugin marketplace add ansonphong/360-HEXTILE-PLUGINS
 /plugin install 360-hextile@360-hextile
 ```
 
-Standalone — this repo as its own marketplace:
+A local checkout also works: `/plugin marketplace add /path/to/360-HEXTILE-PLUGINS`, then the same install id.
+
+Upgrading from the retired routes: `/plugin uninstall hextile-pipe@360-hextile` and `/plugin uninstall 360-hextile@hextile-agent` (whichever exist), `/plugin marketplace remove hextile-agent` if present, then `/plugin marketplace update 360-hextile` and `/plugin update 360-hextile@360-hextile`. The Pipe skills are now part of this plugin.
 
 ```bash
-/plugin marketplace add ansonphong/360-hextile-agent
-/plugin install 360-hextile@hextile-agent
-```
-
-Local checkout of this tree still works: add the directory as a marketplace root, then `/plugin install 360-hextile@hextile-agent`.
-
-```bash
-# package root is the plugin root:
+# plugin root (plugins/360-hextile):
 #   .claude-plugin/plugin.json
-#   .claude-plugin/marketplace.json
 #   .mcp.json          → python3 ${CLAUDE_PLUGIN_ROOT}/mcp/hextile_mcp.py
-#   skills/360-hextile/SKILL.md
+#   skills/360-hextile/SKILL.md, skills/hextile-pipe/SKILL.md, …
+#   pipe/scripts/fp-run.sh
 ```
 
 On Windows, change Claude `.mcp.json` `command` to `python` or `py -3` (not `python3`). Do not rewrite the committed POSIX `.mcp.json`. Codex installer already writes `sys.executable`.
@@ -80,44 +72,37 @@ Update the canonical package in each host and start a new host session to load r
 
 Confirm tools appear (`list_workflows`, `get_guide`, `get_local_access_status`, …). With the app down, tools return a clean error — the MCP process stays up.
 
-Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply. `get_local_access_status` reports `enabled` even with MCP OFF and no Studio. Canonical source is this repo’s `mcp/hextile_mcp.py`; host configuration and the Codex installer point at it.
+Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply. `get_local_access_status` reports `enabled` even with MCP OFF and no Studio. Canonical source is this plugin’s `mcp/hextile_mcp.py`; host configuration and the Codex installer point at it.
 
 ## Install — Grok
 
-Primary — the 360 Hextile catalog:
-
 ```bash
-grok plugin marketplace add ansonphong/360-hextile-plugins
+grok plugin marketplace add ansonphong/360-HEXTILE-PLUGINS
 grok plugin install 360-hextile --trust
 ```
 
-Standalone — this repo as its own marketplace:
+Enable `360-hextile` in `~/.grok/config.toml` `[plugins].enabled` (or Space in `/plugins`). Reload plugins (`r`) or start a new session. A local checkout also works: `grok plugin marketplace add /path/to/360-HEXTILE-PLUGINS`.
 
-```bash
-grok plugin marketplace add ansonphong/360-hextile-agent
-grok plugin install 360-hextile --trust
-```
-
-Enable `360-hextile` in `~/.grok/config.toml` `[plugins].enabled` (or Space in `/plugins`). Reload plugins (`r`) or start a new session.
-
-A local checkout still works: `grok plugin marketplace add /path/to/hextile-agent` then `grok plugin install 360-hextile --trust`.
+Upgrading: remove the old `hextile-pipe` and standalone `360-hextile` installs and any `hextile-agent` marketplace source, point the `360-hextile` source at `https://github.com/ansonphong/360-HEXTILE-PLUGINS.git`, then `grok plugin marketplace update` and install or update `360-hextile`.
 
 ## Install — Codex
 
-Primary — use a current Codex CLI with `codex plugin` support:
+Use a current Codex CLI with `codex plugin` support:
 
 ```bash
-codex plugin marketplace add ansonphong/360-hextile-plugins
+codex plugin marketplace add ansonphong/360-HEXTILE-PLUGINS
 codex plugin add 360-hextile@360-hextile
 ```
 
-This installs the bundled skills and `hextile` stdio MCP proxy. Git and Python 3.9 or newer are prerequisites, and `python3` must be available to the agent. Start a new Codex session and check `/mcp` for `hextile`, with 360 Hextile open on the same computer at `127.0.0.1:8000`. No separate clone or Python installer is needed for this route.
+This installs all bundled skills (including the Pipe `hextile-*` skills) and the `hextile` stdio MCP proxy. Git and Python 3.9 or newer are prerequisites, and `python3` must be available to the agent. Start a new Codex session and check `/mcp` for `hextile`, with 360 Hextile open on the same computer at `127.0.0.1:8000`. No separate clone or Python installer is needed for this route.
 
-Alternative manual setup — clone this repo and run the installer:
+Upgrading: remove `hextile-pipe@360-hextile` and `360-hextile@hextile-agent` plus the `hextile-agent` marketplace if present, upgrade the `360-hextile` marketplace, then add `360-hextile@360-hextile`.
+
+Alternative manual setup — clone this repo and run the installer from the plugin directory:
 
 ```bash
-git clone https://github.com/ansonphong/360-hextile-agent.git
-cd 360-hextile-agent
+git clone https://github.com/ansonphong/360-HEXTILE-PLUGINS.git
+cd 360-HEXTILE-PLUGINS/plugins/360-hextile
 python3 codex/install.py
 ```
 
@@ -125,9 +110,12 @@ This writes:
 
 - `~/.agents/skills/360-hextile/SKILL.md` + `references/`
 - `~/.agents/skills/shader/SKILL.md`
+- `~/.agents/skills/fractal/SKILL.md`
 - `~/.agents/skills/upres/SKILL.md`
 - `[mcp_servers.hextile]` **stdio** entry in `~/.codex/config.toml`  
   (`command` is the absolute `sys.executable`, `args = ["…/mcp/hextile_mcp.py"]`)
+
+The manual installer does not install the Pipe skills; use the plugin route for those.
 
 Uninstall:
 
@@ -138,6 +126,10 @@ python3 codex/install.py --uninstall
 Restart Codex and run `/mcp` — you should see `hextile` and the same eight local-file tools as Claude.
 
 The manual installer requires **Codex ≥ 0.34.0**. The MCP proxy uses **stdio** (no streamable HTTP dual-stack).
+
+## Hextile Pipe (studio matte)
+
+Python matte CLIs (knockout, cutout, recolor PNG/SVG, despeckle, trim), an Illustrator export script and Photoshop design notes live in `pipe/`. Skills: `hextile-pipe` (hub + doctor), `hextile-knockout`, `hextile-cutout`, `hextile-recolor-png`, `hextile-recolor-svg`, `hextile-despeckle`, `hextile-trim` (Claude: `/360-hextile:hextile-knockout`, …). Runner: `bash "$PLUGIN_ROOT/pipe/scripts/fp-run.sh" <tool> …`; doctor: `pipe/scripts/fp-doctor.sh`. Requires `pip install -r pipe/requirements.txt` (Pillow; numpy optional). Full reference: [`pipe/README.md`](pipe/README.md).
 
 ## /360-hextile:upres
 
@@ -157,8 +149,8 @@ Install id stays **`360-hextile@360-hextile`**. Hosts do **not** auto-update.
 | Host | How `/360-hextile:upres` lands |
 |------|---------------------------|
 | **Claude Code** | Plugin skills auto-discover from `plugin.json` `"skills": "./skills/"` after `/plugin install 360-hextile@360-hextile` (or marketplace update + `/plugin update 360-hextile`). |
-| **Grok** | Catalog SHA pin in `ansonphong/360-hextile-plugins`. After that pin is on GitHub: `grok plugin marketplace update` then `grok plugin update 360-hextile`. |
-| **Codex** | `python3 codex/install.py` writes `~/.agents/skills/upres/SKILL.md`. |
+| **Grok** | Same-repository local source in `ansonphong/360-HEXTILE-PLUGINS`: `grok plugin marketplace update` then `grok plugin update 360-hextile`. |
+| **Codex** | `codex plugin add 360-hextile@360-hextile` (or `python3 codex/install.py`, which writes `~/.agents/skills/upres/SKILL.md`). |
 
 ## Selected tools
 
@@ -204,7 +196,7 @@ Install id stays **`360-hextile@360-hextile`**. Hosts do **not** auto-update.
 
 Enable **MCP** in Settings; use **Disconnect** to block fresh work. File tools forward only to APP loopback; `local_file_write_status` can reconcile the original `request_id` after Disconnect.
 
-Instruction surface: **`skills/360-hextile/SKILL.md`** (general automation hub), **`skills/shader/SKILL.md`** (authoritative Shader file procedure), **`skills/fractal/SKILL.md`** (Fractal Workshop) and **`skills/upres/SKILL.md`**.
+Instruction surface: **`skills/360-hextile/SKILL.md`** (general automation hub), **`skills/shader/SKILL.md`** (authoritative Shader file procedure), **`skills/fractal/SKILL.md`** (Fractal Workshop), **`skills/upres/SKILL.md`** and the Pipe **`skills/hextile-*/SKILL.md`** matte skills.
 Codex `AGENTS-fragment.md` is a frontmatter-stripped copy of the hub — edit SKILL only.
 A temporary installer destination does not prove an installed host.
 
@@ -306,22 +298,26 @@ curl -s -X POST http://127.0.0.1:8000/api/workflows/run \
 ## Layout
 
 ```
-hextile-agent/
+360-HEXTILE-PLUGINS/plugins/360-hextile/
   .claude-plugin/plugin.json
-  .claude-plugin/marketplace.json
-  .grok-plugin/marketplace.json
+  .codex-plugin/plugin.json
   .mcp.json
   skills/360-hextile/SKILL.md
-  skills/shader/SKILL.md
   skills/360-hextile/references/
+  skills/shader/SKILL.md
+  skills/fractal/SKILL.md
   skills/upres/SKILL.md
+  skills/hextile-*/SKILL.md      Pipe matte skills
   mcp/hextile_mcp.py
   mcp/hextile_client.py
   codex/install.py
   codex/AGENTS-fragment.md
-  tests/test_tool_list_drift.py
+  pipe/                          matte/, scripts/, illustrator/, photoshop/, references/
+  tests/
   README.md
 ```
+
+The marketplace catalogs live at the repository root (`.claude-plugin/`, `.agents/plugins/`, `.grok-plugin/`).
 
 ## Develop / test
 
@@ -331,8 +327,13 @@ python3 -m pytest tests/test_tool_list_drift.py -q
 
 # Codex installer smoke (temp HOME)
 python3 -m pytest tests/test_codex_skill_discovery.py -q
-python3 codex/install.py --home /tmp/hextile-agent-codex-test
-python3 codex/install.py --uninstall --home /tmp/hextile-agent-codex-test
+python3 codex/install.py --home /tmp/hextile-codex-test
+python3 codex/install.py --uninstall --home /tmp/hextile-codex-test
+
+# Pipe
+bash pipe/scripts/test-plugin.sh
+bash pipe/scripts/smoke-matte-flags.sh
+python3 -m pytest pipe/matte/test_trim.py -q
 ```
 
 ## Docs
@@ -342,4 +343,6 @@ Bundled agent guides: `get_guide` (`workflow-schema`, `best-practices`, `website
 
 ## License
 
-MIT — see package metadata in `.claude-plugin/plugin.json`.
+Everything outside `pipe/` and the `hextile-*` skills is MIT, as published in the former `360-hextile-agent` repository.
+
+`pipe/` and the `skills/hextile-*` matte skills come from the former `hextile-pipe` repository, which was published without an open-source license (`UNLICENSED`, © Phong, all rights reserved). Consolidating them here does not change that licensing.

@@ -11,15 +11,15 @@ Art-on-black PNG/JPG → RGBA: levels on luminance become **alpha**, RGB filled 
 ## Run
 
 ```bash
-ROOT="${HEXTILE_PIPE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}}"
-bash "$ROOT/scripts/fp-run.sh" knockout <path> --new [flags…]
+ROOT="${CLAUDE_PLUGIN_ROOT:-${GROK_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}}"
+bash "$ROOT/pipe/scripts/fp-run.sh" knockout <path> --new [flags…]
 ```
 
 **Agent default:** always pass `--new` unless user insists on overwrite.
 
 ## Common flags
 
-Discover full set: `bash "$ROOT/scripts/fp-run.sh" knockout -h`
+Discover full set: `bash "$ROOT/pipe/scripts/fp-run.sh" knockout -h`
 
 | Flag | Meaning |
 |------|---------|
