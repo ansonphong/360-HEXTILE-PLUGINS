@@ -319,6 +319,7 @@ bash scripts/fp-run.sh recolor_png sprite.png --color red --new
 | `cutout` | `matte/cutout.py` | — |
 | `knockout` | `matte/knockout.py` | — |
 | `despeckle` | `matte/despeckle.py` | — |
+| `trim` | `matte/trim.py` | — |
 
 Resolves the Pipe root via `scripts/lib/plugin-root.sh` (env `HEXTILE_PIPE_PLUGIN_ROOT` naming this `pipe/` folder, or `CLAUDE_PLUGIN_ROOT` / `GROK_PLUGIN_ROOT` / `PLUGIN_ROOT` naming the 360-hextile plugin root, whose `pipe/` is used; else walk up from the script). Unknown tool → exit 2.
 

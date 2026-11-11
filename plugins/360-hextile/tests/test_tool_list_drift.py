@@ -1957,6 +1957,14 @@ def test_every_tool_input_schema_is_a_top_level_object() -> None:
     assert [tool["name"] for tool in TOOLS if tool["inputSchema"].get("type") != "object"] == []
 
 
+def test_marketplace_readme_lists_every_mcp_tool() -> None:
+    readme = (ROOT.parents[1] / "README.md").read_text(encoding="utf-8")
+    listed = re.findall(r"^\| `([a-z0-9_]+)` \|", readme.split("### `hextile` MCP server")[1].split("\n### ")[0], re.M)
+    listed_tools = TOOLS + hextile_mcp.SHADER_EXTENSION_TOOLS
+    assert sorted(listed) == sorted(tool["name"] for tool in listed_tools)
+    assert f"— {len(listed_tools)} tools" in readme
+
+
 def test_batch_tool_schemas_forbid_additional_properties() -> None:
     for name in sorted(_BATCH_TOOLS):
         schema = _tool_schema(name)
