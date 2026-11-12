@@ -3433,6 +3433,38 @@ class Client:
         """GET /api/license/status. Current entitlement only; no tier probe."""
         return _project_license_status(self._read_status("/api/license/status"))
 
+    def search_docs(self, query: Any, limit: Any = None) -> Any:
+        """GET /api/docs/search. Public docs bundled with this APP version."""
+        if type(query) is not str or not 1 <= len(query) <= 200:
+            raise HextileClientError(
+                "query must be a string of 1..200 characters", kind="other", status_code=422,
+            )
+        params: dict[str, Any] = {"q": query}
+        if limit is not None:
+            if type(limit) is not int or not 1 <= limit <= 10:
+                raise HextileClientError(
+                    "limit must be an integer 1..10", kind="other", status_code=422,
+                )
+            params["limit"] = limit
+        return self._read_status("/api/docs/search", params=params)
+
+    def read_doc(self, path: Any, section: Any = None) -> Any:
+        """GET /api/docs/read. One page, or one section when section is set."""
+        if type(path) is not str or not 1 <= len(path) <= 200:
+            raise HextileClientError(
+                "path must be a non-empty string of at most 200 characters",
+                kind="other", status_code=422,
+            )
+        params: dict[str, Any] = {"path": path}
+        if section is not None:
+            if type(section) is not str or len(section) > 200:
+                raise HextileClientError(
+                    "section must be a string of at most 200 characters",
+                    kind="other", status_code=422,
+                )
+            params["section"] = section
+        return self._read_status("/api/docs/read", params=params)
+
     def _require_native_render(self, *, still_profile: str | None = None,
                                fractal_still_capture: bool = False,
                                sequence_inputs: bool = False, preview_inspector: bool = False,

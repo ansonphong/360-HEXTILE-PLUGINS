@@ -108,6 +108,8 @@ EXPECTED_TOOLS = (
     "repair_model",
     "cancel_model_download",
     "get_guide",
+    "search_docs",
+    "read_doc",
     "extract_sequence_video",
     "create_sequence",
     "start_sequence",
@@ -1264,7 +1266,7 @@ def test_mcp_initialize() -> None:
     )
     assert resp is not None
     assert resp["result"]["serverInfo"]["name"] == "hextile"
-    assert resp["result"]["serverInfo"]["version"] == "0.6.5"
+    assert resp["result"]["serverInfo"]["version"] == "0.6.6"
     assert resp["result"]["protocolVersion"] == "2024-11-05"
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]

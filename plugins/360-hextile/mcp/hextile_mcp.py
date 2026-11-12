@@ -45,7 +45,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.5"
+SERVER_VERSION = "0.6.6"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -100,6 +100,8 @@ TOOL_NAMES = (
     "repair_model",
     "cancel_model_download",
     "get_guide",
+    "search_docs",
+    "read_doc",
     "extract_sequence_video",
     "create_sequence",
     "start_sequence",
@@ -216,6 +218,8 @@ _READ_ONLY = frozenset(
         "get_model_readiness",
         "get_model_download_queue",
         "get_guide",
+        "search_docs",
+        "read_doc",
         "get_sequence",
         "list_sequences",
         "list_sequence_frames",
@@ -1880,6 +1884,27 @@ TOOLS: list[dict[str, Any]] = [
          "model_id": {"type": "string", "minLength": 1},
          "expected_queue_entry_id": {"type": "string", "minLength": 1}},
         required=["pipeline_id", "model_id", "expected_queue_entry_id"],
+    ),
+    _tool_def(
+        "search_docs",
+        "Search the public 360 Hextile docs bundled with this APP version. "
+        "Returns page/section hits with URLs; then call read_doc for the text.",
+        {
+            "query": {"type": "string", "minLength": 1, "maxLength": 200},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+        },
+        required=["query"],
+    ),
+    _tool_def(
+        "read_doc",
+        "Read one docs page or one section (anchor from search_docs). "
+        "Long pages return an outline; request a section. If the APP is closed, "
+        'use get_guide(name="website-index") and https://360hextile.com/llms.txt.',
+        {
+            "path": {"type": "string", "minLength": 1, "maxLength": 200},
+            "section": {"type": "string", "maxLength": 200},
+        },
+        required=["path"],
     ),
     _tool_def(
         "get_guide",
@@ -3726,6 +3751,8 @@ _CLOSED_ARGUMENT_KEYS = {
     "get_cache_buckets": frozenset(),
     "clear_disposable_cache": frozenset({"bucket"}),
     "get_license_status": frozenset(),
+    "search_docs": frozenset({"query", "limit"}),
+    "read_doc": frozenset({"path", "section"}),
 }
 
 
@@ -3794,6 +3821,8 @@ class HextileMcpServer:
             "repair_model": self._repair_model,
             "cancel_model_download": self._cancel_model_download,
             "get_guide": self._get_guide,
+            "search_docs": self._search_docs,
+            "read_doc": self._read_doc,
             "extract_sequence_video": self._extract_sequence_video,
             "create_sequence": self._create_sequence,
             "start_sequence": self._start_sequence,
@@ -5503,6 +5532,42 @@ class HextileMcpServer:
         if field is not None and not isinstance(field, str):
             raise HextileClientError("field must be a string", status_code=None, kind="other")
         return load_guide(str(args.get("name") or ""), field=field, detail=detail)
+
+    def _search_docs(self, args: dict[str, Any]) -> Any:
+        args = _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["search_docs"])
+        query = args.get("query")
+        if type(query) is not str or not 1 <= len(query) <= 200:
+            raise HextileClientError(
+                "query must be a string of 1..200 characters", kind="other", status_code=422,
+            )
+        if "limit" in args:
+            limit = args["limit"]
+            if type(limit) is not int or not 1 <= limit <= 10:
+                raise HextileClientError(
+                    "limit must be an integer 1..10", kind="other", status_code=422,
+                )
+        else:
+            limit = None
+        return self.client.search_docs(query, limit)
+
+    def _read_doc(self, args: dict[str, Any]) -> Any:
+        args = _closed_tool_args(args, _CLOSED_ARGUMENT_KEYS["read_doc"])
+        path = args.get("path")
+        if type(path) is not str or not 1 <= len(path) <= 200:
+            raise HextileClientError(
+                "path must be a non-empty string of at most 200 characters",
+                kind="other", status_code=422,
+            )
+        if "section" in args:
+            section = args["section"]
+            if type(section) is not str or len(section) > 200:
+                raise HextileClientError(
+                    "section must be a string of at most 200 characters",
+                    kind="other", status_code=422,
+                )
+        else:
+            section = None
+        return self.client.read_doc(path, section)
 
     def _extract_sequence_video(self, args: dict[str, Any]) -> Any:
         video_path = args.get("video_path")

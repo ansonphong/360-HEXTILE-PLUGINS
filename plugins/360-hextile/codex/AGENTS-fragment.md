@@ -65,6 +65,8 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `get_live_context` | Studio snapshot (current owner, doc_generation and live export) | no |
 | `apply_config_delta` | Live delta on the current open file. Never queues | **yes** |
 | `get_guide` | Schema, practices, recipes, website index | no |
+| `search_docs` | Search the public docs bundled with this APP version. Hits include URLs; then `read_doc` | no |
+| `read_doc` | Read one docs page or section. Long pages return an outline. APP closed: `get_guide(name="website-index")` and https://360hextile.com/llms.txt | no |
 | `list_workflows` | Discover templates | no |
 | `get_workflow` | Read one template before override or clone | no |
 | `describe_image` | Describe an exact local file or render graph node, optionally at a 2:1 panorama crop pose; local vision/GPU keeps native admission and returns text only | **yes** |

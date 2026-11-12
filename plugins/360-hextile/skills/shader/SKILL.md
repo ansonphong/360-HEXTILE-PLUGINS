@@ -59,3 +59,4 @@ all be observed after an update; source/cache versions alone prove no activation
 
 Human guides: https://360hextile.com/docs/create/shader and
 https://360hextile.com/docs/user-guide/agent-mode.
+For Workshop UI questions, call `search_docs` then `read_doc` on `create/shader` and `create/shader-agent`.
