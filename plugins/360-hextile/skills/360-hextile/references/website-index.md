@@ -2,7 +2,7 @@
 
 Canonical WWW documentation routes for this repository delivery. A committed route does not prove that the deployed website or installed host has been updated. While the APP is running, `search_docs` finds page and section hits and `read_doc` returns the bundled page or section text. With the APP closed, use `get_guide(name="website-index")` and https://360hextile.com/llms.txt.
 
-The MCP `get_guide` allowlist remains `workflow-schema`, `best-practices`, `recipes` and `website-index`; website pages are not additional guide names. They are readable with `read_doc` while the APP runs. Read the page matching the current task instead of loading every manual. Advanced temporal help can depend on site/edition visibility.
+The MCP `get_guide` allowlist is `workflow-schema`, `shader-cookbook`, `best-practices`, `recipes` and `website-index`; website pages are not additional guide names. They are readable with `read_doc` while the APP runs. Read the page matching the current task instead of loading every manual. Advanced temporal help can depend on site/edition visibility.
 
 ## Getting Started
 
