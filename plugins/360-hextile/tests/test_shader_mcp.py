@@ -1312,13 +1312,20 @@ def test_served_best_practices_preserve_shader_credit_authority() -> None:
 
     guide = load_guide("best-practices")["markdown"]
     procedure = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
-    for text in (guide, procedure):
-        assert "extensions.lineage" in text
-        assert "extensions.retained_credits" in text
-        assert "ai_assistance" in text
-        assert "repair registrations" in text
-        assert "extensions.distribution" in text
-        assert "permission to distribute" in text
+    assert "extensions.lineage" in guide
+    assert "extensions.retained_credits" in guide
+    assert "ai_assistance" in guide
+    assert "repair registrations" in guide
+    assert "extensions.distribution" in guide
+    assert "permission to distribute" in guide
+    assert "provenance.json" in procedure
+    assert "lineage" in procedure
+    assert "retained_credits" in procedure
+    assert "ai_assistance" in procedure
+    assert "distribution" in procedure
+    assert "permission to distribute" in procedure
+    assert "human_only" in procedure
+    assert "proposed" in procedure
 
 
 def test_attribution_guides_teach_limits_and_typed_proposal() -> None:
@@ -1326,15 +1333,22 @@ def test_attribution_guides_teach_limits_and_typed_proposal() -> None:
 
     guide = load_guide("best-practices")["markdown"]
     skill = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
-    for text in (guide, skill):
-        assert "64 KiB" in text and "256 KiB" in text
-        assert "depth at most 2" in text or "depth 2" in text
-        assert "30 seconds" in text and "four" in text
-        assert "attribution_proposal" in text
-        assert "Attribution wasn't added in this selection edit" in text
-        assert "skip_optional" in text
-        assert "acknowledged" in text and "schema-2" in text
-        assert "do not claim a page was read" in text.lower() or "when it was not" in text
+    assert "64 KiB" in guide and "256 KiB" in guide
+    assert "depth at most 2" in guide or "depth 2" in guide
+    assert "30 seconds" in guide and "four" in guide
+    assert "attribution_proposal" in guide
+    assert "Attribution wasn't added in this selection edit" in guide
+    assert "skip_optional" in guide
+    assert "acknowledged" in guide and "schema-2" in guide
+    assert "do not claim a page was read" in guide.lower() or "when it was not" in guide
+    assert "64 KiB" in skill and "256 KiB" in skill
+    assert "depth at most 2" in skill
+    assert "30 seconds" in skill and "four" in skill
+    assert "do not claim a page was read" in skill.lower()
+    assert "Register saves. Read merge to see what was kept." in skill
+    assert "stale_lease" in skill
+    assert "Take control" in skill and "Hand back" in skill
+    assert "comes back skipped" in skill
 
 
 def test_stale_lease_and_human_only_keep_next_step(monkeypatch) -> None:

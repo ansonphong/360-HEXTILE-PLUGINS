@@ -72,23 +72,20 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     assert specialized.startswith("---\nname: shader\n")
     assert umbrella.startswith("---\nname: 360-hextile\n")
     assert "installed **`shader`**" in umbrella
-    assert "workspace_schema:2" in specialized
+    assert "shader.json" in specialized
+    assert "shader_edit" in specialized
+    assert "Register saves. Read merge to see what was kept." in specialized
+    assert "stale_lease" in specialized
+    assert "Take control" in specialized and "Hand back" in specialized
+    assert "comes back skipped" in specialized
     assert "workspace schema 2" in umbrella
-    for body in (specialized, umbrella):
-        assert "source-modules/1" in body
-        assert "https://360hextile.com/docs/create/shader" in body
-        assert "human" in body.lower() and "Apply" in body
+    assert "source-modules/1" in umbrella
+    assert "https://360hextile.com/docs/create/shader" in specialized
+    assert "https://360hextile.com/docs/create/shader" in umbrella
+    assert "human" in umbrella.lower() and "Apply" in umbrella
     assert "https://360hextile.com/static/templates/shaders/gitignore.txt" in specialized
     assert "https://360hextile.com/static/templates/shaders/gitattributes.txt" in specialized
-    assert "only after **every Shader covered**" in specialized
     assert "Native Git diff/commit/checkout/push runs only on the user's explicit instruction" in specialized
-    assert "never exports dirty workspace bytes or Git HEAD" in specialized
-    assert "shared-file access" in specialized
-    assert "unaccepted v2 clone has no saved revision or `shader.json`" in specialized
-    assert "do not call that saved-context read or invent a revision" in specialized
-    assert "Repair only acknowledged editable members" in specialized
-    assert "including unused helpers in v2" in specialized
-    assert "v2 `authoring.json` has no saved-base field" in specialized
     assert "v1 pair or complete v2 declared set" in umbrella
     assert "Trusted Local Full Access" in umbrella
     assert "get_local_access_status" in umbrella
@@ -102,10 +99,7 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     assert "Commit uses CAS" not in umbrella
     assert "SHA-256 CAS" not in umbrella
     assert "CAS replace" not in umbrella
-    assert "Trusted Local Full Access" in specialized
-    assert "spt_" in specialized
-    assert "cpr_" in specialized
-    assert "only the human Applies" in specialized
+    assert "Only the human moves the lease" in specialized
 
     references = tmp_path / ".agents" / "skills" / "360-hextile" / "references"
     recipes = (references / "recipes.md").read_text(encoding="utf-8")
@@ -349,7 +343,9 @@ def test_fractal_workshop_skill_lands_only_in_the_temp_home(tmp_path: Path) -> N
         assert phrase in text
     hub = (tmp_path / ".agents" / "skills" / "360-hextile" / "SKILL.md").read_text(encoding="utf-8")
     assert "installed **`fractal`**" in hub
-    assert "human Apply" in (tmp_path / ".agents" / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
+    assert "Only the human moves the lease" in (
+        tmp_path / ".agents" / "skills" / "shader" / "references" / "authoring.md"
+    ).read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "skills/fractal/SKILL.md" in readme
     assert "does not prove an installed host" in readme
