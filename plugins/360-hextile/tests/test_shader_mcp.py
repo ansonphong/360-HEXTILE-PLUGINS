@@ -1312,20 +1312,12 @@ def test_served_best_practices_preserve_shader_credit_authority() -> None:
 
     guide = load_guide("best-practices")["markdown"]
     procedure = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
-    assert "extensions.lineage" in guide
-    assert "extensions.retained_credits" in guide
-    assert "ai_assistance" in guide
-    assert "repair registrations" in guide
-    assert "extensions.distribution" in guide
-    assert "permission to distribute" in guide
-    assert "provenance.json" in procedure
-    assert "lineage" in procedure
-    assert "retained_credits" in procedure
-    assert "ai_assistance" in procedure
-    assert "distribution" in procedure
-    assert "permission to distribute" in procedure
-    assert "human_only" in procedure
-    assert "proposed" in procedure
+    for phrase in (
+        "provenance.json", "lineage", "retained_credits", "ai_assistance",
+        "distribution", "permission to distribute", "human_only", "proposed",
+    ):
+        assert phrase in guide
+        assert phrase in procedure
 
 
 def test_attribution_guides_teach_limits_and_typed_proposal() -> None:
@@ -1336,11 +1328,8 @@ def test_attribution_guides_teach_limits_and_typed_proposal() -> None:
     assert "64 KiB" in guide and "256 KiB" in guide
     assert "depth at most 2" in guide or "depth 2" in guide
     assert "30 seconds" in guide and "four" in guide
-    assert "attribution_proposal" in guide
-    assert "Attribution wasn't added in this selection edit" in guide
-    assert "skip_optional" in guide
-    assert "acknowledged" in guide and "schema-2" in guide
     assert "do not claim a page was read" in guide.lower() or "when it was not" in guide
+    assert "proposed" in guide and "human_only" in guide
     assert "64 KiB" in skill and "256 KiB" in skill
     assert "depth at most 2" in skill
     assert "30 seconds" in skill and "four" in skill
@@ -2127,67 +2116,58 @@ def test_package_transport_keeps_unknown_upgrade_and_typed_refusal(monkeypatch) 
     assert "Malformed Shader save result" in str(empty.value)
 
 
+_SHIPPED_HEADER = re.compile(r"/\*@hextile-shader\n.*?\*/\n", re.S)
+
+
 def _playable_recipe() -> tuple[list[str], dict[str, Any]]:
     guide = (ROOT / "skills/360-hextile/references/recipes.md").read_text(encoding="utf-8")
     shader_section = guide.split("## Recipe I — Playable Shaders:", 1)[1]
     sources = re.findall(r"```glsl\n(.*?)```", shader_section, re.S)
-    extensions = json.loads(re.search(r"```json\n(.*?)```", shader_section, re.S).group(1))
-    return sources, extensions
+    document = json.loads(re.search(r"```json\n(.*?)```", shader_section, re.S).group(1))
+    return sources, document
 
 
 def test_playable_recipes_match_shipped_sources_and_bound_contracts() -> None:
-    # These are the two accepted producer examples, not schema stubs. Read-only
-    # admission checks keep a copied guide from teaching fields APP rejects.
+    # The guide keeps the shipped GLSL bodies and a shader.json the package schema admits.
     app = ROOT.parents[2] / "360-HEXTILE-APP"
     sys.path.insert(0, str(app))
-    from backend.modulation.conventions import validate_conventions
-    from backend.modulation.contracts import validate_modulation
+    from plugins.shader.backend.package.schema import validate_shader
 
     examples = json.loads((app / "plugins/shader/frontend/convention-examples.json").read_text(encoding="utf-8"))
-    sources, extensions = _playable_recipe()
-    assert sources == [row["candidate"]["source"] for row in examples]
-    assert extensions == examples[1]["candidate"]["extensions"]
-    assert extensions["required_capabilities"] == ["conventions/1", "master-clock/1", "modulation/2"]
-    manifest = json.loads(sources[1].split("/*@hextile-shader\n", 1)[1].split("\n*/", 1)[0])
-    descriptors = [{"id": "shader.params." + p["id"], "kind": p["type"], "unit": "unitless",
-                    "min": p["ui"]["min"], "max": p["ui"]["max"], "base": p["default"], "live": True} for p in manifest["parameters"]]
-    validate_conventions(extensions["conventions"], descriptors)
-    validate_modulation(extensions["modulation"], descriptors, extensions["master_clock"],
-                        require_aliases=True, logical_inputs=extensions["conventions"])
+    sources, document = _playable_recipe()
+    shipped = [_SHIPPED_HEADER.sub("", row["candidate"]["source"], count=1) for row in examples]
+    assert sources == shipped
+    assert validate_shader(document)["hexshader"] == 1
+    assert document["controls"]["camera"] is None
     assert "vec3 ro = hxCameraPosition;" in sources[0]
     assert "vec3 rd = hxCameraDirection(hx.direction);" in sources[0]
     assert "hxParam_glow" in sources[1] and "BLAST" in sources[1]
-    assert extensions["conventions"]["camera"] is None
 
 
-@pytest.mark.parametrize("variant", ["held", "instant", "orphan", "default_one", "schema_one"])
+@pytest.mark.parametrize("variant", ["held", "instant", "orphan", "default_one", "bad_kind"])
 def test_playable_recipe_variants_use_real_intrinsic_admission(variant: str) -> None:
     sys.path.insert(0, str(ROOT.parents[2] / "360-HEXTILE-APP"))
-    from backend.modulation.contracts import ContractError, validate_modulation_intrinsic
+    from plugins.shader.backend.package.schema import PackageError, validate_shader
 
-    _, extensions = _playable_recipe()
-    definition = extensions["modulation"]["definitions"][0]
+    _, document = _playable_recipe()
+    document = deepcopy(document)
+    modulator = next(iter(document["modulators"].values()))
     if variant == "held":
-        definition["mode"] = "held"
-        definition["settings"].update(attack=0.2, release=0.6)
+        modulator.update(mode="held", attack=0.2, release=0.6)
     elif variant == "instant":
-        definition["settings"]["attack"] = 0
+        modulator["attack"] = 0
     elif variant == "orphan":
-        definition["input_id"] = "missing_gate"
+        modulator["input"] = "missing_gate"
     elif variant == "default_one":
-        extensions["conventions"]["channels"][1]["default"] = 1
+        document["controls"]["channels"]["blast_press"]["default"] = 1
     else:
-        extensions["modulation"]["schema"] = 1
-
-    def admit() -> None:
-        validate_modulation_intrinsic(extensions["modulation"], extensions["master_clock"],
-                                      require_aliases=True, logical_inputs=extensions["conventions"])
+        modulator["kind"] = "not-envelope"
 
     if variant in {"held", "instant"}:
-        admit()
+        validate_shader(document)
     else:
-        with pytest.raises(ContractError):
-            admit()
+        with pytest.raises(PackageError):
+            validate_shader(document)
 
 
 def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls() -> None:

@@ -78,21 +78,19 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     assert "stale_lease" in specialized
     assert "Take control" in specialized and "Hand back" in specialized
     assert "comes back skipped" in specialized
-    assert "workspace schema 2" in umbrella
-    assert "source-modules/1" in umbrella
+    assert "shader.json" in umbrella
+    assert "shader_edit" in umbrella
     assert "https://360hextile.com/docs/create/shader" in specialized
     assert "https://360hextile.com/docs/create/shader" in umbrella
     assert "human" in umbrella.lower() and "Apply" in umbrella
     assert "https://360hextile.com/static/templates/shaders/gitignore.txt" in specialized
     assert "https://360hextile.com/static/templates/shaders/gitattributes.txt" in specialized
     assert "Native Git diff/commit/checkout/push runs only on the user's explicit instruction" in specialized
-    assert "v1 pair or complete v2 declared set" in umbrella
-    assert "Trusted Local Full Access" in umbrella
     assert "get_local_access_status" in umbrella
     assert "local_file_write_commit" in umbrella
     assert "local_file_write_status" in umbrella
-    assert "Ordinary mode needs this MCP session selected and `follow_ready`" in umbrella
-    assert "Effective Trusted Local Full Access requires no session pick" in umbrella
+    assert "no separate consent or session selection" in umbrella
+    assert "effective trust" in umbrella
     assert "optimistic expected-SHA" in umbrella
     assert "atomic same-directory publication" in umbrella
     assert "not atomic expected-hash CAS against arbitrary outside editors" in umbrella
@@ -104,11 +102,12 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     references = tmp_path / ".agents" / "skills" / "360-hextile" / "references"
     recipes = (references / "recipes.md").read_text(encoding="utf-8")
     practices = (references / "best-practices.md").read_text(encoding="utf-8")
-    assert "unaccepted clone with no saved revision" in recipes
-    assert "The JSON block is an extension fragment, not a replacement `authoring.json`" in recipes
-    assert "v2's closed metadata and full declared inventories without adding a `base`" in recipes
-    assert "v2's complete metadata/inventory" in practices
-    assert "workspace v1's sidecar schema 1 and v2's metadata schema 2" in practices
+    assert "shader.json" in recipes
+    assert "shader_edit" in recipes
+    assert "oneshot" in recipes
+    assert "shader.json" in practices
+    assert "provenance.json" in practices
+    assert "stale_lease" in practices
 
     config = (tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8")
     assert "[mcp_servers.hextile]" in config

@@ -1518,23 +1518,25 @@ def test_get_guide_reads_real_markdown() -> None:
         assert "Width and height are top-level on shader_request_preview." in prose
         assert "preserve_360 is dome-only." in prose
     guides = {name: load_guide(name)["markdown"] for name in GUIDE_NAMES}
-    assert "workspace_schema:2" in guides["best-practices"]
-    assert "include_source_diagnostics:true" in guides["best-practices"]
+    assert "shader.json" in guides["best-practices"]
+    assert "seen" in guides["best-practices"]
+    assert "stale_lease" in guides["best-practices"]
     assert "unused helpers" in guides["best-practices"]
     assert "mixed legacy Projects" in guides["best-practices"]
     assert "user's instruction" in guides["best-practices"]
     assert "accepted snapshot only" in guides["best-practices"]
-    assert "source_files" in guides["recipes"]
-    assert "register a new canonical change ID" in guides["recipes"]
-    assert "APP automatically Applies" in guides["recipes"]
+    assert "shader.json" in guides["recipes"]
+    assert "source.glsl" in guides["recipes"]
+    assert "new request id" in guides["recipes"]
+    assert "Read merge" in guides["recipes"]
     assert "Native render requests" not in guides["workflow-schema"]
     detail = load_guide("workflow-schema", detail=True)["markdown"]
-    assert "metadata/config" in detail
+    assert "shader.json" in detail
+    assert "source.glsl" in detail
     assert "No GLSL bodies belong in durable JSON" in detail
-    assert "source-modules/1" in detail
-    assert "Shader workspace authoring protocol" in detail
-    assert "never synthesizes Apply" in detail
-    assert "automatically Applies and saves" in guides["workflow-schema"]
+    assert "Shader package" in detail
+    assert "Register saves" in detail
+    assert "Read merge. Watch compile. Only the human moves the lease." in guides["workflow-schema"]
     for name in ("gitignore.txt", "gitattributes.txt"):
         url = f"https://360hextile.com/static/templates/shaders/{name}"
         assert url in guides["best-practices"]

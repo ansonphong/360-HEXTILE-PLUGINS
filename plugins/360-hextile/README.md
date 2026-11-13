@@ -12,15 +12,13 @@ All merge, validation, and render logic stay in the running app. The client read
 ## Quick Shader connection
 
 Ask “connect—what Shader is open?” The Shader skill uses one
-`get_live_context(view="shader")` call for the current name, origin, Saved/draft
-state, editability and blockers, without listing models or inventory. Detailed
-source editing instructions load only when needed. Builtins are readable and
-must be duplicated before source editing. Unknown metadata stays unknown;
-connection is not evidence of Apply or Save. The default full tool response is
-unchanged. Both the running APP and installed connector must support this view.
-Updating this repository or its APP vendor snapshot does not update an installed
-plugin cache; update through the host's existing plugin flow and reconnect/start
-a new host session. No install or reconnect is performed by this change.
+`get_live_context(view="shader")` call. The reply names `shader.origin`,
+`shader.shader_id`, the lease holder and generation, `commit` and `revision`.
+Detailed source editing instructions load only when needed. A builtin is readable
+and must be duplicated before a source edit. Unknown metadata stays unknown.
+Connection is not a save. Both the running APP and the installed connector must
+support this view. Updating this repository does not update an installed plugin
+cache; update through the host's plugin flow and start a new host session.
 
 ## Recorded live qualification (2026-10-24)
 
@@ -28,15 +26,13 @@ The connected MCP tool inventory still showed the original 16 Shader tools; new 
 
 ## Current Shader format
 
-Version 0.5.5 source authoring requires document schema 4 and workspace schema 2. The
-client requests workspace2 by default and refuses older acknowledgements without
-releasing paths. Existing older content needs the separate checked offline
-migration; opening a workspace never upgrades or overwrites it. Extension,
-provenance and bundle versions remain independent.
+A Shader package is a folder. `shader.json` holds the authored data (`"hexshader": 1`),
+`source.glsl` is the entry, modules live under `modules/`, and `provenance.json` holds
+credits. A `.hexshader` file is a zip of that same folder. `shader_edit` changes one
+address at a time. Register saves the package digest.
 
-Source/headless verification and isolated shelf conversions do not establish
-installed-plugin or live visual acceptance. Update the installed host package and
-reconnect only when the matching APP/content cutover is ready for your smoke test.
+Source checkout does not establish an installed plugin or a live picture. Update the
+installed host package and reconnect when you are ready to try the running APP.
 
 ## Prerequisites
 
@@ -202,7 +198,7 @@ A temporary installer destination does not prove an installed host.
 
 ### Shader authoring in your coding host
 
-The `shader` skill edits the open Project Shader through the complete acknowledged member set, registers a raw-byte framed digest and polls real APP Prepare/compiler receipts, with at most three repairs. APP automatically Applies and saves a singular ready `spt_` / `cpr_` candidate through the native writer. Registration alone does not prove Save; inspect the exact saved receipt, and keep unknown Save unknown. Installed MCP connectivity and native access to the same physical Project/worktree files are both required; a remote connector alone is insufficient. APP verifies current ownership, source and CAS; the host controls its own filesystem permissions. Reasoning belongs to your host account/provider and may incur charges or quota limits.
+The `shader` skill edits a package with `shader_edit`. `register_shader_update` saves the digest. Read merge. Watch compile. Only the human moves the lease, with Take control or Hand back. A remote connector alone is insufficient: the running APP and the installed host both have to be present. The host controls its own filesystem permissions. Reasoning belongs to your host account or provider and may incur charges or quota limits.
 
 Claude prefixes plugin skills with the plugin name: `/360-hextile:360-hextile` (hub), `/360-hextile:shader`, `/360-hextile:fractal`, `/360-hextile:upres`. Codex uses separately installed sibling skill directories (`360-hextile`, `shader`, `fractal`, `upres`): confirm them in the installed picker. Check actual Codex/Grok invocation syntax on the installed client; source layout does not prove an installed host.
 

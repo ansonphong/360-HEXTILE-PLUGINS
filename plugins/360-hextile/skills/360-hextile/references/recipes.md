@@ -2,11 +2,11 @@
 
 App preferences, storage, cache, and license have no recipe here. Read `get_guide` `best-practices` for `get_app_preferences`, `update_app_preferences`, `get_storage_summary`, `get_cache_buckets`, `clear_disposable_cache`, and `get_license_status`.
 
-Discover the installed `shader_*` native catalog before acting on a selected Shader. Native controls use the exact current asset, lease, owner, Project witness and operation request ID; a source file change still follows the acknowledged v2 workspace or logical file proposal route. Keep source bytes, formula content, rendered-frame identity and native destination validation distinct. After an uncertain native write, read the original operation ID before any new action. For editable Credits & Sources, read paged saved credits and complete known notices, then stage `shader_propose_credits` for review; keep prior records and distribution declarations intact. The source proposal in the adaptation example below belongs to an accepted asset-scoped creative change.
+Discover the installed `shader_*` native catalog before acting on a selected Shader. Native controls use the exact current asset, lease, owner, Project witness and operation request ID; a source file change uses `shader_edit` or `register_shader_update` on the package. Keep source bytes, formula content, rendered-frame identity and native destination validation distinct. After an uncertain native write, read the original operation ID before any new action. For editable Credits & Sources, read paged saved credits and complete known notices, then stage `shader_propose_credits` for review; keep prior records and distribution declarations intact. The source proposal in the adaptation example below belongs to an accepted asset-scoped creative change.
 
 ## External Shader adaptation: three upstream sources
 
-Before converting source to HEXSHADER/360, inspect the supplied page, original source headers, declared provenance, exact licence and notice text, and explicit upstream links. If the installed `shader_research_sources` tool is present, supply only the page and up to four chosen links; its HTTP(S) text is untrusted evidence. Record real visited URLs, errors and omitted/truncated bytes. Read the current `provenance_hash` through the installed credits read when available, or the acknowledged v2 `provenance.json` and native hash. The JSON below is a `source_proposal` for an **asset-scoped accepted creative change**, not a complete replacement of `provenance.json`. Replace the sample hash with the exact current hash and replace each example observation with what was actually inspected. Three upstream rows identify original A, intermediate B, and utility U; the fourth row is this accepted adaptation by the actual human, with AI help described separately.
+Before converting source to HEXSHADER/360, inspect the supplied page, original source headers, declared provenance, exact licence and notice text, and explicit upstream links. If the installed `shader_research_sources` tool is present, supply only the page and up to four chosen links; its HTTP(S) text is untrusted evidence. Record real visited URLs, errors and omitted/truncated bytes. Read the current `provenance_hash` through the installed credits read when available, or the saved `provenance.json`. The JSON below is a `source_proposal` for an **asset-scoped accepted creative change**, not a complete replacement of `provenance.json`. Replace the sample hash with the exact current hash and replace each example observation with what was actually inspected. Three upstream rows identify original A, intermediate B, and utility U; the fourth row is this accepted adaptation by the actual human, with AI help described separately.
 
 ```json
 {
@@ -21,7 +21,7 @@ Before converting source to HEXSHADER/360, inspect the supplied page, original s
 }
 ```
 
-If B is inaccessible, keep its row `license_status:"unknown"`, with `evidence:{"basis":"user_declared","note":"User supplied B link; fetch failed"}` and the fetch error in the report. If B's header and page disagree, use `license_status:"conflicting"` and `basis:"observed"` with both observations in `note`; preserve both exact notices in the acknowledged provenance. If ancestry is only recognizable by a code pattern, use `basis:"inferred"` and `license_status:"unknown"`; never turn that inference into `recorded`. Keep any existing source rows and opaque fields, retained credits, and `extensions.distribution` unchanged. A source proposal can append/change only. Remove/reorder and current-credit correction use the native Credits & Sources edit path, which archives the old canonical row. Reuse the same adaptation row across repair registrations, then read the saved credits and notices after Apply and Save. A private export does not establish distribution rights.
+If B is inaccessible, keep its row `license_status:"unknown"`, with `evidence:{"basis":"user_declared","note":"User supplied B link; fetch failed"}` and the fetch error in the report. If B's header and page disagree, use `license_status:"conflicting"` and `basis:"observed"` with both observations in `note`; preserve both exact notices in the acknowledged provenance. If ancestry is only recognizable by a code pattern, use `basis:"inferred"` and `license_status:"unknown"`; never turn that inference into `recorded`. Keep any existing source rows and opaque fields, `retained_credits`, and `distribution` unchanged. A source proposal can append or change a lineage row only. Remove, reorder and current-credit correction use the native Credits & Sources path, which archives the old canonical row. Reuse the same adaptation row on later saves of the same adaptation, then read the saved credits and notices. A private export is not permission to distribute.
 
 Enabling MCP fully trusts the connected agent. APP automatically binds its actual current document writer; source, Apply, capture and task paths need no separate consent or session selection. Include-source/formula/image options select bounded content. Native validation, ownership, CAS, resource limits and exact receipts remain authoritative. Disconnect blocks fresh or unadmitted work; an admitted export finishes to its frozen destination and remains recoverable by its original request/job ID. Stop separately requests cancellation. The MCP host’s own filesystem and execution rules still apply.
 
@@ -37,9 +37,9 @@ For a saved Shader, assemble `propose_shader.base` from one fresh `get_shader_co
 {"kind":"shader_document_candidate","base":{"shader":{"origin":"user","shaderId":"aurora"},"project_context_witness":"wit","working_revision":1,"document_hash":"sha256:abababababababababababababababababababababababababababababababab","source_hash":"sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","manifest_hash":null},"explanation":"Animate gain over the saved interval","modulation_edits":{"schema":2,"edits":[{"op":"set_parameter_expression","target":"shader.params.gain","source_text":"T*2","refs":{}},{"op":"set_timeline","start":{"num":"0","den":"1"},"end":{"num":"4","den":"1"},"loop":true}]}}
 ```
 
-`T` and `D` are seconds; `hx-scalar/1` values use each target's typed lane and angles use radians. For `MOD_X` or `P_gain` dependencies, `refs` must map every used token to the exact discovered stable modulator or parameter address; do not guess aliases. Cycles, unknown aliases and nonfinite results refuse with diagnostics. `remove_parameter_expression` returns the target to its base value. `set_parameter_mode` selects `fixed`, `expression` or `modulator` with the observed binding when needed; a new binding uses an existing stable `mod_*` string source ID and the target's exact typed signature, including enum choices or vector/channel kind. The proposal is a ticket for automatic native Apply after its checks, not a save receipt. On unknown proposal or save, reconcile the exact ticket/current saved revision; never blindly repost or assume success. Reread the accepted saved hash before later work. Preserve all existing required capabilities, including unknown ones.
+`T` and `D` are seconds; `hx-scalar/1` values use each target's typed lane and angles use radians. For `MOD_X` or `P_gain` dependencies, `refs` must map every used token to the exact discovered stable modulator or parameter address; do not guess aliases. Cycles, unknown aliases and nonfinite results refuse with diagnostics. `remove_parameter_expression` returns the target to its base value. `set_parameter_mode` selects `fixed`, `expression` or `modulator` with the observed binding when needed; a new binding uses an existing stable `mod_*` string source ID and the target's exact typed signature, including enum choices or vector/channel kind. The proposal is a ticket, not a saved package. On unknown proposal or save, reconcile the exact ticket/current saved revision; never blindly repost or assume success. Reread the accepted saved hash before later work. Preserve all existing required capabilities, including unknown ones.
 
-For **session playback only**, submit `control_shader_timeline` with `{"operation":"submit","client_request_id":"timeline_001","action":"seek","time_seconds":1.5,"witness":<the exact current_surface witness fields above>}`. The `witness` contains only those eight fields, with `shader={origin,shaderId}` and the exact published `current_surface.base` unchanged. `play`, `pause` and `reset` omit `time_seconds`. MCP must be connected; APP derives the actual private writer locally. If the reply is lost, call `control_shader_timeline({"operation":"status","client_request_id":"timeline_001"})`; keep the original ID. `pending` may later become `applied` or `refused`; `unknown` or 404 means the outcome is unknown, never proof of refusal. Do not call the mounted UI poll/ack routes. Session playback does not persist the document timeline; `set_timeline` becomes saved only after its native Apply and exact Save receipt.
+For **session playback only**, submit `control_shader_timeline` with `{"operation":"submit","client_request_id":"timeline_001","action":"seek","time_seconds":1.5,"witness":<the exact current_surface witness fields above>}`. The `witness` contains only those eight fields, with `shader={origin,shaderId}` and the exact published `current_surface.base` unchanged. `play`, `pause` and `reset` omit `time_seconds`. MCP must be connected; APP derives the actual private writer locally. If the reply is lost, call `control_shader_timeline({"operation":"status","client_request_id":"timeline_001"})`; keep the original ID. `pending` may later become `applied` or `refused`; `unknown` or 404 means the outcome is unknown, never proof of refusal. Do not call the mounted UI poll/ack routes. Session playback does not save. Changing `start`, `end` or `loop` is an edit of the timeline settings and is saved by register.
 
 ## Saved Shader native sequence
 
@@ -81,7 +81,7 @@ prove the new Continue was rejected. Stop uses the current observed run ID.
 
 ### Explicit deferred Shader masters and publication
 
-After the expression/timeline proposal, APP checks, automatically Applies and saves the singular ready candidate through the native writer. A proposal ticket or uncertain Save is insufficient: reconcile the exact ticket and confirmed saved revision, or refuse. Reread `get_shader_context` for the **new saved** `shader`, `project_context_witness`, `working_revision`, `document_hash` and `source_hash`. Use those actual returned values in place of the sample identities below. The same exact JSON request goes to `preflight_shader_sequence` and `render_shader_sequence`; keep the caller-chosen `idempotency_key` unchanged. The example is 24 FPS over [0,2) seconds, so `frame_count` is 48. Do not add `folder_export` or infer a destination or live Dome pose.
+After the expression or timeline edit, read merge and compile, then read the saved revision. A proposal ticket or uncertain Save is insufficient: reconcile the exact ticket and confirmed saved revision, or refuse. Reread `get_shader_context` for the **new saved** `shader`, `project_context_witness`, `working_revision`, `document_hash` and `source_hash`. Use those actual returned values in place of the sample identities below. The same exact JSON request goes to `preflight_shader_sequence` and `render_shader_sequence`; keep the caller-chosen `idempotency_key` unchanged. The example is 24 FPS over [0,2) seconds, so `frame_count` is 48. Do not add `folder_export` or infer a destination or live Dome pose.
 
 ```json
 {"shader_ref":{"origin":"project","id":"aurora"},"project_context_witness":"project-witness","working_revision":2,"document_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_hash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","idempotency_key":"aurora-native-001","name":"Aurora native","frame_rate":{"num":24,"den":1},"frame_count":48,"start_time":{"num":"0","den":"1"},"end_time":{"num":"2","den":"1"},"width":2048,"height":1024,"seed":7,"output":{"projection":"equirectangular","pan":0,"tilt":0,"roll":0},"publication_mode":"deferred"}
@@ -97,13 +97,13 @@ Once GET reports `status:"completed"` and `published_cursor==frame_count`, use t
 
 Keep the returned `attempt_id` and `transaction_fingerprint`. Submit `export_shader_sequence` with the **same** `sequence_id`, `destination_folder`, and `format`, plus `"transaction_fingerprint":"<preflight fingerprint>"`. Poll `get_shader_sequence({"sequence_id":"<preflight ID>"})`, matching `attempt_id` and fingerprint in `folder_export` or `publication_attempts`. If export acknowledgement is lost, GET that known ID/attempt before another action; absence is unknown, never a reason to blindly repost. To stop native work use `control_shader_sequence({"sequence_id":"<preflight ID>","action":"stop"})`; resume uses `action:"resume"` and current Standard/Pro access. To cancel or retry folder publication use `action:"cancel_export"` or `action:"retry_export"` with the exact current `attempt_id`. GET after uncertain control replies. Native equirectangular and square Dome masters keep their frozen timing/projection; deferred folder PNG/JPG encoding does not change them.
 
-## Shader file session — complete portable source set
+## Shader file session — the package
 
-Invoke the installed `shader` skill through the host's observed picker. Verify actual `tools/list`, MCP connection and actual current writer, then request `open_shader_workspace(workspace_schema=2, ...)` using the live Shader/surface/Project witness. Require a v2 acknowledgement and native access to the same files; if v2 or `source-modules/1` execution is unavailable, report upgrade/reconnect/unsupported rather than describing this as a working compiled session. Older document/workspace content must be migrated offline; never downgrade the current workspace.
+Invoke the installed `shader` skill through the host's observed picker. Verify actual `tools/list`, the MCP connection and the shader id, then call `open_shader_workspace` with `shader_id` and `request_id` only. The result is the lease, commit and revision.
 
-In `workspace/authoring.json`, keep the acknowledged schema-2 metadata and declare `source.glsl` plus every helper logical path in `source_files`; keep actual GLSL only in those `.glsl` files. For example, root `source.glsl` may include `#include "lib/noise.glsl"` at file scope, with `workspace/lib/noise.glsl` declared and authored as a helper. Include paths are relative to the including file, depth-first/include-once in one namespace. A missing target, cycle or bad path needs a real located diagnostic. Keep declared but unused helpers in the full-set digest, bundle and Git worktree. Track Looks, provenance, `workspace/resources/` PNGs and every referenced sequence frame rather than one preview frame.
+The package folder holds `shader.json`, `source.glsl`, `modules/**/*.glsl`, `provenance.json`, `resources/`, `originals/` and an optional cover. `shader.json` is the authored data. GLSL stays in `source.glsl` and the modules. A helper such as `modules/lib/noise.glsl` is included from `source.glsl` with `#include "lib/noise.glsl"`. Include paths are relative to the including file. Keep unused helpers in the package. `shader_edit` cannot write `provenance.json`.
 
-Read the acknowledged v2 digest framing and compare it to the open receipt before editing. After native edits, hash raw `authoring.json` plus all declared source/Look/provenance members in the prescribed UTF-8 path order without newline or JSON normalization. `register_shader_update` freezes this complete candidate; `get_shader_update(..., include_source_diagnostics=true)` can return bounded logical locations for the current writer/witness/candidate. Repair a located helper, recompute the whole digest and register a new canonical change ID. Inspect the complete candidate and check states; APP automatically Applies a singular ready candidate and records the exact saved receipt. The agent never uses a Git commit, checkout or `.hexshader` export as a substitute for registration. Human detail: https://360hextile.com/docs/create/shader.
+`shader_edit` sends set, create, reshape or delete on one address. `register_shader_update` sends the package digest and saves. Read merge. Watch compile. A repair after prepare failed uses a new request id. The same request_id returns the recorded result. The agent never uses a Git commit, checkout or export as a substitute for registration. Human detail: https://360hextile.com/docs/create/shader.
 
 ## A — Prompt-only scout from a builtin
 
@@ -243,14 +243,11 @@ For `from_template`, use the listed `template_id` and `face_index`; for `from_ra
 
 ## Recipe I — Playable Shaders: fly source
 
-Use the installed `shader` skill's attested native-file procedure: the current workspace has acknowledged schema-2 metadata and a complete declared source set, including an unaccepted clone with no saved revision. Observe acknowledged `available=true` and executable `conventions/1`, then use a fully resolved supported definition in the existing `authoring.json` extension. Preserve the v2 closed metadata keys and inventories; do not add a saved `base` field to portable metadata. A preset ID is not a definition: use shipped resolved bytes already in the document or supplied by the user, or already authorized current Project-derived bytes. Never fetch an arbitrary Project profile or require manual preset Apply to complete agent authoring.
+Use the installed `shader` skill. The package is `shader.json` plus `source.glsl`. Observe the running APP, then put the fly controls in `shader.json`: parameters `fold` and `hue`, `space` `direction_360`, and `controls.camera` set to the resolved fly camera. A preset id is not a definition. Use the resolved bytes already in the document or supplied by the user.
 
-This source matches the shipped fly-fractal example. Keep `space="direction_360"`, values `{ "fold":1, "hue":0 }`, and sorted `extensions.required_capabilities=["conventions/1"]` alongside the resolved convention. Preserve capture defaults, output and unrelated extensions/resources; retain the current closed metadata and full declared inventories without adding a saved `base`.
+This source matches the shipped fly-fractal example. Keep `space` `direction_360` and values `{ "fold": 1, "hue": 0 }`.
 
 ```glsl
-/*@hextile-shader
-{"schema":1,"abi":"hx-shader/1","space":"direction_360","parameters":[{"id":"fold","type":"float","label":"Fold","default":1,"ui":{"min":0.5,"max":1.5}},{"id":"hue","type":"float","label":"Hue shift","default":0,"ui":{"min":0,"max":1}}]}
-*/
 float sceneDist(vec3 point) {
     vec3 q = mod(point + 2.0, 4.0) - 2.0;
     float scale = 1.0;
@@ -281,20 +278,17 @@ vec4 hxMain(in HxFrag hx) {
 }
 ```
 
-The closed convention has exactly `schema, profile, instructions, channels, bindings, mappings, camera`; schema is 1. Profile has `id, revision, label`; each channel has `id, alias, label, mode, unit, min, max, default`. Bindings have `id, channel_id, source, scale, activation`. The fly camera's exact fields are `kind, move, look, look_gate, boost, reset, speed, sensitivity, invert_y, boost_factor, position, angles, offset_position, offset_angles`; use acknowledged compatible resolved bytes, not a partial camera. Unreal fly (`hextile.unreal-fly/1`) uses RMB look, W/S travel, A/D strafe, Q/E rise/fall and Shift boost. Arrow fly (`hextile.arrow-fly/1`) keeps the same channels but uses Arrows and PageUp/PageDown with `activation="interact"`; GLSL stays unchanged.
+The fly camera's channels, bindings and camera fields stay together on `controls`. Unreal fly (`hextile.unreal-fly/1`) uses RMB look, W/S travel, A/D strafe, Q/E rise/fall and Shift boost. Arrow fly (`hextile.arrow-fly/1`) keeps the same channels but uses Arrows and PageUp/PageDown with `activation` `interact`. The GLSL stays unchanged.
 
-Generated signatures: `vec3 hxCameraPosition`, `mat3 hxCameraRotation`, `vec3 hxCameraDirection(vec3 canonicalDirection)`. A fly camera supplies uniforms; `camera:null` supplies `const vec3(0.0)` and `const mat3(1.0)`. The helper returns `normalize(hxCameraRotation * canonicalDirection)`. Wire `ro=hxCameraPosition` and `rd=hxCameraDirection(hx.direction)` into your own ray marcher once. `hx.direction`, `hx.rayOrigin` and `hx.rayDirection` remain canonical; helper declarations alone never move the scene. Camera angles/sensitivity are radians/radians per CSS pixel, +Y is up and +Z forward.
+Generated signatures: `vec3 hxCameraPosition`, `mat3 hxCameraRotation`, `vec3 hxCameraDirection(vec3 canonicalDirection)`. A null camera supplies `const vec3(0.0)` and `const mat3(1.0)`. The helper returns `normalize(hxCameraRotation * canonicalDirection)`. Wire `ro=hxCameraPosition` and `rd=hxCameraDirection(hx.direction)` into your own ray marcher once. `hx.direction`, `hx.rayOrigin` and `hx.rayDirection` remain canonical. Camera angles and sensitivity are radians, +Y is up and +Z is forward.
 
 ## Recipe J — Playable Shaders: one-prompt Enter BLAST, camera null
 
-“Make it when I press ENTER then we get a blast event” means one complete candidate: parameters are destinations, logical controls are inputs, and an envelope supplies shared shaping. Observe APP `available=true`, executable `conventions/1` AND `modulation/2`, then candidate `execution_ready`; missing declarations on a clean nonconvention base do not mean an unsupported runtime. The GLSL/control example below works through the negotiated workspace: keep the full declared source set and schema-2 metadata, register its complete raw v2 digest and follow the installed skill's bounded Prepare/compile/poll/repair loop. No event callback or new MCP tool is needed.
+“Make it when I press ENTER then we get a blast event” means one `shader.json` together with the GLSL. Parameters are destinations, channels are inputs, and an envelope supplies the shaping. Edit with `shader_edit`. No event callback or new MCP tool is needed.
 
 Write this source (the shipped camera-null example):
 
 ```glsl
-/*@hextile-shader
-{"schema":1,"abi":"hx-shader/1","space":"direction_360","parameters":[{"id":"slice","type":"float","label":"Slice","default":0,"ui":{"min":0,"max":1}},{"id":"glow","type":"float","label":"Glow","default":0,"ui":{"min":0,"max":2}}]}
-*/
 vec4 hxMain(in HxFrag hx) {
     vec3 d = hx.direction;
     // Slice is driven by the X accumulator; Glow is driven by the BLAST envelope.
@@ -307,51 +301,159 @@ vec4 hxMain(in HxFrag hx) {
 }
 ```
 
-Merge the following control payload into the **acknowledged** `authoring.json` without deleting unrelated extensions. Keep `kind="360hextile.shader-workspace"`, `schema=2`, `shader_id`, title/tags, entry, complete `source_files`/`look_files`/provenance/original inventories and **no** saved `base`. Set `values={"slice":0,"glow":0}`, keep capture defaults/output and set `space="direction_360"` within that existing format. The JSON block is an extension fragment, not a replacement `authoring.json`. IDs shown are stable sample IDs; preserve existing IDs on revisions and use distinct valid IDs for new rows.
+Put this `shader.json` on the package. An address is a list of strings, one unit: `["parameters", "glow"]`, `["controls", "channels", "blast_press"]`, `["modulators", "mod_0123456789abcdef01234567"]`, `["drivers", "glow"]`. Do not replace a parent object. `controls.camera` is null. The ids below are the sample ids; preserve existing ids on a revision.
 
 ```json
 {
-  "conventions": {
-    "schema": 1,
-    "profile": {"id":"hextile.example-enter-blast/1","revision":1,"label":"Enter blast example"},
-    "instructions": "No camera moves here. Arm Interact, then press Enter: Blast rises in 20 ms and fades over 400 ms, driving Glow from 0 to 2. Each right mouse click adds 0.1 to X, and X drives Slice. If Enter belongs to a built-in shortcut, use Bind key to pick another key.",
-    "channels": [
-      {"id":"x","alias":"X","label":"X","mode":"accumulator","unit":"unitless","min":0,"max":1,"default":0},
-      {"id":"blast_press","alias":"BLAST_PRESS","label":"Blast press","mode":"gate","unit":"unitless","min":0,"max":1,"default":0}
-    ],
-    "bindings": [
-      {"id":"x_right_button","channel_id":"x","source":{"kind":"button","button":2},"scale":0.1,"activation":"interact"},
-      {"id":"blast_enter","channel_id":"blast_press","source":{"kind":"key","code":"Enter","modifiers":[]},"scale":1,"activation":"interact"}
-    ],
-    "mappings": [
-      {"id":"map_x_slice","source_id":"x","target":"shader.params.slice","enabled":true,"mode":"range","signature":{"kind":"float","unit":"unitless","min":0,"max":1},"range_min":0,"range_max":1}
-    ],
+  "hexshader": 1,
+  "meta": {
+    "title": "Enter blast",
+    "tags": []
+  },
+  "space": "direction_360",
+  "parameters": {
+    "slice": {
+      "type": "float",
+      "label": "Slice",
+      "default": 0,
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "control": "slider"
+    },
+    "glow": {
+      "type": "float",
+      "label": "Glow",
+      "default": 0,
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "control": "slider"
+    }
+  },
+  "values": {
+    "slice": 0,
+    "glow": 0
+  },
+  "controls": {
+    "mouse": true,
+    "profile": {
+      "id": "hextile.example-enter-blast/1",
+      "revision": 1,
+      "label": "Enter blast example"
+    },
+    "instructions": "No camera moves here. Press Enter: Blast rises in 20 ms and fades over 400 ms, driving Glow from 0 to 2. Each right mouse click adds 0.1 to X, and X drives Slice. If Enter belongs to a built-in shortcut, use Bind key to pick another key.",
+    "channels": {
+      "x": {
+        "alias": "X",
+        "label": "X",
+        "mode": "accumulator",
+        "unit": "unitless",
+        "min": 0,
+        "max": 1,
+        "default": 0
+      },
+      "blast_press": {
+        "alias": "BLAST_PRESS",
+        "label": "Blast press",
+        "mode": "gate",
+        "unit": "unitless",
+        "min": 0,
+        "max": 1,
+        "default": 0
+      }
+    },
+    "bindings": {
+      "x_right_button": {
+        "channel": "x",
+        "source": {
+          "kind": "button",
+          "button": 2
+        },
+        "scale": 0.1,
+        "activation": "interact"
+      },
+      "blast_enter": {
+        "channel": "blast_press",
+        "source": {
+          "kind": "key",
+          "code": "Enter",
+          "modifiers": []
+        },
+        "scale": 1,
+        "activation": "interact"
+      }
+    },
     "camera": null
   },
-  "master_clock": {"schema":1,"bpm":120,"speed":1,"anchor":{"time":{"num":"0","den":"1"},"seconds":0,"beats":0}},
-  "modulation": {
-    "schema": 2,
-    "grammar": "hx-math/1",
-    "definitions": [
-      {"id":"mod_0123456789abcdef01234567","alias":"BLAST","label":"Blast","kind":"envelope","enabled":true,"input_id":"blast_press","mode":"oneshot","settings":{"attack":0.02,"release":0.4,"attack_curve":{"shape":"linear","exponent":1},"release_curve":{"shape":"ease_out","exponent":2},"output_min":0,"output_max":1}}
-    ],
-    "bindings": [
-      {"id":"binding_89abcdef0123456789abcdef","source_id":"mod_0123456789abcdef01234567","target":"shader.params.glow","enabled":true,"mode":"range","signature":{"kind":"float","unit":"unitless","min":0,"max":2},"range_min":0,"range_max":2}
-    ]
+  "modulators": {
+    "mod_0123456789abcdef01234567": {
+      "kind": "envelope",
+      "alias": "BLAST",
+      "label": "Blast",
+      "enabled": true,
+      "input": "blast_press",
+      "mode": "oneshot",
+      "attack": 0.02,
+      "release": 0.4,
+      "attack_curve": {
+        "shape": "linear",
+        "exponent": 1
+      },
+      "release_curve": {
+        "shape": "ease_out",
+        "exponent": 2
+      },
+      "output_min": 0,
+      "output_max": 1
+    }
   },
-  "required_capabilities": ["conventions/1", "master-clock/1", "modulation/2"]
+  "drivers": {
+    "slice": [
+      {
+        "kind": "control",
+        "source": "x",
+        "enabled": true,
+        "signature": {
+          "kind": "float",
+          "unit": "unitless",
+          "min": 0,
+          "max": 1
+        },
+        "mode": "range",
+        "min": 0,
+        "max": 1
+      }
+    ],
+    "glow": [
+      {
+        "kind": "modulator",
+        "source": "mod_0123456789abcdef01234567",
+        "enabled": true,
+        "signature": {
+          "kind": "float",
+          "unit": "unitless",
+          "min": 0,
+          "max": 2
+        },
+        "mode": "range",
+        "min": 0,
+        "max": 2
+      }
+    ]
+  }
 }
 ```
 
-Enter → `blast_press` (default-0 gate) → `BLAST` (`kind="envelope"`, `mode="oneshot"`, UI Burst) → Range 0–2 → `shader.params.glow` → `hxParam_glow` in GLSL. RMB button 2 separately increments `x`/`X` by 0.1 and maps Range 0–1 to Slice. The source also reads raw `BLAST` to widen the ring; generated channel/modulator aliases are `uniform float <alias>` when referenced. Mappings alone cannot create a visible effect unless the shader uses the target parameter.
+Enter binds `blast_press` (a gate whose default is 0) to the `BLAST` envelope (`kind` `envelope`, `mode` `oneshot`). That modulator drives `glow` from 0 to 2, and the GLSL reads `hxParam_glow`. The right mouse button adds 0.1 to channel `x`, and that channel drives `slice`. The source also reads raw `BLAST`.
 
-**Held alternative:** retain IDs/input/mapping and use `mode="held"`, `attack=0.2`, `release=0.6`. Down attacks, a long hold sustains, and last aggregate up releases from the current level. **Burst:** `mode="oneshot"` completes Attack → Release even after key-up or a long hold; fresh presses retrigger from the current level, with no stacked voices. Attack 0 gives an instant Burst; Release 0 returns immediately. OS key repeat creates no fresh press.
+**Held alternative:** keep the same ids and set `mode` to `held`, `attack` to 0.2 and `release` to 0.6. **Burst:** `mode` `oneshot` completes attack then release even after key-up. Attack 0 is an instant burst.
 
-Attack/Release are finite seconds `[0,60]`. Curve objects have exactly `shape, exponent`; shapes are `linear`, `ease_in`, `ease_out`, `ease_in_out`. Linear uses exponent 1; nonlinear preset default is 2, adjustable independently per stage within `[1,8]`. The example explicitly chooses 20 ms Linear Attack and 400 ms Ease Out Release with exponent 2. Author all settings; omitted fields are not defaults. Envelopes use monotonic interaction time, independent of scene pause and Master Clock BPM/Speed. Retain the default Master Clock object and declaration required by the modulation document; do not invent a separate clock-bit gate for this recipe.
+Attack and release are seconds from 0 to 60. Curves are `linear`, `ease_in`, `ease_out` or `ease_in_out`. This example uses a 0.02 linear attack and a 0.4 ease-out release with exponent 2. Envelopes use interaction time. They do not follow scene pause or the clock BPM.
 
-Aliases match ASCII `[A-Za-z][A-Za-z0-9_]{0,31}`, contain no `__`, are unique across channels/modulators and avoid GLSL/host names and source declarations. Modulator IDs are `mod_` plus 24 lowercase hex digits; binding IDs are `binding_` plus 24 lowercase hex digits. An envelope must reference an existing default-0 gate; orphaned inputs, incompatible targets, missing declarations or malformed settings yield real Prepare diagnostics, not a static pass. Preserve the admitted modulation schema and required capabilities on revisions; workspace format stays at acknowledged schema 2; modulation and other extension versions remain independent.
+An envelope input must be an existing gate whose default is 0. A modulator or channel alias the code still names cannot be renamed or removed; such an edit comes back skipped. Change the code in the same batch to drop the name.
 
-Report an effective Enter shortcut conflict and propose an explicit remap. It is not a compile failure; never press keys, arm Interact, change Hotkeys, set live pose or save Project presets to prove the recipe. Review controls/modulators/parameters/values/code and the exact candidate-bound check states together; native Apply and its exact Save receipt establish the saved result through APP's checked door. Compilation is not physical input or visual proof. Legacy `propose_shader` and every Copilot Board row must keep convention/envelope bytes and Playable declarations unchanged; only the current attested workspace can first create or revise them. Future admitted INPUT adapters may route MIDI/OSC/gamepad to the same logical gate/evaluator, but those device routes, addresses and live events never belong in these portable files.
+Report an Enter shortcut conflict and propose an explicit remap. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. Read merge. Watch compile. Compilation is not physical input or visual proof.
 # Inspect an exact full-quality Shader Sequence frame
 
 Discover `native_render.shader_preview` and require `shader-export-preview/2`.

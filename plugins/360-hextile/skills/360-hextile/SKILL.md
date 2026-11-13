@@ -11,7 +11,7 @@ Install id: **`360-hextile@360-hextile`**. Marketplace `360-hextile`. Skill `360
 
 See `references/agent-lexicon.md` for locked words, the complementarity card, and `REFUSE_*` strings.
 
-For Project Shader coding, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the acknowledged native-file procedure: require workspace schema 2 for the complete `workspace/` manifest; the client defaults to 2 and never downgrades; edit only declared files, register the full raw digest, read APP diagnostics, repair/re-register, and verify APP’s automatic **Apply** and exact saved receipt. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page, known schema, recognized `source-modules/1`, or source fixture does not prove installed shared-file access or executable support; observe APP `available`, executable capabilities and candidate `execution_ready`. Git CLI actions need a separate user instruction; MCP supplies no Git tool; APP owns native automatic Apply. For **Playable Shaders** (`conventions/1`, `modulation/2`), one Enter-blast request authors the parameter, GLSL, logical gate, keyboard binding, BLAST envelope and Range mapping together. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
+For Project Shader coding, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the package: `shader.json`, `source.glsl`, `modules/**/*.glsl`, `provenance.json`, resources, originals and an optional cover. Edit with `shader_edit`. `register_shader_update` saves the package digest. Read merge. Watch compile. Send `seen` for a unit a human has edited. Only the human moves the lease, with Take control or Hand back. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page does not prove the running APP or an installed host. Git CLI actions need a separate user instruction; MCP supplies no Git tool. For Playable Shaders, one Enter-blast request creates the parameter, the GLSL term, the gate channel, the key binding, the BLAST envelope and the driver together in `shader.json`. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
 
 For Fractal Workshop, invoke the installed **`fractal`** skill. It owns fresh context, actual current renderer ownership, closed edits, session transport, Save and Save As, and native sequence or folder publication. Shader and Fractal keep their native validation and saved receipts.
 
@@ -148,8 +148,9 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `reset_hotkeys` | Clear Hotkey binding overrides; the single-key switch stays | **yes** |
 | `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. include_source selects source/resolved authoring bytes; include_formula separately selects formulas. MCP enablement authorizes access; native identity and bounds still apply. No Import, delete, or Apply | no |
 | `get_shader_parameters` | Read current mounted parameter IDs, values, bounds, exact witness and native `writable` state | no |
-| `set_shader_parameter` | Connected MCP edits the actual current writer. Use `operation=status` with the original `client_request_id` after an uncertain reply, even if selection changes. `applied` acknowledges an edit, not Save | **yes** |
-| `propose_shader` | Post a legacy shader candidate or Board, preserving Playable convention/envelope bytes and declarations in every row. Complete controls use the attested workspace. No prepare, consume, Import, delete, or Board Accept | **yes** |
+| `set_shader_parameter` | Connected MCP edits one exposed value on the actual current writer. Use `operation=status` with the original `client_request_id` after an uncertain reply. `applied` acknowledges that value edit and does not save the package | **yes** |
+| `shader_edit` | Edit one Shader package. Each edit is set, create, reshape or delete on one address. Send seen for a unit a human has edited. The same request_id returns the recorded result | **yes** |
+| `propose_shader` | Post a legacy shader document or Board. Every row keeps Playable envelope bytes. Credits use the Credits card. No prepare, consume, Import, delete, or Board Accept | **yes** |
 | `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through the connected APP and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |
 | `inspect_shader_sequence_output` | Inspect one chosen destination using native metadata; retain its identity and fingerprint before explicit Continue | no |
@@ -158,9 +159,9 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `control_shader_sequence` | Continue an inspected request, Stop the observed run, resume an admitted job, or control the exact publication attempt; reconcile unknown replies | **yes** |
 | `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG, JPG, or EXR; retain the fingerprint and attempt ID | no |
 | `export_shader_sequence` | Publish only that exact preflighted folder intent; GET the known ID/attempt after an uncertain reply | **yes** |
-| `open_shader_workspace` | Acknowledge exact Project Shader attachment; current schema2 returns the declared source set and metadata path; older replies refuse. Follow installed `360-hextile` | **yes** |
-| `register_shader_update` | Register the complete acknowledged v2 raw digest, including unused helpers; APP checks the candidate and saves only after its native acceptance | **yes** |
-| `get_shader_update` | Read the exact workspace receipt with handle, change_id and acknowledged Project witness | no |
+| `open_shader_workspace` | Open one Shader workspace. Send shader_id and request_id only. Returns the lease, commit and revision. The same request_id returns the recorded result | **yes** |
+| `register_shader_update` | Register the package digest and save. Read merge. Watch compile. Send the lease and seen. The same request_id returns the recorded result | **yes** |
+| `get_shader_update` | Read the recorded save for one request_id: merge, compile, commit and revision | no |
 | `request_shader_doctor` | Start one on-demand GPU Doctor pass for the clean, previewed Builtin, My Library or Project Shader with its actual private captured frame; keep the UUID for polling | **yes** |
 | `get_shader_doctor` | Poll the exact Doctor request UUID and witness for bounded diagnostics without source, pixels or overlay mask | no |
 | `get_fractal_context` | Read the mounted Fractal workshop: SHA scene revision, registry targets, retained orphans, capabilities, and numeric base/effective values. Not a grant | no |
@@ -225,8 +226,8 @@ The proxy forwards only to APP loopback and supplies `X-Hextile-Mcp-Session`. Do
 
 ### Selection guide
 
-For saved Shader animation, keep confirmed Apply and Save under the effective
-policy, then reread the saved identity/hashes and Project witness. Require
+For saved Shader animation, register the package and read merge and compile,
+then reread the saved identity/hashes and Project witness. Require
 `get_capabilities.native_render.contract:"native-render/1"`. Preflight and submit
 the same exact request/key using `preflight_shader_sequence` →
 `render_shader_sequence`, then poll `get_shader_sequence`. Direct PNG/JPG/EXR carries

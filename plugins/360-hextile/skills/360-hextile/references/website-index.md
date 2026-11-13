@@ -147,4 +147,4 @@ The MCP `get_guide` allowlist is `workflow-schema`, `shader-cookbook`, `best-pra
 - https://360hextile.com/static/templates/shaders/gitignore.txt
 - https://360hextile.com/static/templates/shaders/gitattributes.txt
 
-Verify deployed download availability before directing a user there. Wildcard ignore rules apply only after all covered Shaders have complete verified portable workspace copies. Git actions need the user’s instruction; repository docs do not qualify installed capabilities.
+Verify deployed download availability before directing a user there. Wildcard ignore rules apply only after all covered Shaders have complete packages (`shader.json`, `source.glsl` and `provenance.json`). Git actions need the user’s instruction; repository docs do not qualify installed capabilities.

@@ -116,7 +116,7 @@ Skip any step for something you never installed. Start a new host session afterw
 
 ## All tools
 
-### `hextile` MCP server — 179 tools
+### `hextile` MCP server — 181 tools
 
 Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forwards to the running 360 Hextile app on `127.0.0.1:8000`, except `get_guide`, which reads the bundled guides. Full argument schemas come from the host's `tools/list`.
 
@@ -181,6 +181,7 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `get_shader_context` | Read the open Shader, including bounded source-free conventions/1, modulation/2 or /3, parameter-expressions/1, shader-timeline/1, stable typed parameter addresses … |
 | `get_shader_parameters` | Read exposed controls on the mounted Shader without including source. |
 | `set_shader_parameter` | Change one exposed control on the exact witnessed mounted Shader. |
+| `shader_edit` | Edit one Shader package. Each edit is set, create, reshape or delete on one address. Send seen for a unit a human has edited. |
 | `propose_shader` | POST one closed Shader proposal, including schema-2 parameter expression, mode and saved timeline edits, and return ticket identity. |
 | `control_shader_timeline` | Control only the currently mounted Shader Workshop session after fresh get_live_context discovery. |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision and exact rational native interval without queuing. |
@@ -190,9 +191,9 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `control_shader_sequence` | Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request and fingerprint. |
 | `preflight_shader_sequence_export` | Check verified native masters and an explicitly chosen existing local destination folder. |
 | `export_shader_sequence` | Publish only the exact preflighted folder intent using its transaction_fingerprint. |
-| `open_shader_workspace` | Reuse the original request id. |
-| `register_shader_update` | Register native file bytes once for automatic APP prepare/compile/preview. |
-| `get_shader_update` | Read one exact authorized workspace receipt, including attachment_state, check_attempt, prepare/compile/preview/presentation/save and bounded diagnostics/raw_log/reason. |
+| `open_shader_workspace` | Open one Shader workspace with shader_id and request_id only. Returns the lease, commit and revision. |
+| `register_shader_update` | Register the package digest and save. Read merge. Watch compile. |
+| `get_shader_update` | Read the recorded save for one request id: merge, compile, commit and revision. |
 | `request_shader_doctor` | Request one GPU Doctor pass for the clean, currently previewed Shader in the mounted Workshop. |
 | `get_shader_doctor` | Poll one exact Shader Doctor request receipt. |
 | `shader_list_assets` | List bounded saved, draft and incomplete Shader metadata in the current library. |
@@ -226,7 +227,6 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `shader_set_project_conventions` | Replace Project convention profiles through the fixed native document writer with exact expected digest and Project witness. |
 | `shader_get_proposal` | Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. |
 | `shader_get_workspace` | Recover an existing workspace attachment and current source-free candidate receipt, including before first registration. |
-| `shader_recheck_update` | Start a new check attempt for the same current candidate after a failed or unavailable check. |
 | `shader_stop_workspace` | Stop only this current workspace attachment and preserve files. |
 | `shader_rename_asset` | Rename one saved Shader with an exact base, owner and request ID. |
 | `shader_delete_asset` | Delete one exact saved Shader. |
@@ -374,7 +374,7 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 </details>
 
 <details>
-<summary><strong>App, settings and diagnostics</strong> (14)</summary>
+<summary><strong>App, settings and diagnostics</strong> (16)</summary>
 
 | Tool | What it does |
 |:--|:--|
@@ -392,6 +392,8 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `get_gpu_diagnostics` | Read the app's current GPU/VRAM status without changing GPU state. |
 | `get_seed_memory_advice` | Read separate GPU status and APP memory-pressure advice for one listed 360-LoRA resolution. |
 | `get_guide` | Read bundled agent documentation (schema, best practices, website index, recipes, shader cookbook). |
+| `search_docs` | Search the public docs bundled with this APP version. Hits include URLs. |
+| `read_doc` | Read one docs page or section. Long pages return an outline. |
 
 </details>
 
@@ -421,7 +423,7 @@ Run any matte tool with `bash "$PLUGIN_ROOT/pipe/scripts/fp-run.sh" <tool> …`,
 | Skill (Claude: `/360-hextile:<skill>`) | What it does |
 |:--|:--|
 | `360-hextile` | Workflow automation hub: compose, validate and run 360 Hextile workflows, seeds, sequences, batches and exports. |
-| `shader` | Inspect the open Shader, or edit a Project or My Library Shader through its native files with APP-owned checks; the human Applies. |
+| `shader` | Inspect the open Shader, or edit a package with shader_edit. Register saves. Only the human moves the lease. |
 | `fractal` | Edit the mounted Fractal Workshop, control its timeline, Open or Save scenes, and render or export saved Fractal sequences. |
 | `upres` | GPU upres a still, a folder of stills or a video through 360 Hextile Real-ESRGAN. |
 | `hextile-pipe` and `hextile-*` | The Pipe matte skills listed above. |
