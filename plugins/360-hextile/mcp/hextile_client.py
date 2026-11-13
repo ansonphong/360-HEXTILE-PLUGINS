@@ -1152,6 +1152,8 @@ def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set
         raise HextileClientError("Invalid page cursor", status_code=422, kind="other")
     if "search" in args and (type(args["search"]) is not str or len(args["search"]) > 128):
         raise HextileClientError("Invalid discovery search", status_code=422, kind="other")
+    if "refresh" in args and (type(args["refresh"]) is not str or not 1 <= len(args["refresh"]) <= 6449):
+        raise HextileClientError("Invalid library refresh", status_code=422, kind="other")
     if "shelf" in args and args["shelf"] not in {"builtin", "user", "project"}:
         raise HextileClientError("Invalid discovery shelf", status_code=422, kind="other")
     if "kind" in args and args["kind"] not in {"revisions", "checkpoints"}:
@@ -4542,7 +4544,7 @@ class Client:
             "project_context_witness": args["project_context_witness"]}), kind="state")
 
     def list_shader_assets(self, args: Mapping[str, Any]) -> dict:
-        _native_read_args(args, {"project_context_witness"}, {"shelf", "search", "cursor", "limit"})
+        _native_read_args(args, {"project_context_witness"}, {"shelf", "search", "cursor", "limit", "refresh"})
         return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/assets",
                                                      params=dict(args)), kind="assets", entries=50)
 

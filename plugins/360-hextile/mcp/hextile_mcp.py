@@ -3035,12 +3035,15 @@ for _shape in _STILL_OUTPUT["anyOf"][2:4]:
         "then": {"properties": {"raster_policy": _SHADER_RASTER_PNG}},
         "else": {"properties": {"raster_policy": _SHADER_RASTER_PROCESSING}}})
 SHADER_EXTENSION_TOOLS = [
-    _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library.",
+    _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library. "
+              "Unchanged rows come from the APP's listing cache; refresh=all or refresh=id,id rereads those Shaders.",
               {"project_context_witness": _SHADER_TEXT,
                "shelf": {"enum": ["builtin", "user", "project"]},
                "search": {"type": "string", "maxLength": 128},
                "cursor": {"type": "string", "maxLength": 160},
-               "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
+               "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+               "refresh": {"type": "string", "maxLength": 6449,
+                           "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}},
               ["project_context_witness"]),
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
