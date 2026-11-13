@@ -748,24 +748,33 @@ def test_credits_distribution_summary_is_closed_without_raw_rights(monkeypatch) 
         client.get_shader_credits(args)
 
 
-def test_register_forwards_typed_source_proposal_without_changing_digest(monkeypatch) -> None:
-    args = _workspace_register()
-    source_proposal = {"schema": 1, "expected_provenance_hash": None, "sources": [{"kind": "append",
-        "row": {"author": "Adapter", "license_status": "unknown",
-                "evidence": {"basis": "observed", "note": "source"}}}]}
-    args["source_proposal"] = source_proposal
+def test_register_forwards_digest_lease_and_seen(monkeypatch) -> None:
+    digest = "sha256:" + "ab" * 32
+    seen = [{"address": ["parameters", "fog"], "human": 1}]
+    args = {"shader_id": "aurora", "request_id": "req-register", "digest": digest,
+            "lease": {"holder": "agent", "generation": 0}, "seen": seen}
     jsonschema.validate(args, _schema("register_shader_update")["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**args, "handle": "workspace_1"}, _schema("register_shader_update")["inputSchema"])
+    saved = {"save": "saved", "merge": [{"op": "set", "address": ["parameters", "fog"],
+                                         "outcome": "kept", "value": 0.2}],
+             "lease": {"holder": "agent", "generation": 0}, "commit": 3, "revision": 4}
     sent = {}
     client = Client("http://127.0.0.1:9")
-    monkeypatch.setattr(client, "_shader_workspace_request", lambda method, path, body=None:
-                        sent.update(body=body) or {"handle": args["handle"], "change_id": args["change_id"],
-                        "content_digest": args["content_digest"], "generation": 1, "candidate_id": "candidate"})
-    client.register_shader_update(args)
-    assert sent["body"]["source_proposal"] == source_proposal
-    assert sent["body"]["content_digest"] == args["content_digest"]
+
+    def request_json(method, path, body=None, **kwargs):
+        sent["method"] = method
+        sent["path"] = path
+        sent["body"] = body
+        return saved
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    assert client.register_shader_update(args)["merge"][0]["outcome"] == "kept"
+    assert sent == {"method": "POST", "path": "/api/shaders/aurora/register",
+                    "body": {"request_id": "req-register", "digest": digest,
+                             "lease": args["lease"], "seen": seen}}
     with pytest.raises(HextileClientError):
-        client.register_shader_update({**args, "source_proposal": {**source_proposal, "sources": [
-            {"kind": "remove", "index": 0}]}})
+        client.register_shader_update({**args, "seen": [{"address": "parameters.fog", "human": 1}]})
 
 
 def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
@@ -774,8 +783,10 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
     assert {"shader_list_assets", "shader_get_history", "shader_get_looks",
             "shader_get_project_conventions"} <= names
-    assert {"shader_get_proposal", "shader_get_workspace", "shader_recheck_update",
-            "shader_stop_workspace"} <= names
+    assert {"shader_get_proposal", "shader_get_workspace", "shader_stop_workspace"} <= names
+    assert "shader_recheck_update" not in names
+    assert "shader_edit" in {tool["name"] for tool in TOOLS}
+    assert "shader_edit" not in names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset",
             "shader_open_asset", "shader_save_asset", "shader_create_asset", "shader_fork_asset",
             "shader_duplicate_asset",
@@ -1142,422 +1153,75 @@ def test_native_shader_recovery_refuses_malformed_human_value_metadata(monkeypat
         client.get_shader_workspace_status({"handle": "workspace_1", "project_context_witness": "wit"})
 
 
-def test_native_shader_recheck_uses_same_candidate_and_source_free_status(monkeypatch) -> None:
-    client = Client("http://127.0.0.1:9")
-    handle = "workspace_1"
-    change_id = handle + ":1"
-    digest = "sha256:" + "a" * 64
-    calls = []
-    attachment = {"handle": handle, "generation": 1, "attachment_state": "attached",
-                  "studio_surface_id": "surface", "project_context_witness": "wit",
-                  "candidate_id": "candidate", "change_id": change_id}
-    receipt = {"handle": handle, "change_id": change_id, "candidate_id": "candidate",
-               "generation": 1, "content_digest": digest, "check_attempt": 0,
-               "studio_surface_id": "surface", "project_context_witness": "wit",
-               "save": "not_saved", "prepare": "passed", "raw_log": "private"}
-    receipt["publication"] = {"composition_id": "sc_" + "b" * 32, "value_version": 3,
-        "prepare_identity": {"prepare_receipt_id": "prepare_" + "c" * 24,
-            "source_hash": digest, "document_hash": digest, "manifest_hash": digest,
-            "resource_manifest_hash": digest, "receipt_hash": digest},
-        "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
-        "saved": {"working_revision": 2, "document_hash": digest, "source_hash": digest, "manifest_hash": digest}}
-
-    def request_json(method, path, body=None, **kwargs):
-        calls.append((method, path, body, kwargs))
-        if path.endswith("/attachment"):
-            return attachment
-        if method == "GET" and path.endswith("/updates/" + handle + "%3A1"):
-            return receipt
-        if method == "POST" and path.endswith("/recheck"):
-            return {key: value for key, value in {**receipt, "check_attempt": 1,
-                                                  "diagnostics": [{"message": "private"}]}.items()
-                    if key != "raw_log"}
-        raise AssertionError(path)
-
-    monkeypatch.setattr(client, "request_json", request_json)
-    status = client.get_shader_workspace_status({"handle": handle, "project_context_witness": "wit"})
-    assert status["receipt"]["candidate_id"] == "candidate"
-    assert status["receipt"]["publication"] == receipt["publication"]
-    assert "raw_log" not in status["receipt"] and "source_diagnostics" not in status["receipt"]
-    assert calls[1][3]["params"] == {"project_context_witness": "wit"}
-    rechecked = client.recheck_shader_update({"handle": handle, "change_id": change_id,
-        "generation": 1, "content_digest": digest, "studio_surface_id": "surface",
-        "project_context_witness": "wit"})
-    assert rechecked["candidate_id"] == "candidate" and rechecked["check_attempt"] == 1
-    assert "diagnostics" not in rechecked
-    assert calls[-1][2] == {"generation": 1, "content_digest": digest,
-                            "studio_surface_id": "surface", "project_context_witness": "wit"}
-    with pytest.raises(HextileClientError):
-        client.recheck_shader_update({"handle": handle, "change_id": change_id,
-            "generation": True, "content_digest": digest, "studio_surface_id": "surface",
-            "project_context_witness": "wit"})
+def test_shader_recheck_update_is_absent() -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS, TOOL_NAMES
+    listed = {tool["name"] for tool in TOOLS + SHADER_EXTENSION_TOOLS}
+    assert "shader_recheck_update" not in listed
+    assert not hasattr(Client, "recheck_shader_update")
+    assert "shader_edit" in TOOL_NAMES
 
 
-@pytest.mark.parametrize("defect", ["extra", "compile_type", "saved_hash", "saved_revision", "saved_failed", "nonfinite"])
-def test_native_shader_publication_recovery_refuses_malformed_identity(monkeypatch, defect) -> None:
-    client = Client("http://127.0.0.1:9")
-    digest = "sha256:" + "a" * 64
-    identity = {"prepare_receipt_id": "prepare_" + "c" * 24, "source_hash": digest,
-        "document_hash": digest, "manifest_hash": digest, "resource_manifest_hash": digest, "receipt_hash": digest}
-    publication = {"composition_id": "sc_" + "b" * 32, "value_version": 3, "prepare_identity": identity,
-        "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
-        "saved": {"working_revision": 2, "document_hash": digest, "source_hash": digest, "manifest_hash": digest}}
-    if defect == "extra": publication["source"] = "private"
-    elif defect == "compile_type": publication["compile"] = []
-    elif defect == "saved_hash": publication["saved"]["document_hash"] = "sha256:" + "f" * 64
-    elif defect == "saved_revision": publication["saved"]["working_revision"] = True
-    elif defect == "saved_failed": publication.update(compile="failed", preview="failed")
-    else: publication["value_version"] = float("nan")
+def _status_pair():
+    # negative-contract: unknown receipt keys are dropped and not echoed
     attachment = {"handle": "workspace_1", "generation": 1, "attachment_state": "attached",
-        "studio_surface_id": "surface", "project_context_witness": "wit", "candidate_id": "candidate",
-        "change_id": "workspace_1:1"}
-    receipt = {"handle": "workspace_1", "change_id": "workspace_1:1", "candidate_id": "candidate",
-        "generation": 1, "content_digest": digest, "check_attempt": 0, "save": "not_saved",
-        "project_context_witness": "wit", "studio_surface_id": "surface", "publication": publication}
-    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
-                        attachment if path.endswith("/attachment") else receipt)
-    with pytest.raises(HextileClientError):
-        client.get_shader_workspace_status({"handle": "workspace_1", "project_context_witness": "wit"})
+                  "studio_surface_id": "surface", "project_context_witness": "wit"}
+    receipt = {"handle": "workspace_1", "change_id": "workspace_1:1", "generation": 1,
+               "content_digest": "sha256:" + "ab" * 32, "save": "saved",
+               "project_context_witness": "wit", "studio_surface_id": "surface",
+               "merge": [{"op": "set", "address": ["parameters", "fog"], "outcome": "lost_to_human",
+                          "before": 0.1, "value": 0.4, "human": 2}]}
+    return attachment, receipt
 
 
-def _lease_digest(char: str = "a") -> str:
-    return "sha256:" + char * 64
-
-
-def _code_lease() -> dict[str, Any]:
-    return {"contract": "shader-code-lease/1",
-            "held": ["code_body", "modules", "file_inventory"],
-            "human_document_families": ["parameters", "values", "fields", "header", "extensions",
-                                        "modulators", "mappings", "expressions"],
-            "composition_authority": "registered-candidate/1"}
-
-
-def _human_document(**patch: Any) -> dict[str, Any]:
-    digest = _lease_digest()
-    changed = {family: [] for family in ("parameters", "values", "fields", "header", "extensions",
-                                         "modulators", "mappings", "expressions")}
-    changed["parameters"] = ["glow"]
-    document = {"contract": "shader-code-lease/1", "version": 2, "code_identity": digest,
-                "accepted_base": {"kind": "saved", "working_revision": 2, "document_hash": digest,
-                                  "source_hash": _lease_digest("b")},
-                "changed": changed, "omitted": 1, "baseline": "acknowledged", "composition_required": True}
-    document.update(patch)
-    return document
-
-
-def _shader_discovery(*, lease: bool = True) -> dict[str, Any]:
-    digest = _lease_digest()
-    shader = {"origin": "user", "shaderId": "aurora"}
-    contract: dict[str, Any] = {"revision": 1, "apply_policy": "mounted", "blockers": []}
-    if lease:
-        contract["code_lease"] = _code_lease()
-    return {"view": "shader", "schema": 1, "mcp_enabled": True,
-            "current_surface": {"kind": "shader_workshop", "studio_surface_id": "surface",
-                                "project_context_witness": "wit", "shader": shader, "draft_state": "clean",
-                                "base": {"kind": "saved", "working_revision": 2, "document_hash": digest,
-                                         "source_hash": _lease_digest("b")}},
-            "shader_contract": contract,
-            "shader_summary": {"name": "Aurora", "metadata_status": "available", "shader": shader,
-                               "draft_state": "clean", "save_state": "saved", "editable": True, "blockers": []}}
-
-
-def _broken_human_document(defect: str) -> dict[str, Any]:
-    document = _human_document()
-    if defect == "enum":
-        document["baseline"] = "saved"
-    elif defect == "baseline_list":
-        document["baseline"] = []
-    elif defect == "baseline_dict":
-        document["baseline"] = {}
-    elif defect == "hash":
-        document["code_identity"] = "sha256:" + "g" * 64
-    elif defect == "base":
-        document["accepted_base"] = {"kind": "saved", "working_revision": 2,
-                                     "document_hash": _lease_digest(), "path": "D:/private.glsl"}
-    elif defect == "version":
-        document["version"] = True
-    elif defect == "clock":
-        document["version"] = 3
-    elif defect == "id_empty":
-        document["changed"]["parameters"] = [""]
-    elif defect == "id_long":
-        document["changed"]["parameters"] = ["p" * 257]
-    elif defect == "id_count":
-        document["changed"]["parameters"] = [f"p{i}" for i in range(17)]
-    elif defect == "id_dup":
-        document["changed"]["parameters"] = ["glow", "glow"]
-    elif defect == "extra":
-        document["source"] = "void main(){}"
-    elif defect == "unsupported":
-        document["contract"] = "shader-code-lease/2"
-    elif defect == "family":
-        document["changed"].pop("expressions")
-    elif defect == "oversized":
-        document["changed"]["parameters"] = ["p" * 40000]
-    else:
-        raise AssertionError(defect)
-    return document
-
-
-def test_shader_code_lease_summary_survives_discovery_attachment_update_and_stop(monkeypatch) -> None:
+def test_workspace_status_drops_unknown_receipt_keys_and_keeps_merge(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
-    document = _human_document()
-    digest = _lease_digest()
-    handle, witness, change_id = "workspace_1", "wit", "workspace_1:1"
-    attachment = {"handle": handle, "generation": 1, "attachment_state": "attached",
-                  "studio_surface_id": "surface", "project_context_witness": witness,
-                  "base": document["accepted_base"], "candidate_id": "candidate", "change_id": change_id,
-                  "human_values": {"value_version": 2, "values": {"fog": 1}}, "human_document": document}
-    publication = {"composition_id": "sc_" + "b" * 32, "value_version": 2,
-                   "prepare_identity": {"prepare_receipt_id": "prepare_" + "c" * 24, "source_hash": digest,
-                                        "document_hash": digest, "manifest_hash": digest,
-                                        "resource_manifest_hash": None, "receipt_hash": digest},
-                   "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
-                   "saved": {"working_revision": 2, "document_hash": digest, "source_hash": digest,
-                             "manifest_hash": digest}}
-    receipt = {"handle": handle, "change_id": change_id, "candidate_id": "candidate", "generation": 1,
-               "content_digest": digest, "check_attempt": 0, "save": "not_saved", "prepare": "not_requested",
-               "project_context_witness": witness, "studio_surface_id": "surface",
-               "publication": publication, "human_document": document, "raw_log": "private"}
+    attachment, receipt = _status_pair()
+    receipt.update(candidate_id="candidate", publication={"state": "ready"}, check_attempt=1,
+                   check_deadline_at="soon", human_document={"schema": 1}, raw_log="private",
+                   presentation={"layout": "card"})
 
     def request_json(method, path, body=None, **kwargs):
-        if path.endswith("/attachment"):
-            return attachment
-        if method == "GET" and "/updates/" in path:
-            return receipt
-        if method == "DELETE":
-            stopped_view = {key: value for key, value in attachment.items()
-                            if key not in {"candidate_id", "change_id"}}
-            return {**stopped_view, "attachment_state": "stopped"}
-        raise AssertionError(path)
+        return attachment if path.endswith("/attachment") else receipt
 
     monkeypatch.setattr(client, "request_json", request_json)
-    monkeypatch.setattr(client, "get_json", lambda *_args, **_kwargs: _shader_discovery())
-    discovered = client.get_live_context(view="shader")
-    assert discovered["shader_contract"]["code_lease"] == _code_lease()
-    assert discovered["shader_contract"]["revision"] == 1
-    assert "lease_id" not in json.dumps(discovered)
-    status = client.get_shader_workspace_status({"handle": handle, "change_id": change_id,
-                                                 "project_context_witness": witness})
-    assert status["attachment"]["human_document"] == document
-    assert status["attachment"]["human_values"]["value_version"] == document["version"]
-    assert status["receipt"]["human_document"] == document
-    assert status["receipt"]["candidate_id"] == "candidate"
-    assert status["receipt"]["prepare"] == "not_requested"
-    assert status["receipt"]["publication"] == publication
-    assert "raw_log" not in status["receipt"]
-    stopped = client.stop_shader_workspace({"handle": handle, "generation": 1, "studio_surface_id": "surface",
-                                            "project_context_witness": witness})
-    assert stopped["attachment_state"] == "stopped"
-    assert stopped["human_document"] == document
-    assert stopped["handle"] == handle
-    direct = client.get_shader_update({"handle": handle, "change_id": change_id,
-                                       "project_context_witness": witness})
-    assert direct["human_document"] == document and direct["prepare"] == "not_requested"
-    unaccepted = _human_document(version=0, code_identity=None, baseline="unavailable", omitted=0,
-                                 composition_required=False,
-                                 accepted_base={"kind": "unaccepted", "authoring_digest": digest},
-                                 changed={family: [] for family in document["changed"]})
-    quiet = {key: value for key, value in attachment.items() if key not in {"human_values", "candidate_id", "change_id"}}
-    quiet.update(generation=0, human_document=unaccepted)
-    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: quiet)
-    recovered = client.get_shader_workspace_status({"handle": handle, "project_context_witness": witness})
-    assert recovered["receipt"] is None
-    assert recovered["attachment"]["human_document"]["code_identity"] is None
-    assert recovered["attachment"]["human_document"]["accepted_base"]["kind"] == "unaccepted"
-
-
-def test_shader_code_lease_older_peer_absence_stays_unknown(monkeypatch) -> None:
-    client = Client("http://127.0.0.1:9")
-    monkeypatch.setattr(client, "get_json", lambda *_args, **_kwargs: _shader_discovery(lease=False))
-    discovered = client.get_live_context(view="shader")
-    assert "code_lease" not in discovered["shader_contract"]
-    assert discovered["shader_contract"]["apply_policy"] == "mounted"
-    attachment = {"handle": "workspace_1", "generation": 0, "attachment_state": "attached",
-                  "studio_surface_id": "surface", "project_context_witness": "wit",
-                  "human_values": {"value_version": 2, "values": {"fog": 1}}}
-    monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: attachment)
-    status = client.get_shader_workspace_status({"handle": "workspace_1", "project_context_witness": "wit"})
-    assert "human_document" not in status["attachment"]
-    assert status["attachment"]["human_values"]["value_version"] == 2
-
-
-def _shader_merge_report() -> dict[str, Any]:
-    return {"schema": 1, "entries": [
-        {"family": "parameters", "id": "glow", "field": "default", "outcome": "lost_to_human"},
-        {"family": "values", "id": "fog", "field": None, "outcome": "fell_back"},
-        {"family": "expressions", "id": "shader.params.glow", "field": None, "outcome": "removed"},
-        {"family": "parameters", "id": "hue", "field": "ui.min", "outcome": "clamped"},
-        {"family": "header", "id": "space", "field": None, "outcome": "kept"},
-    ], "omitted": {"kept": 3, "clamped": 1}}
-
-
-def _shader_merge_losses(count: int) -> dict[str, Any]:
-    return {"schema": 1, "entries": [
-        {"family": "expressions", "id": f"shader.params.p{index}", "field": None, "outcome": "removed"}
-        for index in range(count)
-    ], "omitted": {"kept": 0, "clamped": 0}}
-
-
-def _broken_shader_merge(defect: str) -> Any:
-    report = _shader_merge_report()
-    if defect == "extra":
-        report["source"] = "private"
-    elif defect == "entry":
-        report["entries"][0]["value"] = 1
-    elif defect == "outcome":
-        report["entries"][0]["outcome"] = "won"
-    elif defect == "schema":
-        report["schema"] = 2
-    elif defect == "schema_bool":
-        report["schema"] = True
-    elif defect == "omitted_bool":
-        report["omitted"]["kept"] = True
-    elif defect == "omitted_negative":
-        report["omitted"]["clamped"] = -1
-    elif defect == "omitted_key":
-        report["omitted"]["lost"] = 1
-    elif defect == "omitted_missing":
-        report["omitted"].pop("clamped")
-    elif defect == "id_empty":
-        report["entries"][0]["id"] = ""
-    elif defect == "id_long":
-        report["entries"][0]["id"] = "p" * 257
-    elif defect == "field_long":
-        report["entries"][0]["field"] = "f" * 65
-    elif defect == "field_type":
-        report["entries"][0]["field"] = 1
-    elif defect == "family_empty":
-        report["entries"][0]["family"] = ""
-    elif defect == "entries":
-        report["entries"] = {}
-    elif defect == "bound":
-        return _shader_merge_losses(4096)
-    elif defect == "shape":
-        return ["kept"]
-    else:
-        raise AssertionError(defect)
-    return report
-
-
-def test_shader_merge_report_parses_and_absence_stays_unknown(monkeypatch) -> None:
-    """A present merge is a closed report. Absence stays unknown, never 'no conflicts'."""
-    client = Client("http://127.0.0.1:9")
-    merge = _shader_merge_report()
-    sent: list[Any] = []
-    mode: dict[str, Any] = {"merge": deepcopy(merge)}
-
-    def request_json(method, path, body=None, **kwargs):
-        sent.append((method, path, body))
-        if str(path).endswith("/attachment"):
-            return {"handle": "sw_test", "generation": 1, "attachment_state": "attached",
-                    "studio_surface_id": "surface", "project_context_witness": "wit",
-                    "candidate_id": "candidate", "change_id": "sw_test:1"}
-        receipt = {"handle": "sw_test", "change_id": "sw_test:1", "candidate_id": "candidate",
-                   "generation": 1, "content_digest": "sha256:" + "ef" * 32, "check_attempt": 0,
-                   "save": "not_saved", "project_context_witness": "wit", "studio_surface_id": "surface"}
-        if mode["merge"] is not None:
-            receipt["merge"] = deepcopy(mode["merge"])
-        return receipt
-
-    monkeypatch.setattr(client, "request_json", request_json)
-    assert Client._workspace_merge(deepcopy(merge)) == merge
-    empty = {"schema": 1, "entries": [], "omitted": {"kept": 0, "clamped": 0}}
-    assert Client._workspace_merge(empty) == empty
-    long_id = deepcopy(merge)
-    long_id["entries"][0]["id"] = "g" * 256
-    assert Client._workspace_merge(long_id)["entries"][0]["id"] == "g" * 256
-    # Above the 64 kept/clamped cap and the 1024 driver cap: every loss row stays.
-    assert len(Client._workspace_merge(_shader_merge_losses(1600))["entries"]) == 1600
-    registered = client.register_shader_update(_workspace_register())
-    assert registered["merge"] == merge
-    assert set(sent[0][2]) == {"change_id", "expected_generation", "content_digest"}
-    fetched = client.get_shader_update({"handle": "sw_test", "change_id": "sw_test:1",
-                                        "project_context_witness": "wit"})
-    assert fetched["merge"] == merge
-    status = client.get_shader_workspace_status({"handle": "sw_test", "change_id": "sw_test:1",
+    result = client.get_shader_workspace_status({"handle": "workspace_1", "change_id": "workspace_1:1",
                                                  "project_context_witness": "wit"})
-    assert status["receipt"]["merge"] == merge
-    mode["merge"] = None
-    quiet = client.get_shader_update({"handle": "sw_test", "change_id": "sw_test:1",
-                                      "project_context_witness": "wit"})
-    assert "merge" not in quiet
-    assert "no conflicts" not in json.dumps(quiet)
-    quiet_status = client.get_shader_workspace_status({"handle": "sw_test", "change_id": "sw_test:1",
-                                                       "project_context_witness": "wit"})
-    assert quiet_status["receipt"] is not None and "merge" not in quiet_status["receipt"]
-    for name in ("register_shader_update", "get_shader_update"):
-        description = _schema(name)["description"]
-        assert "merge" in description and "unknown" in description
-    for defect in ("extra", "entry", "outcome", "schema", "schema_bool", "omitted_bool", "omitted_negative",
-                   "omitted_key", "omitted_missing", "id_empty", "id_long", "field_long", "field_type",
-                   "family_empty", "entries", "bound", "shape"):
-        with pytest.raises(HextileClientError) as caught:
-            Client._workspace_merge(_broken_shader_merge(defect))
-        assert caught.value.kind == "other"
-        mode["merge"] = _broken_shader_merge(defect)
-        with pytest.raises(HextileClientError):
-            client.register_shader_update(_workspace_register())
-        with pytest.raises(HextileClientError):
-            client.get_shader_update({"handle": "sw_test", "change_id": "sw_test:1",
-                                      "project_context_witness": "wit"})
+    echoed = json.dumps(result)
+    for term in ("candidate_id", "publication", "check_attempt", "check_deadline_at",
+                 "human_document", "raw_log", "presentation"):
+        assert term not in echoed
+    assert result["receipt"]["merge"][0]["outcome"] == "lost_to_human"
+    assert result["receipt"]["merge"][0]["human"] == 2
 
 
-@pytest.mark.parametrize("where,defect", [
-    ("discovery", "contract"), ("discovery", "held"), ("discovery", "extra"),
-    ("attachment", "enum"), ("attachment", "baseline_list"), ("attachment", "baseline_dict"),
-    ("attachment", "hash"), ("attachment", "base"),
-    ("attachment", "version"), ("attachment", "clock"), ("attachment", "id_empty"),
-    ("attachment", "id_long"), ("attachment", "id_count"), ("attachment", "id_dup"),
-    ("attachment", "extra"), ("attachment", "unsupported"), ("attachment", "family"),
-    ("attachment", "oversized"), ("update", "hash"), ("update", "extra"),
-    ("update", "baseline_list"), ("update", "baseline_dict"),
-])
-def test_shader_code_lease_refuses_malformed_summary(monkeypatch, where: str, defect: str) -> None:
+def test_workspace_status_refuses_a_malformed_merge(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
-    if where == "discovery":
-        payload = _shader_discovery()
-        lease = payload["shader_contract"]["code_lease"]
-        if defect == "contract":
-            lease["contract"] = "shader-code-lease/9"
-        elif defect == "held":
-            lease["held"] = ["code_body"]
-        else:
-            lease["lease_id"] = "private"
-        monkeypatch.setattr(client, "get_json", lambda *_args, **_kwargs: payload)
-        with pytest.raises(HextileClientError) as caught:
-            client.get_live_context(view="shader")
-        assert caught.value.kind == "unsupported"
-        return
-    document = _broken_human_document(defect)
-    handle, witness = "workspace_1", "wit"
-    valid = _human_document()
-    attachment = {"handle": handle, "generation": 1, "attachment_state": "attached",
-                  "studio_surface_id": "surface", "project_context_witness": witness,
-                  "human_values": {"value_version": 2, "values": {"fog": 1}},
-                  "human_document": valid if where == "update" else document}
-    if where == "update":
-        digest = _lease_digest()
-        receipt = {"handle": handle, "change_id": handle + ":1", "candidate_id": "candidate", "generation": 1,
-                   "content_digest": digest, "check_attempt": 0, "save": "not_saved",
-                   "project_context_witness": witness, "studio_surface_id": "surface", "human_document": document}
-        attachment.update(candidate_id="candidate", change_id=handle + ":1")
+    attachment, receipt = _status_pair()
+    receipt["merge"] = [{"op": "set", "address": ["parameters", "fog"], "outcome": "applied"}]
 
-        def request_json(method, path, body=None, **kwargs):
-            return attachment if path.endswith("/attachment") else receipt
+    def request_json(method, path, body=None, **kwargs):
+        return attachment if path.endswith("/attachment") else receipt
 
-        monkeypatch.setattr(client, "request_json", request_json)
-        with pytest.raises(HextileClientError) as caught:
-            client.get_shader_workspace_status({"handle": handle, "change_id": handle + ":1",
-                                                "project_context_witness": witness})
-    else:
-        monkeypatch.setattr(client, "request_json", lambda *_args, **_kwargs: attachment)
-        with pytest.raises(HextileClientError) as caught:
-            client.get_shader_workspace_status({"handle": handle, "project_context_witness": witness})
-    if defect == "oversized":
-        assert "unbounded" in str(caught.value)
-    else:
-        assert "human document" in str(caught.value)
+    monkeypatch.setattr(client, "request_json", request_json)
+    with pytest.raises(HextileClientError) as caught:
+        client.get_shader_workspace_status({"handle": "workspace_1", "change_id": "workspace_1:1",
+                                            "project_context_witness": "wit"})
+    assert "Malformed Shader merge report" in str(caught.value)
+
+
+def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    v2 = {"view": "shader", "stack": "v2", "connected": True, "mcp_enabled": True,
+          "shader": {"origin": "user", "shader_id": "aurora"},
+          "lease": {"holder": "agent", "generation": 0}, "commit": 1, "revision": 1}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: v2)
+    assert client.get_live_context(view="shader") == v2
+    old = {"view": "shader", "schema": 1, "mcp_enabled": True, "current_surface": {},
+           "shader_contract": {}, "shader_summary": {}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: old)
+    with pytest.raises(HextileClientError) as caught:
+        client.get_live_context(view="shader")
+    assert caught.value.kind == "unsupported"
 
 
 def test_native_shader_recovery_status_and_stop_bypass_only_disabled_preflight(monkeypatch) -> None:
@@ -1673,53 +1337,36 @@ def test_attribution_guides_teach_limits_and_typed_proposal() -> None:
         assert "do not claim a page was read" in text.lower() or "when it was not" in text
 
 
-def test_attribution_wire_negotiation_and_exact_refusal_receipt(monkeypatch) -> None:
-    open_args = {
-        "shader": {"origin": "user", "shaderId": "aurora"},
-        "project_context_witness": "witness",
-        "studio_surface_id": "surface",
-        "workspace_schema": 2,
-        "attribution_schema": 1,
-    }
-    jsonschema.validate(open_args, _schema("open_shader_workspace")["inputSchema"])
-    register_args = {
-        "handle": "abc", "change_id": "abc:1", "expected_generation": 0,
-        "content_digest": "sha256:" + "ab" * 32, "attribution_action": "skip_optional",
-    }
-    jsonschema.validate(register_args, _schema("register_shader_update")["inputSchema"])
+def test_stale_lease_and_human_only_keep_next_step(monkeypatch) -> None:
     from hextile_client import validate_shader_workspace
-    validate_shader_workspace("open", open_args)
-    validate_shader_workspace("register", register_args)
-    sent = {}
+    args = {"shader_id": "aurora", "request_id": "req-register",
+            "digest": "sha256:" + "ab" * 32, "lease": {"holder": "agent", "generation": 0}}
+    jsonschema.validate(args, _schema("register_shader_update")["inputSchema"])
+    validate_shader_workspace("register", args)
+    cases = (
+        (409, "stale_lease", "The human holds the code and can hand it back.",
+         "Hand the code back, then register again."),
+        (403, "human_only", "Credits require human review.", "Propose credits for the Credits card."),
+    )
+    for status, code, message, next_step in cases:
+        sent = {}
 
-    def capture(method, path, body=None, **kwargs):
-        sent["body"] = body
-        detail = {
-            "code": "attribution_required",
-            "message": "Write the supplied provenance bytes and register again.",
-            "recovery": "write_provenance_and_rehash",
-            "attribution": {
-                "schema": 1, "status": "replacement_required", "generation": 7,
-                "content_digest": register_args["content_digest"],
-                "provenance_utf8": "{\"extensions\":{}}",
-                "provenance_sha256": "sha256:" + "cd" * 32,
-            },
-        }
-        raw = json.dumps({"detail": detail}).encode("utf-8")
-        assert len(raw) <= 65536
-        raise HextileClientError(
-            f"HTTP 409 POST {path}: {raw.decode()}", status_code=409, body=raw.decode(), kind="http")
+        def capture(method, path, body=None, **kwargs):
+            sent["body"] = body
+            raw = json.dumps({"detail": {"code": code, "message": message, "next_step": next_step}})
+            raise HextileClientError(message, status_code=status, body=raw, kind="http")
 
-    client = Client("http://127.0.0.1:9")
-    monkeypatch.setattr(client, "request_json", capture)
-    with pytest.raises(HextileClientError) as refused:
-        client.register_shader_update(register_args)
-    assert sent["body"]["attribution_action"] == "skip_optional"
-    assert refused.value.receipt["code"] == "attribution_required"
-    assert refused.value.receipt["attribution"]["provenance_utf8"] == "{\"extensions\":{}}"
-    payload = __import__("hextile_mcp", fromlist=["error_payload"]).error_payload(refused.value)
-    assert payload["receipt"]["attribution"]["status"] == "replacement_required"
-    assert payload["receipt"]["attribution"]["provenance_utf8"].encode("utf-8") == b"{\"extensions\":{}}"
+        client = Client("http://127.0.0.1:9")
+        monkeypatch.setattr(client, "request_json", capture)
+        with pytest.raises(HextileClientError) as refused:
+            client.register_shader_update(args)
+        assert refused.value.kind == "http"
+        assert refused.value.status_code == status
+        assert refused.value.receipt["code"] == code
+        assert refused.value.receipt["message"] == message
+        assert refused.value.receipt["next_step"] == next_step
+        assert sent["body"]["digest"] == args["digest"]
+        assert sent["body"]["lease"] == args["lease"]
 
 
 def _parameter_witness() -> dict[str, Any]:
@@ -2313,510 +1960,157 @@ def test_shader_handlers_return_context_and_ticket_identity() -> None:
         })
 
 
-def _workspace_open() -> dict[str, Any]:
-    return {"shader": {"origin": "project", "shaderId": "aurora"},
-            "project_context_witness": "wit", "expected_working_revision": 1,
-            "expected_document_hash": "sha256:" + "ab" * 32,
-            "expected_source_hash": "sha256:" + "cd" * 32, "studio_surface_id": "surface"}
+def _lease() -> dict[str, Any]:
+    return {"holder": "agent", "generation": 0}
 
 
-def _workspace_attachment() -> dict[str, Any]:
-    body = _workspace_open()
-    return {"handle": "sw_test", "generation": 0, "shader": body["shader"],
-            "base": {"kind": "saved", "working_revision": 1, "document_hash": body["expected_document_hash"],
-                     "source_hash": body["expected_source_hash"], "manifest_hash": None},
-            "project_context_witness": "wit", "studio_surface_id": "surface",
-            "files": [{"path": "source.glsl", "native_path": "D:/project/workspace/source.glsl"}],
-            "workspace_root": "D:/project/workspace", "authoring_path": "D:/project/workspace/authoring.json",
-            "workspace_schema": 2,
-            "content_digest": "sha256:" + "ef" * 32, "schema": 2, "abi": "hx-shader/1",
-            "available": True, "executable_capabilities": ["conventions/1"], "instructions": "observed APP instructions"}
+def _package_args(**extra: Any) -> dict[str, Any]:
+    body = {"shader_id": "aurora", "request_id": "req-1"}
+    body.update(extra)
+    return body
 
 
-def _workspace_register() -> dict[str, Any]:
-    return {"handle": "sw_test", "change_id": "sw_test:1", "expected_generation": 0,
-            "content_digest": "sha256:" + "ef" * 32}
+def _merge_row(**extra: Any) -> dict[str, Any]:
+    row = {"op": "set", "address": ["parameters", "fog"], "outcome": "kept", "value": 0.2}
+    row.update(extra)
+    return row
 
 
-def _workspace_receipt() -> dict[str, Any]:
-    attachment = _workspace_attachment()
-    return {key: value for key, value in {
-        **attachment, **_workspace_register(), "generation": 1, "candidate_id": "candidate",
-        "check_attempt": 0, "attachment_state": "attached", "prepare": "passed", "compile": "failed",
-        "preview": "failed", "presentation": "pending", "save": "not_saved",
-        "diagnostics": [{"phase": "compile", "severity": "error", "code": "compile",
-                         "message": "x" * 2048, "file": "source.glsl", "line": 42, "column": 3}],
-        "raw_log": "x" * 8192, "reason": {"code": "compile_failed", "message": "Repair native source"},
-    }.items() if key not in {"files", "instructions", "expected_generation"}}
+def _open_body(**extra: Any) -> dict[str, Any]:
+    body = {"lease": _lease(), "commit": 1, "revision": 2}
+    body.update(extra)
+    return body
 
 
-class _WorkspaceResponse:
-    status = 200
-
-    def __init__(self, body: dict[str, Any]) -> None:
-        self.body = body
-
-    def read(self) -> bytes:
-        return json.dumps(self.body).encode()
-
-    def __enter__(self) -> "_WorkspaceResponse":
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        return None
+def _saved_body(**extra: Any) -> dict[str, Any]:
+    body = {"save": "saved", "merge": [_merge_row()], "not_adopted": [],
+            "lease": _lease(), "commit": 3, "revision": 4,
+            "compile": {"revision": 4, "profiles": [
+                {"profile": "preview", "status": "pending", "program_identity": None}]}}
+    body.update(extra)
+    return body
 
 
-def test_workspace_closed_schemas_and_transport_admission() -> None:
-    cases = [("open_shader_workspace", _workspace_open()),
-             ("register_shader_update", _workspace_register()),
-             ("get_shader_update", {"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit"})]
-    client = Client(opener=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no HTTP")))
-    for name, args in cases:
-        schema = _schema(name)["inputSchema"]
+def _edit_body() -> dict[str, Any]:
+    return {"save": "saved", "results": [
+        _merge_row(outcome="lost_to_human", human=2, before=0.1, value=0.4)],
+            "commit": 5, "revision": 6}
+
+
+def test_package_tool_schemas_are_closed() -> None:
+    opened = _schema("open_shader_workspace")["inputSchema"]
+    registered = _schema("register_shader_update")["inputSchema"]
+    got = _schema("get_shader_update")["inputSchema"]
+    edited = _schema("shader_edit")["inputSchema"]
+    package = _package_args()
+    digest = "sha256:" + "ab" * 32
+    edit = _package_args(edits=[{"op": "set", "address": ["parameters", "fog"], "value": 0.2}],
+                         lease=_lease(), seen=[{"address": ["parameters", "fog"], "human": 1}])
+    delete = _package_args(edits=[{"op": "delete", "address": ["parameters", "fog"]}])
+    for schema, args in ((opened, package), (got, package),
+                         (registered, {**package, "digest": digest, "lease": _lease()}),
+                         (edited, edit), (edited, delete)):
         assert schema["additionalProperties"] is False
-        assert set(schema["required"]) <= set(args)
         jsonschema.validate(args, schema)
-        malformed = [{**args, "path": "D:/other"}, {key: value for key, value in args.items() if key != schema["required"][0]}]
-        if name == "open_shader_workspace":
-            adopted = {**args, "existing_workspace": {"action": "adopt", "expected_content_digest": "sha256:" + "ef" * 32}}
-            jsonschema.validate(adopted, schema)
-            malformed += [{**args, "shader": {**args["shader"], "path": "D:/other"}},
-                          {**adopted, "existing_workspace": {**adopted["existing_workspace"], "force": True}},
-                          {**args, "shader": {"origin": "stock", "shaderId": "aurora"}},
-                          {**args, "existing_workspace": None}, {**args, "expected_working_revision": True}]
-        for body in malformed:
-            with pytest.raises(jsonschema.ValidationError):
-                jsonschema.validate(body, schema)
-            with pytest.raises(HextileClientError):
-                getattr(client, name)(body)
-
-
-def test_workspace_requests_validate_with_live_app_closed_models() -> None:
-    # Load the real route models without importing unrelated desktop/GPU owners.
-    # This cross-service boundary catches a closed field or type drifting in APP.
-    route = ROOT.parents[2] / "360-HEXTILE-APP/backend/api/routes/agent_shader_workspaces.py"
-    tree = ast.parse(route.read_text(encoding="utf-8"))
-    imports = [node for node in tree.body if isinstance(node, ast.ImportFrom) and node.module in {"typing", "pydantic"}]
-    names = {"ClosedModel", "ShaderRef", "ExistingWorkspace", "OpenIn", "RegisterIn",
-             "SourceEvidence", "SourceDigest", "SourceProfileLink", "SourceProfile",
-             "SourceProfileRef", "SourceProfileV2", "SourceAvatar", "SourceProfileLinkV2", "SourceFields", "SourceAppend", "SourceChange", "SourceProposal"}
-    assignments = {"Digest", "Name", "SurfaceId"}
-    definitions = [node for node in tree.body if (isinstance(node, ast.ClassDef) and node.name in names)
-                   or (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id in assignments for target in node.targets))]
-    namespace: dict[str, Any] = {"MAX_SAFE_GENERATION": 2**53 - 1}
-    exec(compile(ast.Module(body=imports + definitions, type_ignores=[]), str(route), "exec"), namespace)
-    for name in names:
-        namespace[name].model_rebuild(_types_namespace=namespace)
-    for model, body in ((namespace["OpenIn"], _workspace_open()),
-                        (namespace["OpenIn"], {**_workspace_open(), "workspace_schema": 2}),
-                        (namespace["OpenIn"], _workspace_open_v2()),
-                        (namespace["RegisterIn"], {key: value for key, value in _workspace_register().items() if key != "handle"})):
-        validated = model.model_validate(body).model_dump(exclude_unset=True)
-        assert validated == body
-        with pytest.raises(ValueError):
-            model.model_validate({**body, "source": "forbidden GLSL JSON"})
-    source_body = {key: value for key, value in _workspace_register().items() if key != "handle"}
-    source_body["source_proposal"] = {"schema": 1, "expected_provenance_hash": None,
-        "sources": [{"kind": "append", "row": {"author": "Adapter",
-            "evidence": {"basis": "observed", "note": "source"}}}]}
-    assert namespace["RegisterIn"].model_validate(source_body).model_dump(exclude_unset=True) == source_body
-    with pytest.raises(ValueError):
-        namespace["RegisterIn"].model_validate({**source_body, "source_proposal": {
-            **source_body["source_proposal"], "sources": [{"kind": "append", "row": {
-                "author": "Adapter", "evidence": {"basis": "observed", "note": "source", "private": True}}}]}})
-    schema = namespace["OpenIn"].model_json_schema()
-    public = _schema("open_shader_workspace")["inputSchema"]
-    assert set(public["properties"]) == set(schema["properties"])
-    assert set(public["required"]) == set(schema["required"])
-    schema = namespace["RegisterIn"].model_json_schema()
-    public = _schema("register_shader_update")["inputSchema"]
-    assert set(public["properties"]) - {"handle"} == set(schema["properties"])
-
-
-def test_workspace_http_identity_receipt_and_open_replay() -> None:
-    seen: list[Any] = []
-    attachment, receipt = _workspace_attachment(), _workspace_receipt()
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        seen.append((req, timeout))
-        return _WorkspaceResponse(attachment if req.full_url.endswith("/open") else receipt)
-
-    server = HextileMcpServer(client=Client(opener=opener, timeout=23))
-    # Call handlers to isolate workspace transport from unrelated activity requests.
-    assert server._open_shader_workspace(_workspace_open()) == attachment
-    assert server._open_shader_workspace(_workspace_open()) == attachment
-    assert server._register_shader_update(_workspace_register()) == receipt
-    assert server._get_shader_update({"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit"}) == receipt
-    assert [timeout for _, timeout in seen] == [15.0, 15.0, 23, 23]
-    assert [req.get_method() for req, _ in seen] == ["POST", "POST", "POST", "GET"]
-    assert json.loads(seen[0][0].data) == json.loads(seen[1][0].data) == {**_workspace_open(), "workspace_schema": 2}
-    assert json.loads(seen[2][0].data) == {key: value for key, value in _workspace_register().items() if key != "handle"}
-    assert seen[2][0].full_url.endswith("/api/agent/shader-workspaces/sw_test/updates")
-    assert seen[3][0].full_url.endswith("/sw_test/updates/sw_test%3A1?project_context_witness=wit")
-    assert all(req.get_header("X-hextile-agent") == "mcp" for req, _ in seen)
-    assert "files" not in receipt and "source" not in receipt
-    assert receipt["diagnostics"][0]["line"] == 42 and len(receipt["raw_log"]) == 8192
-
-
-@pytest.mark.parametrize("change_id", ["other:1", "sw_test:01", "sw_test:0", "sw_test:+1", "sw_test:1.0",
-                                     "sw_test:١", "sw_test:9007199254740992", "sw_test:" + "9" * 10000])
-def test_workspace_canonical_change_id_refuses_before_http(change_id: str) -> None:
-    client = Client(opener=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no HTTP")))
-    with pytest.raises(HextileClientError) as caught:
-        client.register_shader_update({**_workspace_register(), "change_id": change_id})
-    assert caught.value.status_code == 409
-    with pytest.raises(HextileClientError):
-        client.get_shader_update({"handle": "sw_test", "change_id": change_id, "project_context_witness": "wit"})
-
-
-@pytest.mark.parametrize("generation", [True, -1, 1.0, 2**53 - 1])
-def test_workspace_generation_is_bounded_safe_integer(generation: Any) -> None:
-    with pytest.raises(HextileClientError):
-        Client().register_shader_update({**_workspace_register(), "expected_generation": generation})
-
-
-@pytest.mark.parametrize("status,code", [(409, "idempotency_conflict"), (409, "generation_conflict"),
-    (409, "attachment_conflict"), (409, "attachment_not_ready"), (503, "attachment_unavailable"),
-    (410, "receipt_expired"), (410, "workspace_expired"), (403, "authority"), (503, "capacity")])
-def test_workspace_backend_refusals_preserve_bounded_details(status: int, code: str) -> None:
-    detail = {"code": code, "message": "x" * 2048, "recovery": "Rediscover current authority"}
-
-    def opener(req: Any, timeout: Any = None) -> Any:
-        raise urllib.error.HTTPError(req.full_url, status, "refused", None,
-                                     io.BytesIO(json.dumps({"detail": detail}).encode()))
-
-    server = HextileMcpServer(client=Client(opener=opener))
-    result = server.call_tool("register_shader_update", _workspace_register())
-    assert result["isError"] is True
-    error = json.loads(result["content"][0]["text"])
-    assert error["status_code"] == status and error["receipt"] == detail
-    assert "files" not in error and "source_path" not in result["content"][0]["text"]
-
-
-@pytest.mark.parametrize("operation", ["open_shader_workspace", "register_shader_update"])
-def test_workspace_lost_open_never_retries_or_claims_attachment(operation: str) -> None:
-    for failure in (urllib.error.URLError(TimeoutError("timed out")), http.client.RemoteDisconnected("lost")):
-        calls: list[Any] = []
-
-        def opener(req: Any, timeout: Any = None) -> Any:
-            calls.append(req)
-            raise failure
-
-        with pytest.raises(HextileClientError):
-            getattr(Client(opener=opener), operation)(_workspace_open() if operation == "open_shader_workspace" else _workspace_register())
-        assert len(calls) == 1
-    for reply in ({"attachment_state": "attaching", "files": _workspace_attachment()["files"]},
-                  {**_workspace_attachment(), "attachment_state": "stale"}):
-        with pytest.raises(HextileClientError) as caught:
-            Client(opener=lambda *_a, **_k: _WorkspaceResponse(reply)).open_shader_workspace(_workspace_open())
-        assert caught.value.kind == "workspace_outcome_unknown"
-        assert caught.value.receipt is None and caught.value.body is None
-
-    class IncompleteResponse(_WorkspaceResponse):
-        def read(self) -> bytes:
-            return b'{"files":{"source_path":"D:/private/source.glsl"'
-
-    with pytest.raises(HextileClientError) as caught:
-        Client(opener=lambda *_a, **_k: IncompleteResponse({})).open_shader_workspace(_workspace_open())
-    assert "D:/private" not in str(caught.value)
-    assert caught.value.body is None and caught.value.receipt is None
-
-
-def test_workspace_empty_registration_is_unknown() -> None:
-    class EmptyBody:
-        status = 200
-
-        def read(self) -> bytes:
-            return b"null"
-
-        def __enter__(self) -> "EmptyBody":
-            return self
-
-        def __exit__(self, *_exc: object) -> None:
-            return None
-
-    server = HextileMcpServer(client=Client(opener=lambda *_a, **_k: EmptyBody()))
-    result = server.call_tool("register_shader_update", _workspace_register())
-    assert result["isError"] is True
-    assert json.loads(result["content"][0]["text"])["kind"] == "workspace_outcome_unknown"
-
-
-def test_workspace_replay_and_history_are_app_owned() -> None:
-    receipt = _workspace_receipt()
-    observed: list[Any] = []
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        if req.full_url.endswith("/open"):
-            return _WorkspaceResponse({**_workspace_attachment(), "generation": 9})
-        body = json.loads(req.data)
-        observed.append(body)
-        # Retained original ID can replay after current generation advances.
-        return _WorkspaceResponse(receipt)
-
-    client = Client(opener=opener)
-    assert client.open_shader_workspace(_workspace_open())["generation"] == 9
-    assert client.register_shader_update(_workspace_register()) == receipt
-    assert client.register_shader_update(_workspace_register()) == receipt
-    assert observed[0] == observed[1]
-    # Altered retained generation must reach APP's replay classifier, not be
-    # relabelled by a proxy without the authoritative receipt history.
-    client.register_shader_update({**_workspace_register(), "expected_generation": 1})
-    assert observed[-1]["change_id"] == "sw_test:1"
-
-
-def test_workspace_missing_route_is_actionable_without_rewriting_old_peer_error() -> None:
-    def opener(req: Any, timeout: Any = None) -> Any:
-        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", None, io.BytesIO(b'{"detail":"Not Found"}'))
-
-    with pytest.raises(HextileClientError) as caught:
-        Client(opener=opener).open_shader_workspace(_workspace_open())
-    assert caught.value.kind == "upgrade" and "Upgrade 360 Hextile" in str(caught.value)
-    assert caught.value.body == '{"detail":"Not Found"}'
-
-
-def _workspace_open_v2() -> dict[str, Any]:
-    return {key: value for key, value in {**_workspace_open(), "workspace_schema": 2}.items()
-            if key not in {"expected_working_revision", "expected_document_hash", "expected_source_hash"}}
-
-
-def _workspace_attachment_v2(base: dict[str, Any]) -> dict[str, Any]:
-    return {**_workspace_attachment(), "workspace_schema": 2, "schema": 2, "base": base,
-            "workspace_root": "D:/project/workspace", "authoring_path": "D:/project/workspace/authoring.json",
-            "files": [{"path": "lib/noise.glsl", "native_path": "D:/project/workspace/lib/noise.glsl"},
-                      {"path": "source.glsl", "native_path": "D:/project/workspace/source.glsl"}]}
-
-
-@pytest.mark.parametrize("base", [
-    {"kind": "saved", "working_revision": 9, "document_hash": "sha256:" + "ab" * 32, "source_hash": "sha256:" + "cd" * 32},
-    {"kind": "unaccepted", "authoring_digest": "sha256:" + "12" * 32},
-])
-def test_workspace_v2_open_preserves_exact_server_base_and_files(base: dict[str, Any]) -> None:
-    attachment = _workspace_attachment_v2(base)
-    seen = []
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        seen.append(json.loads(req.data))
-        return _WorkspaceResponse(attachment)
-
-    args = _workspace_open_v2() if base["kind"] == "unaccepted" else {
-        **_workspace_open(), "workspace_schema": 2, "expected_working_revision": base["working_revision"],
-        "expected_document_hash": base["document_hash"], "expected_source_hash": base["source_hash"]}
-    jsonschema.validate(args, _schema("open_shader_workspace")["inputSchema"])
-    assert HextileMcpServer(client=Client(opener=opener))._open_shader_workspace(args) == attachment
-    assert seen == [args]
-
-
-@pytest.mark.parametrize("patch", [{"workspace_schema": 1}, {"workspace_schema": True}, {"workspace_schema": None},
-                                  {"workspace_schema": 3}, {"expected_source_hash": "sha256:" + "cd" * 32}])
-def test_workspace_v2_open_closed_negotiation(patch: dict[str, Any]) -> None:
-    args = {**_workspace_open_v2(), **patch}
+    for schema in (opened, got, registered, edited):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**package, "handle": "workspace_1"}, schema)
     with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(args, _schema("open_shader_workspace")["inputSchema"])
-    with pytest.raises(HextileClientError):
-        Client(opener=lambda *_a, **_k: pytest.fail("no HTTP")).open_shader_workspace(args)
-
-
-@pytest.mark.parametrize("flag", [None, 0, 1, "true", {}, []])
-def test_workspace_located_flag_is_closed_boolean(flag: Any) -> None:
-    args = {"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit", "include_source_diagnostics": flag}
-    schema = _schema("get_shader_update")["inputSchema"]
-    assert schema["additionalProperties"] is False
-    assert schema["properties"]["include_source_diagnostics"] == {"type": "boolean", "default": False}
+        jsonschema.validate(_package_args(shader_id="bad id"), opened)
     with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(args, schema)
+        jsonschema.validate(_package_args(edits=[]), edited)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(_package_args(edits=[{"op": "set", "address": "parameters.fog", "value": 1}]), edited)
+
+
+def _capture(monkeypatch, reply):
+    sent = []
+    client = Client("http://127.0.0.1:9")
+
+    def request_json(method, path, body=None, **kwargs):
+        sent.append((method, path, body))
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    return client, sent
+
+
+def test_open_posts_only_the_request_id_and_returns_the_lease(monkeypatch) -> None:
+    client, sent = _capture(monkeypatch, _open_body(not_adopted=[
+        {"address": ["parameters", "fog"], "outcome": "not_adopted", "value": 1}]))
+    result = client.open_shader_workspace(_package_args())
+    assert sent == [("POST", "/api/shaders/aurora/workspace", {"request_id": "req-1"})]
+    assert result["lease"] == _lease()
+    assert result["not_adopted"][0]["outcome"] == "not_adopted"
+    again, second = _capture(monkeypatch, _open_body())
+    again.open_shader_workspace(_package_args())
+    again.open_shader_workspace(_package_args())
+    assert len(second) == 2 and second[0][2] == second[1][2]
+
+
+def test_shader_edit_posts_the_batch_and_keeps_lost_to_human(monkeypatch) -> None:
+    args = _package_args(edits=[{"op": "delete", "address": ["parameters", "fog"]}],
+                         lease=_lease(), seen=[{"address": ["parameters", "fog"], "human": 2}])
+    client, sent = _capture(monkeypatch, _edit_body())
+    result = client.shader_edit(args)
+    assert sent[0][0] == "POST" and sent[0][1] == "/api/shaders/aurora/agent/edits"
+    assert sent[0][2]["edits"] == args["edits"]
+    assert sent[0][2]["seen"] == args["seen"]
+    assert sent[0][2]["lease"] == _lease()
+    assert result["results"][0]["outcome"] == "lost_to_human"
+    assert result["results"][0]["human"] == 2
     with pytest.raises(HextileClientError):
-        HextileMcpServer(client=Client(opener=lambda *_a, **_k: pytest.fail("no HTTP")))._get_shader_update(args)
+        client.shader_edit(_package_args(edits=[{"op": "set", "address": ["parameters", "fog"]}]))
 
 
-@pytest.mark.parametrize("flag", [None, False, True])
-def test_workspace_located_get_exact_url_and_granted_ack(flag: Any) -> None:
-    args = {"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit"}
-    if flag is not None:
-        args["include_source_diagnostics"] = flag
-    receipt = _workspace_receipt()
-    if flag is True:
-        receipt["source_diagnostics"] = [{"phase": "compile", "severity": "error", "code": "compile",
-                                          "message": "Unknown symbol", "logical_file": "lib/noise.glsl", "full_source_line": 4}]
-    receipt["publication"] = {"composition_id": "sc_final", "value_version": 3,
-        "prepare_identity": {"prepare_receipt_id": "pr_final", "document_hash": "df", "source_hash": "sf", "manifest_hash": None},
-        "compile": "passed", "preview": "published", "presentation": "pending", "save": "saved",
-        "saved": {"working_revision": 4, "document_hash": "df", "source_hash": "sf", "manifest_hash": None}}
-    seen = []
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        seen.append(req.full_url)
-        return _WorkspaceResponse(receipt)
-
-    jsonschema.validate(args, _schema("get_shader_update")["inputSchema"])
-    assert HextileMcpServer(client=Client(opener=opener))._get_shader_update(args) == receipt
-    expected = "http://127.0.0.1:8000/api/agent/shader-workspaces/sw_test/updates/sw_test%3A1?project_context_witness=wit"
-    assert seen == [expected + ("&include_source_diagnostics=true" if flag is True else "")]
-    assert not {"files", "source", "complete_candidate", "ticket_id"} & receipt.keys()
+def test_get_reads_the_recorded_save_and_prepare_failure(monkeypatch) -> None:
+    client, sent = _capture(monkeypatch, _saved_body())
+    saved = client.get_shader_update(_package_args())
+    assert sent == [("GET", "/api/shaders/aurora/updates/req-1", None)]
+    assert saved["save"] == "saved" and saved["compile"]["profiles"][0]["status"] == "pending"
+    failed, _calls = _capture(monkeypatch, {"prepare": "failed", "diagnostics": [{"line": 1}]})
+    assert failed.register_shader_update({**_package_args(), "digest": "sha256:" + "ab" * 32,
+                                          "lease": _lease()})["prepare"] == "failed"
 
 
-@pytest.mark.parametrize("status,code,witness", [(403, "authority", "wit"), (409, "generation_conflict", "wit"),
-                                                (409, "context_conflict", "wrong"), (409, "check_timeout", "wit")])
-def test_workspace_located_get_preserves_revoked_stale_witness_deadline_refusal(status: int, code: str, witness: str) -> None:
-    detail = {"code": code, "message": "Source diagnostic read refused", "recovery": "Rediscover current authority"}
-    seen = []
-
-    def opener(req: Any, timeout: Any = None) -> Any:
-        seen.append(req)
-        raise urllib.error.HTTPError(req.full_url, status, "refused", None, io.BytesIO(json.dumps({"detail": detail}).encode()))
-
-    with pytest.raises(HextileClientError) as caught:
-        HextileMcpServer(client=Client(opener=opener))._get_shader_update({"handle": "sw_test", "change_id": "sw_test:1",
-            "project_context_witness": witness, "include_source_diagnostics": True})
-    assert caught.value.status_code == status and caught.value.receipt == detail
-    assert len(seen) == 1
-
-
-@pytest.mark.parametrize("reply", [_workspace_receipt(), {**_workspace_receipt(), "source_diagnostics": None}])
-def test_workspace_located_get_unsupported_legacy_200_refuses_without_downgrade(reply: dict[str, Any]) -> None:
-    seen = []
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        seen.append(req.full_url)
-        return _WorkspaceResponse(reply)
-
-    with pytest.raises(HextileClientError) as caught:
-        Client(opener=opener).get_shader_update({"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit",
-                                              "include_source_diagnostics": True})
-    assert caught.value.kind == "upgrade" and "Upgrade" in str(caught.value) and "reconnect" in str(caught.value)
-    assert len(seen) == 1 and seen[0].endswith("&include_source_diagnostics=true")
-
-
-def test_workspace_v2_register_granted_diagnostics_repair_keeps_full_set_identity() -> None:
-    # Transport fixture: APP alone owns the grant, frozen candidate and stale classifier.
-    current = _workspace_receipt()
-    seen = []
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        nonlocal current
-        seen.append(req)
-        if req.get_method() == "POST":
-            body = json.loads(req.data)
-            current = {**current, **body, "generation": body["expected_generation"] + 1,
-                       "candidate_id": "candidate-" + body["change_id"]}
-            return _WorkspaceResponse(current)
-        if "sw_test%3A1?" in req.full_url and current["generation"] == 2:
-            raise urllib.error.HTTPError(req.full_url, 409, "stale", None,
-                                         io.BytesIO(b'{"detail":{"code":"generation_conflict"}}'))
-        return _WorkspaceResponse({**current, "source_diagnostics": []})
-
-    server = HextileMcpServer(client=Client(opener=opener))
-    # Include an unused declared helper: even its edit changes the raw full-set digest.
-    authoring = b'{"entry":"source.glsl","source_files":["lib/unused.glsl","source.glsl"]}'
-    members = {"source.glsl": b"void main() {}", "lib/unused.glsl": b"float unused = broken;"}
-
-    def digest() -> str:
-        framed = b"360hextile.shader-workspace.v2\0" + len(authoring).to_bytes(8, "big") + authoring + len(members).to_bytes(4, "big")
-        for path, raw in sorted(members.items(), key=lambda pair: pair[0].encode("utf-8")):
-            name = path.encode("utf-8")
-            framed += len(name).to_bytes(4, "big") + name + len(raw).to_bytes(8, "big") + raw
-        return "sha256:" + hashlib.sha256(framed).hexdigest()
-
-    first = {**_workspace_register(), "content_digest": digest()}
-    assert server._register_shader_update(first)["content_digest"] == first["content_digest"]
-    get = {"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit", "include_source_diagnostics": True}
-    assert server._get_shader_update(get)["source_diagnostics"] == []
-    members["lib/unused.glsl"] = b"float unused = 0.0;"
-    repaired = {**first, "change_id": "sw_test:2", "expected_generation": 1, "content_digest": digest()}
-    assert first["content_digest"] != repaired["content_digest"]
-    receipt = server._register_shader_update(repaired)
-    assert receipt["content_digest"] == repaired["content_digest"] and receipt["candidate_id"] == "candidate-sw_test:2"
-    with pytest.raises(HextileClientError) as caught:
-        server._get_shader_update(get)
-    assert caught.value.receipt == {"code": "generation_conflict"}
-    assert server._get_shader_update({**get, "change_id": "sw_test:2"})["content_digest"] == repaired["content_digest"]
-    assert [json.loads(req.data) for req in seen if req.get_method() == "POST"] == [
-        {key: value for key, value in args.items() if key != "handle"} for args in (first, repaired)]
-
-
-@pytest.mark.parametrize("available,executable", [(False, []), (True, []), (True, ["source-modules/1"])])
-def test_workspace_v2_negotiated_capabilities_are_not_inferred_from_format_or_guides(available: bool, executable: list[str]) -> None:
-    attachment = {**_workspace_attachment_v2({"kind": "unaccepted", "authoring_digest": "sha256:" + "12" * 32}),
-                  "available": available, "recognized_capabilities": ["source-modules/1"], "executable_capabilities": executable}
-    receipt = {**_workspace_receipt(), "base": attachment["base"]}
-    if not available or "source-modules/1" not in executable:
-        receipt.update(prepare="failed", compile="not_requested", preview="not_requested",
-                       diagnostics=[{"phase": "prepare", "severity": "error", "code": "unsupported_capability",
-                                     "message": "source-modules/1 is not executable"}])
-    else:
-        receipt.update(prepare="pending", compile="not_requested", preview="not_requested", diagnostics=[])
-    calls = []
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        calls.append(req)
-        return _WorkspaceResponse(attachment if req.full_url.endswith("/open") else receipt)
-
-    server = HextileMcpServer(client=Client(opener=opener))
-    assert server._open_shader_workspace(_workspace_open_v2()) == attachment
-    assert server._register_shader_update(_workspace_register()) == receipt
-    assert len(calls) == 2 and receipt["compile"] == "not_requested"  # No proxy compiler/execution claim.
-    guidance = _schema("open_shader_workspace")["description"]
-    assert "Reuse the original request id." in guidance
-    assert "Leave Apply to the human." in guidance
-    assert "Treat an unknown reply as unknown." in guidance
-    from hextile_mcp import load_guide
-    detail = load_guide("workflow-schema", detail=True)["markdown"]
-    assert "source-modules/1 execution requires APP available and executable_capabilities" in detail
-    assert "version numbers do not prove execution or installed host filesystem access" in detail
-
-
-def test_workspace_old_peer_200_refuses_without_downgrade() -> None:
-    seen = []
-
-    def opener(req: Any, timeout: Any = None) -> _WorkspaceResponse:
-        seen.append(json.loads(req.data))
-        legacy = {**_workspace_attachment(), "schema": 1,
-            "files": {"source_path": "D:/project/workspace/source.glsl",
-                      "authoring_path": "D:/project/workspace/authoring.json"}}
-        legacy.pop("workspace_schema", None)
-        return _WorkspaceResponse(legacy)
-
-    server = HextileMcpServer(client=Client(opener=opener))
-    for args in (_workspace_open(), {**_workspace_open(), "workspace_schema": 2}):
+def test_package_results_refuse_malformed_bodies(monkeypatch) -> None:
+    for reply, needle in (
+        ({"commit": 1, "revision": 2}, "Malformed Shader open result"),
+        ({"save": "saved", "merge": [], "commit": 1, "revision": 2}, "Malformed Shader save result"),
+        ({"save": "saved", "results": [], "commit": 1}, "Malformed Shader edit result"),
+        ({"prepare": "failed"}, "Malformed prepare failure"),
+    ):
+        client, _sent = _capture(monkeypatch, reply)
         with pytest.raises(HextileClientError) as caught:
-            server._open_shader_workspace(args)
-        assert caught.value.kind == "upgrade" and "reconnect" in str(caught.value)
-    assert seen == [{**_workspace_open(), "workspace_schema": 2}] * 2
+            if "results" in reply or set(reply) == {"save", "results", "commit"}:
+                client.shader_edit(_package_args(edits=[{"op": "delete", "address": ["modules", "fog.glsl"]}]))
+            elif "prepare" in reply or "merge" in reply:
+                client.register_shader_update({**_package_args(), "digest": "sha256:" + "ab" * 32, "lease": _lease()})
+            else:
+                client.open_shader_workspace(_package_args())
+        assert needle in str(caught.value)
+        assert caught.value.kind == "other"
 
 
-@pytest.mark.parametrize("status,detail", [(404, "Not Found"),
-    (409, {"code": "workspace_version_required", "message": "Unsupported workspace schema", "recovery": "Upgrade and reconnect"})])
-def test_workspace_v2_missing_or_unsupported_peer_refuses_once(status: int, detail: Any) -> None:
-    calls = []
-
-    def opener(req: Any, timeout: Any = None) -> Any:
-        calls.append(json.loads(req.data))
-        raise urllib.error.HTTPError(req.full_url, status, "unsupported", None, io.BytesIO(json.dumps({"detail": detail}).encode()))
-
-    with pytest.raises(HextileClientError) as caught:
-        HextileMcpServer(client=Client(opener=opener))._open_shader_workspace(_workspace_open_v2())
-    assert calls == [_workspace_open_v2()]
-    assert caught.value.kind == ("upgrade" if status == 404 else "http")
-    assert caught.value.receipt == (detail if isinstance(detail, dict) else None)
-
-
-@pytest.mark.parametrize("operation", ["open_shader_workspace", "register_shader_update"])
-def test_workspace_v2_uncertain_mutations_do_not_replay_or_release_paths(operation: str) -> None:
-    calls = []
-
-    def opener(req: Any, timeout: Any = None) -> Any:
-        calls.append(req)
-        raise http.client.RemoteDisconnected("reply lost")
-
-    args = _workspace_open_v2() if operation == "open_shader_workspace" else _workspace_register()
-    server = HextileMcpServer(client=Client(opener=opener))
-    handler = server._open_shader_workspace if operation == "open_shader_workspace" else server._register_shader_update
-    with pytest.raises(HextileClientError) as caught:
-        handler(args)
-    assert caught.value.kind == "workspace_outcome_unknown"
-    assert caught.value.receipt["code"] == "outcome_unknown"
-    assert caught.value.receipt["retry_unchanged"] is False
-    assert "nothing changed" in caught.value.receipt["recovery"]
-    assert len(calls) == 1
+def test_package_transport_keeps_unknown_upgrade_and_typed_refusal(monkeypatch) -> None:
+    down = HextileClientError("offline", kind="app_down")
+    client, sent = _capture(monkeypatch, down)
+    with pytest.raises(HextileClientError) as unknown:
+        client.open_shader_workspace(_package_args())
+    assert unknown.value.kind == "workspace_outcome_unknown"
+    assert len(sent) == 1
+    missing = HextileClientError("missing", status_code=404, body=json.dumps({"detail": "Not Found"}), kind="http")
+    client, _sent = _capture(monkeypatch, missing)
+    with pytest.raises(HextileClientError) as upgrade:
+        client.open_shader_workspace(_package_args())
+    assert upgrade.value.kind == "upgrade"
+    client, _sent = _capture(monkeypatch, {})
+    with pytest.raises(HextileClientError) as empty:
+        client.register_shader_update({**_package_args(), "digest": "sha256:" + "ab" * 32, "lease": _lease()})
+    assert empty.value.kind == "other"
+    assert "Malformed Shader save result" in str(empty.value)
 
 
 def _playable_recipe() -> tuple[list[str], dict[str, Any]]:
@@ -2889,10 +2183,10 @@ def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls()
     workspace = _schema("open_shader_workspace")["description"]
     assert "source-free" in context and "include_formula selects" in context
     assert "every Board row" in proposal and "preserve" in proposal
-    assert "attested" in proposal and "envelope" in proposal
-    assert "Reuse the original request id." in workspace
-    assert "Leave Apply to the human." in workspace
-    assert "Treat an unknown reply as unknown." in workspace
+    assert "envelope" in proposal and "Credits card" in proposal
+    assert "shader_id and request_id" in workspace
+    assert "lease, commit and revision" in workspace
+    assert "recorded result" in workspace
     from hextile_mcp import load_guide
     detail = load_guide("workflow-schema", detail=True)["markdown"]
     assert "conventions/1" in detail and "modulation/2" in detail
@@ -3021,21 +2315,15 @@ def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatc
         assert 'raster_execution' not in dropped
 
 
-@pytest.mark.parametrize("unaccepted,base", [
-    (False, None),
-    (False, {"kind": "saved", "working_revision": 2, "document_hash": "sha256:" + "ab" * 32,
-             "source_hash": "sha256:" + "cd" * 32}),
-    (False, {"kind": "saved", "working_revision": True, "document_hash": "sha256:" + "ab" * 32,
-             "source_hash": "sha256:" + "cd" * 32}),
-    (False, {"kind": "unaccepted", "authoring_digest": "sha256:" + "12" * 32}),
-    (True, {"kind": "saved", "working_revision": 1, "document_hash": "sha256:" + "ab" * 32,
-            "source_hash": "sha256:" + "cd" * 32}),
-])
-def test_workspace_ack_base_mismatch_does_not_release_paths(unaccepted, base) -> None:
-    reply = {**_workspace_attachment(), "base": base}
-    client = Client(opener=lambda *_a, **_k: _WorkspaceResponse(reply))
-    args = _workspace_open_v2() if unaccepted else _workspace_open()
+def test_malformed_open_result_does_not_echo_paths(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+
+    def request_json(method, path, body=None, **kwargs):
+        return {"commit": 1, "revision": 2, "note": "D:/project/secret.glsl"}
+
+    monkeypatch.setattr(client, "request_json", request_json)
     with pytest.raises(HextileClientError) as caught:
-        client.open_shader_workspace(args)
-    assert caught.value.kind == "workspace_outcome_unknown"
+        client.open_shader_workspace({"shader_id": "aurora", "request_id": "req-open"})
+    assert caught.value.kind == "other"
+    assert "Malformed Shader open result" in str(caught.value)
     assert "D:/project" not in str(caught.value)

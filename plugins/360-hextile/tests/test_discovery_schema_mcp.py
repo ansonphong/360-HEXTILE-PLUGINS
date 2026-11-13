@@ -95,20 +95,14 @@ def _tool(name: str) -> dict[str, Any]:
 
 
 def _shader_connection() -> dict[str, Any]:
-    ref = {"origin": "user", "shaderId": "aurora"}
-    return {"view": "shader", "schema": 1, "mcp_enabled": True,
-        "current_surface": {"kind": "shader_workshop", "shader": ref, "draft_state": "clean",
-            "studio_surface_id": "ws-test", "project_context_witness": "test-witness",
-            "base": {"kind": "saved", "working_revision": 1,
-                "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64}},
-        "shader_contract": {"revision": 1, "apply_policy": "mounted", "blockers": []},
-        "shader_summary": {"name": "Aurora", "metadata_status": "available", "shader": ref,
-            "draft_state": "clean", "save_state": "saved", "editable": True, "blockers": []}}
+    return {"view": "shader", "stack": "v2", "connected": True, "mcp_enabled": True,
+            "shader": {"origin": "user", "shader_id": "aurora"},
+            "lease": {"holder": "agent", "generation": 0}, "commit": 1, "revision": 1}
 
 
 def test_shader_connection_is_one_compact_read_and_preserves_full_default() -> None:
     compact = _shader_connection()
-    full = {"models": [{"id": "unrelated"}], "inventory": {"renders": []}, "current_surface": compact["current_surface"]}
+    full = {"models": [{"id": "unrelated"}], "inventory": {"renders": []}}
     query = "include_nav=0&include_active_tool=0"
     server, _client, calls = _server({
         ("GET", "/api/agent/live-context", query + "&view=shader"): (200, json.dumps(compact).encode()),
@@ -124,15 +118,13 @@ def test_shader_connection_is_one_compact_read_and_preserves_full_default() -> N
 
 @pytest.mark.parametrize("payload", [
     {"inventory": {}, "models": []},  # old APP silently ignored the new query
-    {**_shader_connection(), "shader_summary": {**_shader_connection()["shader_summary"], "editable": "yes"}},
-    {**_shader_connection(), "current_surface": {**_shader_connection()["current_surface"], "source": "private GLSL"}},
-    {**_shader_connection(), "shader_contract": {**_shader_connection()["shader_contract"], "inventory": []}},
-    {**_shader_connection(), "shader_contract": {**_shader_connection()["shader_contract"], "apply_policy": []}},
-    {**_shader_connection(), "shader_summary": {**_shader_connection()["shader_summary"], "draft_state": "bogus", "editable": False},
-        "current_surface": {**_shader_connection()["current_surface"], "draft_state": "bogus"}},
-    {**_shader_connection(), "shader_summary": {**_shader_connection()["shader_summary"], "editable": False,
-        "shader": {"origin": "invalid", "shaderId": "aurora"}}, "current_surface": {
-            **_shader_connection()["current_surface"], "shader": {"origin": "invalid", "shaderId": "aurora"}}},
+    {"view": "shader", "schema": 1, "mcp_enabled": True, "current_surface": {},
+     "shader_contract": {}, "shader_summary": {}},
+    {**_shader_connection(), "stack": "v3"},
+    {**_shader_connection(), "shader": {"origin": "invalid", "shader_id": "aurora"}},
+    {**_shader_connection(), "lease": {"holder": "agent"}},
+    {**_shader_connection(), "commit": -1},
+    {**_shader_connection(), "extra": True},
 ])
 def test_shader_connection_never_claims_success_for_old_or_invalid_metadata(payload: dict[str, Any]) -> None:
     server, _client, calls = _server({

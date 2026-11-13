@@ -147,6 +147,7 @@ TOOL_NAMES = (
     "get_shader_context",
     "get_shader_parameters",
     "set_shader_parameter",
+    "shader_edit",
     "propose_shader",
     "control_shader_timeline",
     "preflight_shader_sequence",
@@ -306,6 +307,7 @@ _MUTATING = frozenset(
         "clone_spot",
         "propose_shader",
         "set_shader_parameter",
+        "shader_edit",
         "control_shader_timeline",
         "render_shader_sequence",
         "control_shader_sequence",
@@ -450,8 +452,8 @@ GUIDE_NAMES = (
 _GUIDE_INDEX = (
     "A workflow starts with get_capabilities. "
     "A read-only \"what Shader is open?\" question is only get_live_context(view=\"shader\") and does not call get_capabilities. "
-    "Ready Shader candidates can be applied and saved through the native writer. "
-    "Register checks a candidate and never synthesizes Apply. "
+    "Shader package edits use shader_edit or register_shader_update. "
+    "Read merge. Watch compile. Only the human moves the lease. "
     "A still is shader_request_preview, then shader_get_preview with image true as the 512px RGB display image, then shader_preflight_still_export, then shader_export_still using that preflight_request_id. "
     "A sequence is preflight_shader_sequence then render_shader_sequence. "
     "Use the same saved hashes and the same frozen inputs. "
@@ -586,6 +588,21 @@ def _shader_dome(properties: dict[str, Any], optional: tuple[str, ...] = ()) -> 
 _WORKSPACE_ID = {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"^[A-Za-z0-9_-]+$"}
 _WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
 _WORKSPACE_DIGEST = {"type": "string", "pattern": r"^sha256:[0-9a-f]{64}$"}
+_SHADER_PACKAGE_ID = {"type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_-]+$"}
+_PACKAGE_REQUEST = {"type": "string", "minLength": 1, "maxLength": 128}
+_PACKAGE_ADDRESS = {"type": "array", "minItems": 1, "maxItems": 8,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128,
+                              "pattern": r"^[A-Za-z0-9_.-]+$"}}
+_SEEN = {"type": "array", "maxItems": 256, "items": _shader_closed({
+    "address": _PACKAGE_ADDRESS, "human": {"type": "integer", "minimum": 0}})}
+_LEASE = _shader_closed({"holder": {"enum": ["human", "agent"]},
+                         "generation": {"type": "integer", "minimum": 0}})
+_PACKAGE_EDIT = _shader_closed({
+    "op": {"enum": ["set", "create", "reshape", "delete"]},
+    "address": _PACKAGE_ADDRESS,
+    "value": {},
+    "born": {"type": "integer", "minimum": 0},
+}, ("value", "born"))
 _CREDIT_HASH = {"anyOf": [_WORKSPACE_DIGEST, {"type": "null"}]}
 _CREDIT_PROFILE = {"oneOf": [
     _shader_closed({"id": _WORKSPACE_DIGEST}),
@@ -650,10 +667,13 @@ _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
                      "description": "<handle>:<expected_generation+1>; suffix <= 9007199254740991, no leading zeros. Replay the original ID, generation and digest only."}
 _WORKSPACE_GUIDANCE = (
     "For Shader source editing, read the installed shader skill's references/authoring.md "
-    "or get_guide(name=\"workflow-schema\") before attaching. Bind fresh current_surface Shader/base/writer/witness; "
-    "use workspace_schema 2 and wait for its acknowledged complete file set before file access; never downgrade. "
-    "Register the exact complete raw-byte digest; "
-    "recover uncertain mutations by original IDs. Discovery, compile, Apply and Saved are distinct."
+    "or get_guide(name=\"workflow-schema\") before editing. "
+    "Open takes the Shader id and a request id and returns the lease. "
+    "Register saves the digest with the lease and seen. "
+    "Register saves. Read merge to see what was kept. Watch compile; if it fails, fix and register again. "
+    "A field the human has edited carries a human number wherever you read it. To change such a field, send that pair in seen with your edit. "
+    "If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Send your edit again with it only if you still mean it. "
+    "Only the human moves the lease."
 )
 
 
@@ -1114,7 +1134,7 @@ _SHADER_PROPOSAL_SCHEMA = _layer_object({"kind": {"enum": ["shader_document_cand
     "explanation": _SHADER_TEXT, "complete_candidate": _SHADER_CANDIDATE,
     "source_edit": _SHADER_SOURCE_EDIT, "modulation_edits": _SHADER_EDITS,
     "board_id": _SHADER_TEXT, "candidates": {"type": "array", "minItems": 1,
-        "items": _shader_closed({"candidate_id": _SHADER_TEXT, "complete_candidate": _SHADER_CANDIDATE, "explanation": _SHADER_TEXT})}},
+        "items": _shader_closed({"complete_candidate": _SHADER_CANDIDATE, "explanation": _SHADER_TEXT})}},
     ("kind", "base"))
 _SHADER_PROPOSAL_SCHEMA["oneOf"] = [
     {"properties": {"kind": {"const": "shader_document_candidate"}, "base": _shader_closed(_SHADER_BASE_PROPERTIES)},
@@ -2554,10 +2574,10 @@ TOOLS: list[dict[str, Any]] = [
         "Change one exposed control on the exact witnessed mounted Shader. The APP binds this MCP "
         "session and the actual current writer locally. "
         "Submit a caller-known ID once; use operation=status with that original ID after "
-        "an uncertain reply, including after document or owner changes. Writable describes authoring only. "
-        "Applied acknowledges an edit, not Save or a permanent current value. An unknown outcome needs a fresh "
-        "read before any new ID. Source and formula include flags select bounded content; "
-        "structural proposals use native Prepare, Apply and Save.",
+        "an uncertain reply. This is an engine edit. Send seen for a unit a human has edited. "
+        "A lost_to_human row kept their value and returns the new number. "
+        "A v2 reply is save, results, commit and revision. The current host may still return a ticket. "
+        "An unknown outcome needs status with the same ID.",
         {"operation": {"enum": ["submit", "status"]},
          "client_request_id": {"type": "string", "minLength": 1, "maxLength": 64,
                                "pattern": r"^[A-Za-z0-9_-]+$"},
@@ -2571,18 +2591,31 @@ TOOLS: list[dict[str, Any]] = [
                                  "manifest_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]},
                                 }, ("manifest_hash",)),
                  _shader_closed({"kind": {"const": "saved"}, "working_revision": {"type": "integer", "minimum": 1},
-                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST}),
-                 _shader_closed({"kind": {"const": "unaccepted"}, "authoring_digest": _SHADER_DIGEST})]},
+                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST}),]},
              "edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}),
          "parameter_id": {"type": "string", "minLength": 1, "maxLength": 128},
-         "value": {"description": "JSON value matching the current exposed parameter descriptor."}},
+         "value": {"description": "JSON value matching the current exposed parameter descriptor."},
+         "seen": _SEEN},
         required=["operation", "client_request_id"]),
+    _tool_def("shader_edit",
+        "Edit one Shader package. Each edit is set, create, reshape or delete on one address. "
+        "An address is a list of strings naming one unit. Do not replace a parent object. "
+        "shader_edit cannot write provenance.json. "
+        "Send seen for every unit a human has edited: the address and the human number from a read. "
+        "A lost_to_human row kept their value and returns the new number. "
+        "Send lease when the edit touches a leased unit. "
+        "The same request_id returns the recorded result.",
+        {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST,
+         "edits": {"type": "array", "minItems": 1, "maxItems": 64, "items": _PACKAGE_EDIT},
+         "lease": _LEASE, "seen": _SEEN},
+        ["shader_id", "request_id", "edits"]),
     {"name": "propose_shader",
      "description": "POST one closed Shader proposal, including schema-2 parameter expression, mode and saved timeline edits, and return ticket identity. "
                     "APP alone checks current ownership/base and materializes IDs. Legacy proposals and every Board row must preserve Playable "
                     "conventions, envelope definitions/input refs/settings, envelope-sourced mappings and their capability declarations. "
-                    "To first create or revise Playable controls, use the attested source.glsl/authoring.json workspace "
-                    "and installed shader skill. Does not Import, Accept, Apply, Run, arm Interact, press keys, "
+                    "To first create or revise Playable controls, edit the Shader package and read the installed shader skill. "
+                    "A credits change is proposed for the Credits card and does not write provenance.json. "
+                    "Does not Import, Accept, Apply, Run, arm Interact, press keys, "
                     "set live pose or write Project presets.",
      "inputSchema": _SHADER_PROPOSAL_SCHEMA, "annotations": _annotations("propose_shader")},
     _tool_def("control_shader_timeline",
@@ -2608,8 +2641,7 @@ TOOLS: list[dict[str, Any]] = [
                                  "manifest_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]},
                                 }, ("manifest_hash",)),
                  _shader_closed({"kind": {"const": "saved"}, "working_revision": {"type": "integer", "minimum": 1},
-                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST}),
-                 _shader_closed({"kind": {"const": "unaccepted"}, "authoring_digest": _SHADER_DIGEST})]},
+                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST}),]},
              "owner_id": {"type": "string", "minLength": 1, "maxLength": 128},
              "owner_generation": {"type": "integer", "minimum": 0},
              "viewer_generation": {"type": "integer", "minimum": 0},
@@ -2657,57 +2689,26 @@ TOOLS: list[dict[str, Any]] = [
                                        "transaction_fingerprint": _SHADER_DIGEST}, ("quality_if_jpg",)),
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
-    {"name": "open_shader_workspace",
-     "description": "Reuse the original request id. Follow live shader_contract.apply_policy: mounted applies and saves one singular ready candidate, and unavailable leaves Apply to the human. Treat an unknown reply as unknown. "
-                    "MCP holds code only when code_lease is present. Do not rewrite lagged human header or document bytes from this open. "
-                    "Built-in opens only while APP source developer mode is on; otherwise Duplicate it first.",
-     "inputSchema": _shader_closed({
-         "shader": _shader_closed({"origin": {"enum": ["project", "user", "builtin"]}, "shaderId": {
-             "type": "string", "minLength": 1, "maxLength": 128, "pattern": r"^[A-Za-z0-9_-]+$"}}),
-         "project_context_witness": _WORKSPACE_WITNESS,
-         "expected_working_revision": {"type": "integer", "minimum": 1},
-         "expected_document_hash": _WORKSPACE_DIGEST, "expected_source_hash": _WORKSPACE_DIGEST,
-         "studio_surface_id": _WORKSPACE_WITNESS,
-         "existing_workspace": _shader_closed({"action": {"const": "adopt"}, "expected_content_digest": _WORKSPACE_DIGEST}),
-         "workspace_schema": {"type": "integer", "const": 2, "default": 2},
-         "attribution_schema": {"type": "integer", "const": 1},
-     }, ("existing_workspace", "workspace_schema", "attribution_schema", "expected_working_revision", "expected_document_hash", "expected_source_hash")) | {
-         "anyOf": [{"required": ["expected_working_revision", "expected_document_hash", "expected_source_hash"]},
-                   {"not": {"anyOf": [
-                       {"required": [key]} for key in ("expected_working_revision", "expected_document_hash", "expected_source_hash")]}}],
-     }, "annotations": _annotations("open_shader_workspace")},
+    _tool_def("open_shader_workspace",
+        "Open one Shader workspace. Send shader_id and request_id only. "
+        "Returns the lease, commit and revision. A workspace with no snapshot also returns not_adopted. "
+        "Nothing human-side refuses open. The same request_id returns the recorded result.",
+        {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST},
+        ["shader_id", "request_id"]),
     _tool_def("register_shader_update",
-        "Register native file bytes once for automatic APP prepare/compile/preview. "
-        "Registration freezes code only and does not replace the human document. "
-        "change_id is <handle>:<expected_generation+1>, never an arbitrary ID. "
-        "Exact retained replay returns its receipt after generation advances; changed retained inputs refuse idempotency_conflict, "
-        "expired historical receipts stay 410. Do not send GLSL, paths or Apply authority. "
-        "Use the negotiated raw-byte full-set digest described by APP open instructions; include unused modules and manifest changes. "
-        "Preserve exact candidate/digest/generation and check_attempt; new registration invalidates old located diagnostics. "
-        "When a composition exists the receipt includes merge (schema 1): entries with outcome kept, clamped, lost_to_human, fell_back or removed, and omitted kept/clamped counts. "
-        "There is no request flag. A missing merge is unknown, not no conflicts.",
-        {"handle": _WORKSPACE_ID, "change_id": _WORKSPACE_CHANGE,
-         "expected_generation": {"type": "integer", "minimum": 0, "maximum": 2**53 - 2},
-         "content_digest": _WORKSPACE_DIGEST,
-         "attribution_action": {"enum": ["include", "skip_optional"]},
-         "source_proposal": _SOURCE_PROPOSAL},
-        required=["handle", "change_id", "expected_generation", "content_digest"]),
+        "Register saves the captured package. Send shader_id, request_id, the sha256 digest, the lease, "
+        "and seen for units a human has edited. Read merge to see what was kept. Watch compile. "
+        "A lost_to_human row kept the human value and returns the new number. "
+        "stale_lease means the lease moved. Only the human moves the lease. "
+        "Prepare failure returns prepare failed and diagnostics. The same request_id returns the recorded result.",
+        {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST,
+         "digest": _WORKSPACE_DIGEST, "lease": _LEASE, "seen": _SEEN},
+        ["shader_id", "request_id", "digest", "lease"]),
     _tool_def("get_shader_update",
-        "Read one exact authorized workspace receipt, including attachment_state, check_attempt, "
-        "prepare/compile/preview/presentation/save and bounded diagnostics/raw_log/reason. "
-        "Pass the Project witness returned by open; no files or source are returned. "
-        "Optional include_source_diagnostics defaults false; explicit true selects bounded diagnostics for the APP-validated current witness/candidate "
-        "and acknowledges bounded logical source_diagnostics (64 rows, 2 KiB messages), never code, native paths or Apply authority. "
-        "Unsupported APP requires upgrade/reconnect; do not silently downgrade. "
-        "Honor next_poll_ms and check_deadline_at; polling never extends the attempt or saves. "
-        "410 receipt_expired/workspace_expired remains terminal; rediscover current authority without deleting files. "
-        "Optional human_document is a source-free shader-code-lease/1 summary: version is the native value_version, "
-        "changed lists at most 16 IDs, and omitted is a gap in this summary, not the document or a rollback log. "
-        "When a composition exists the receipt includes merge (schema 1): entries with outcome kept, clamped, lost_to_human, fell_back or removed, and omitted kept/clamped counts. "
-        "There is no request flag. A missing merge is unknown, not no conflicts.",
-        {"handle": _WORKSPACE_ID, "change_id": _WORKSPACE_CHANGE, "project_context_witness": _WORKSPACE_WITNESS,
-         "include_source_diagnostics": {"type": "boolean", "default": False}},
-        required=["handle", "change_id", "project_context_witness"]),
+        "Read the recorded save for one request_id. Only compile may still change. "
+        "Returns merge, lease, commit, revision and compile.",
+        {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST},
+        ["shader_id", "request_id"]),
     _tool_def("request_shader_doctor",
         "Request one GPU Doctor pass for the clean, currently previewed Shader in the mounted Workshop. "
         "Requires the actual current native frame owner; builtin, My Library and Project are eligible. "
@@ -3056,22 +3057,26 @@ SHADER_EXTENSION_TOOLS = [
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "include_overrides": {"type": "boolean"}, "look_id": _NATIVE_HISTORY_CHECKPOINT,
-               "expected_look_envelope_hash": _SHADER_DIGEST},
+               "expected_look_envelope_hash": _SHADER_DIGEST,
+               "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id", "title"]),
     _tool_def("shader_apply_look", "Apply one exact compatible saved Look through the native writer; source formula changes require their separate policy.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
-               "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST},
+               "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
+               "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "look_id", "expected_look_envelope_hash"]),
     _tool_def("shader_rename_look", "Rename one saved Look with its exact envelope hash.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
-               "title": {"type": "string", "minLength": 1, "maxLength": 256}},
+               "title": {"type": "string", "minLength": 1, "maxLength": 256},
+               "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "look_id", "expected_look_envelope_hash", "title"]),
     _tool_def("shader_delete_look", "Remove one exact saved Look while retaining historical revision pins.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
-               "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST},
+               "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
+               "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "look_id", "expected_look_envelope_hash"]),
     _tool_def("shader_checkpoint", "Save, rename or remove one exact checkpoint name through the bound native history action.",
@@ -3125,7 +3130,8 @@ SHADER_EXTENSION_TOOLS = [
                "staged_token": {"type": "string", "minLength": 1, "maxLength": 128},
                "filter": {"enum": ["linear", "nearest", "mipmap"]}, "edge_u": {"enum": ["clamp", "repeat"]},
                "edge_v": {"enum": ["clamp", "repeat"]}, "time_mode": {"enum": ["hold", "follow"]},
-               "end_mode": {"enum": ["hold", "loop"]}, "hold_index": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}},
+               "end_mode": {"enum": ["hold", "loop"]}, "hold_index": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+               "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id", "action", "slot_id"]),
     _tool_def("shader_get_library_organization", "Read the active Project or My Library folder revision and bounded folder membership for exact moves and remove confirmation.",
               {"project_context_witness": _SHADER_TEXT, "origin": {"enum": ["project", "user"]},
@@ -3153,31 +3159,25 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_set_tags", "Assign or remove one existing personal Tag for one exact Shader through the native tag registry.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "command": _shader_closed({"kind": {"const": "setShaderTag"}, "shader": _NATIVE_SHADER_REF,
-                   "tagId": {"type": "string", "minLength": 1, "maxLength": 256}, "assigned": {"type": "boolean"}})},
+                   "tagId": {"type": "string", "minLength": 1, "maxLength": 256}, "assigned": {"type": "boolean"}}),
+               "seen": _SEEN},
               ["request_id", "project_context_witness", "command"]),
     _tool_def("shader_set_project_conventions", "Replace Project convention profiles through the fixed native document writer with exact expected digest and Project witness. A stale digest refuses without changing stored bytes.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "expected_digest": {"oneOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
                "profiles": {"type": "array", "maxItems": 8, "items": {"type": "object"}},
-               "default_profile_id": {"oneOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]}},
+               "default_profile_id": {"oneOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
+               "seen": _SEEN},
               ["request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"]),
     _tool_def("shader_get_proposal", "Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. This is source free.",
               {"ticket_id": {"type": "string", "pattern": "^spt_[0-9a-f]{32}$"},
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
               ["ticket_id", "project_context_witness"]),
-    _tool_def("shader_get_workspace", "Recover an existing workspace attachment and current source-free candidate receipt, including before first registration. "
-              "Optional human_document is the same bounded summary. Its absence is an older peer, not a grant to replace the human document.",
+    _tool_def("shader_get_workspace", "Recover an existing workspace attachment and its current source-free receipt, including before the first save. Unknown receipt fields are dropped.",
               {"handle": _NATIVE_WORKSPACE_HANDLE,
                "change_id": _NATIVE_WORKSPACE_CHANGE,
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
               ["handle", "project_context_witness"]),
-    _tool_def("shader_recheck_update", "Start a new check attempt for the same current candidate after a failed or unavailable check. No registration or Save occurs.",
-              {"handle": _NATIVE_WORKSPACE_HANDLE, "change_id": _NATIVE_WORKSPACE_CHANGE,
-               "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
-               "content_digest": _SHADER_DIGEST, "studio_surface_id": _NATIVE_WORKSPACE_WITNESS,
-               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
-              ["handle", "change_id", "generation", "content_digest", "studio_surface_id",
-               "project_context_witness"]),
     _tool_def("shader_stop_workspace", "Stop only this current workspace attachment and preserve files. Stop is cancellation, not automatic code possession. This does not transfer human ownership or stop reasoning.",
               {"handle": _NATIVE_WORKSPACE_HANDLE,
                "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
@@ -3262,11 +3262,12 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. APP binds the actual current writer and captured frame. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
-               "capture_defaults": _CAPTURE_DEFAULTS}, _MOUNTED_SHADER_REQUIRED + ["action"]),
+               "capture_defaults": _CAPTURE_DEFAULTS, "seen": _SEEN}, _MOUNTED_SHADER_REQUIRED + ["action"]),
     _tool_def("shader_control_clock", "Reanchor the authored Master Clock at the native preview action time, collect Tap tempo, Align beat, or reset Master. The Workshop's native gesture and writer own the change. An applied edit is not a saved document; recover uncertainty with shader_get_operation.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["reanchor", "tap", "align", "reset_master"]},
                "bpm": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
-               "speed": {"type": "number", "minimum": 0, "maximum": 1024}},
+               "speed": {"type": "number", "minimum": 0, "maximum": 1024},
+               "seen": _SEEN},
               _MOUNTED_SHADER_REQUIRED + ["action"]),
     _tool_def("shader_step_frame", "Step one exact frame on the current mounted published Shader. Uses the native scrub clock port, pauses playback and resets live input; cannot synthesize physical input. Boundary or stale owner refuses. Session transport is not Save. Recover uncertainty with shader_get_operation.",
               {**_MOUNTED_SHADER_FIELDS, "direction": {"enum": [-1, 1]},
@@ -3304,7 +3305,7 @@ for _name, _variants in {
 _parameter_tool = next(t for t in TOOLS if t["name"] == "set_shader_parameter")
 _parameter_tool["inputSchema"]["oneOf"] = [
     {"properties": {"operation": {"const": "status"}},
-     "not": {"anyOf": [{"required": [key]} for key in ("witness", "parameter_id", "value")]}},
+     "not": {"anyOf": [{"required": [key]} for key in ("witness", "parameter_id", "value", "seen")]}},
     {"properties": {"operation": {"const": "submit"}},
      "required": ["witness", "parameter_id", "value"]},
 ]
@@ -3575,9 +3576,7 @@ _ACTIVITY_OUTCOMES = frozenset({"pending", "applied", "saved", "refused", "unkno
 def _activity_subject(name: str, args: Mapping[str, Any], payload: Any = None) -> dict[str, str]:
     """Project only known tool identities; never copy a path or an arbitrary result."""
     kind, value = "app", None
-    if name == "open_shader_workspace" and isinstance(payload, Mapping):
-        kind, value = "workspace", payload.get("handle")
-    elif name in {"save_workflow", "delete_workflow", "get_workflow", "run_workflow"}:
+    if name in {"save_workflow", "delete_workflow", "get_workflow", "run_workflow"}:
         kind, value = "workflow", args.get("workflow_id") or args.get("id")
         if name == "run_workflow" and not value and isinstance(payload, Mapping) and payload.get("run_id"):
             kind, value = "run", payload.get("run_id")
@@ -3636,7 +3635,9 @@ def _activity_error_code(exc: "HextileClientError") -> Optional[str]:
 
 
 def _activity_outcome(name: str, data: Any) -> Optional[str]:
-    if name in {"apply_config_delta", "set_shader_parameter"} and isinstance(data, Mapping):
+    if name in {"apply_config_delta", "set_shader_parameter", "shader_edit", "register_shader_update"} and isinstance(data, Mapping):
+        if data.get("save") == "saved":
+            return "saved"
         status = data.get("status")
         return status if isinstance(status, str) and status in _ACTIVITY_OUTCOMES else None
     if name == "save_workflow" and isinstance(data, Mapping):
@@ -3897,7 +3898,6 @@ class HextileMcpServer:
             "shader_set_project_conventions": self._shader_set_project_conventions,
             "shader_get_proposal": self._shader_get_proposal,
             "shader_get_workspace": self._shader_get_workspace,
-            "shader_recheck_update": self._shader_recheck_update,
             "shader_stop_workspace": self._shader_stop_workspace,
             "shader_rename_asset": self._shader_rename_asset,
             "shader_delete_asset": self._shader_delete_asset,
@@ -3917,6 +3917,7 @@ class HextileMcpServer:
             "shader_step_frame": self._shader_step_frame,
             "get_shader_parameters": self._get_shader_parameters,
             "set_shader_parameter": self._set_shader_parameter,
+            "shader_edit": self._shader_edit,
             "propose_shader": self._propose_shader,
             "control_shader_timeline": self._control_shader_timeline,
             "preflight_shader_sequence": self._preflight_shader_sequence,
@@ -4874,9 +4875,6 @@ class HextileMcpServer:
     def _shader_get_workspace(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_workspace_status(args)
 
-    def _shader_recheck_update(self, args: dict[str, Any]) -> Any:
-        return self.client.recheck_shader_update(args)
-
     def _shader_stop_workspace(self, args: dict[str, Any]) -> Any:
         return self.client.stop_shader_workspace(args)
 
@@ -4942,6 +4940,10 @@ class HextileMcpServer:
 
     def _set_shader_parameter(self, args: dict[str, Any]) -> Any:
         return self.client.set_shader_parameter(args, session_id=self._ensure_session_id())
+
+    def _shader_edit(self, args: dict[str, Any]) -> Any:
+        validate_shader_workspace("edit", args)
+        return self.client.shader_edit(args)
 
     def _control_shader_timeline(self, args: dict[str, Any]) -> Any:
         return self.client.control_shader_timeline(args)

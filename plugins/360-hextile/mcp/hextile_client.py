@@ -329,7 +329,11 @@ _MERGE_MAX_ENTRIES = 2048
 _MERGE_MAX_FAMILY = 64
 _MERGE_MAX_ID = 256
 _MERGE_MAX_FIELD = 64
-_MERGE_OUTCOMES = frozenset({"kept", "clamped", "lost_to_human", "fell_back", "removed"})
+_MERGE_OUTCOMES = frozenset({
+    "kept", "clamped", "fell_back", "disabled", "removed", "rewritten", "skipped", "lost_to_human",
+})
+_COMPILE_STATUS = frozenset({"pending", "passed", "failed", "not_observed"})
+_PACKAGE_ADDRESS = re.compile(r"^[A-Za-z0-9_.-]{1,128}\Z")
 
 _OUTPUT_PROFILES = {"png-master/1", "shader-linear-rgba-exr/1", "dome-png/1",
                     "shader-raster-still/1"}
@@ -1175,8 +1179,13 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
         raise HextileClientError("Unknown Shader history operation", status_code=422, kind="other")
     required, optional = fields[operation]
     required = common | required | (set() if operation == "shader_history_preview" else {"request_id"})
+    looks = {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look"}
+    if operation in looks:
+        optional = optional | {"seen"}
     if required - args.keys() or set(args) - required - optional - owner:
         raise HextileClientError("Invalid Shader history fields", status_code=422, kind="other")
+    if "seen" in args and not _shader_seen(args["seen"]):
+        raise HextileClientError("Malformed seen evidence", status_code=422, kind="other")
     _native_shader_args("state", {key: args[key] for key in ("shader", "project_context_witness")})
     base = args["base"]
     if (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
@@ -1476,74 +1485,76 @@ def validate_shader_doctor(operation: str, args: Mapping[str, Any]) -> None:
         raise HextileClientError("Invalid Shader Doctor shader identity", kind="other", status_code=422)
 
 
+def _shader_address(value: Any) -> bool:
+    """An edit address is a short list of strings, never a dotted path."""
+    return (type(value) is list and 1 <= len(value) <= 8
+            and all(type(part) is str and _PACKAGE_ADDRESS.fullmatch(part) is not None for part in value))
+
+
+def _shader_seen(value: Any) -> bool:
+    """The pairs in this request. A unit no human has edited needs none."""
+    return (type(value) is list and len(value) <= 256
+            and all(type(row) is dict and set(row) == {"address", "human"}
+                    and _shader_address(row["address"])
+                    and type(row["human"]) is int and row["human"] >= 0
+                    for row in value))
+
+
+def _shader_lease(value: Any) -> bool:
+    return (type(value) is dict and set(value) == {"holder", "generation"}
+            and value["holder"] in {"human", "agent"}
+            and type(value["generation"]) is int and value["generation"] >= 0)
+
+
+def _shader_package_edit(value: Any) -> bool:
+    if (type(value) is not dict or value.get("op") not in {"set", "create", "reshape", "delete"}
+            or set(value) - {"op", "address", "value", "born"}
+            or not _shader_address(value.get("address"))):
+        return False
+    if value["op"] != "delete" and "value" not in value:
+        return False
+    return "born" not in value or (type(value["born"]) is int and value["born"] >= 0)
+
+
 def validate_shader_workspace(operation: str, args: Mapping[str, Any]) -> None:
-    """Closed transport admission; APP owns writer identity, replay and saved-base checks."""
+    """Closed admission for package open, register, the recorded read and shader_edit."""
     def refuse(message: str = "Expected closed Shader workspace arguments") -> None:
         raise HextileClientError(message, kind="other", status_code=422)
 
-    def text(value: Any, maximum: int = 256) -> bool:
-        return type(value) is str and 1 <= len(value) <= maximum
-
-    def digest(value: Any) -> bool:
-        return type(value) is str and _WORKSPACE_DIGEST.fullmatch(value) is not None
-
     if not isinstance(args, Mapping):
         refuse()
-    if operation == "open":
-        required = {"shader", "project_context_witness", "expected_working_revision",
-                    "expected_document_hash", "expected_source_hash", "studio_surface_id"}
-        base = {"expected_working_revision", "expected_document_hash", "expected_source_hash"}
-        supplied = base & args.keys()
-        if (not required - base <= args.keys()
-                or args.keys() - required - {"existing_workspace", "workspace_schema", "attribution_schema"}
-                or ("workspace_schema" in args and (type(args["workspace_schema"]) is not int or args["workspace_schema"] != 2))
-                or ("attribution_schema" in args and (type(args["attribution_schema"]) is not int or args["attribution_schema"] != 1))
-                or (supplied and supplied != base)):
-            refuse()
-        shader = args["shader"]
-        if (type(shader) is not dict or set(shader) != {"origin", "shaderId"}
-                or shader["origin"] not in ("project", "user", "builtin") or not text(shader["shaderId"], 128)
-                or re.fullmatch(r"[A-Za-z0-9_-]+", shader["shaderId"]) is None
-                or not text(args["project_context_witness"]) or not text(args["studio_surface_id"])
-                or (supplied and (type(args["expected_working_revision"]) is not int or args["expected_working_revision"] < 1
-                                 or not digest(args["expected_document_hash"]) or not digest(args["expected_source_hash"])))):
-            refuse()
-        if "existing_workspace" in args:
-            adopt = args["existing_workspace"]
-            if (type(adopt) is not dict or set(adopt) != {"action", "expected_content_digest"}
-                    or adopt["action"] != "adopt" or not digest(adopt["expected_content_digest"])):
-                refuse()
+    shader_id, request_id = args.get("shader_id"), args.get("request_id")
+    if type(shader_id) is not str or re.fullmatch(r"[A-Za-z0-9_-]+", shader_id) is None:
+        refuse("shader_id must be letters, digits, underscore or hyphen")
+    if type(request_id) is not str or not request_id or len(request_id) > 128:
+        refuse("Expected a request_id")
+    if operation in {"open", "get"}:
+        if set(args) != {"shader_id", "request_id"}:
+            refuse("Open and get take only shader_id and request_id")
         return
-    required = {"handle", "change_id", "expected_generation", "content_digest"} if operation == "register" else {"handle", "change_id", "project_context_witness"}
-    optional = {"include_source_diagnostics"} if operation == "get" else (
-        {"attribution_action", "source_proposal"} if operation == "register" else set())
-    if (operation not in {"register", "get"} or not required <= args.keys()
-            or args.keys() - required - optional
-            or ("include_source_diagnostics" in args and type(args["include_source_diagnostics"]) is not bool)
-            or ("attribution_action" in args and args["attribution_action"] not in {"include", "skip_optional"})):
-        refuse()
-    handle, change_id = args["handle"], args["change_id"]
-    if type(handle) is not str or _WORKSPACE_HANDLE.fullmatch(handle) is None:
-        refuse("Workspace handle must be opaque ASCII of at most 64 characters")
-    # Bound the string and decimal before integer conversion, including namespace.
-    if type(change_id) is not str or len(change_id) > 81 or not change_id.startswith(handle + ":"):
-        suffix = ""
-    else:
-        suffix = change_id[len(handle) + 1:]
-    if _WORKSPACE_SUFFIX.fullmatch(suffix) is None or int(suffix) > MAX_WORKSPACE_GENERATION:
-        raise HextileClientError("generation_conflict: use <handle>:<positive canonical generation>",
-                                 kind="http", status_code=409,
-                                 receipt={"code": "generation_conflict"})
     if operation == "register":
-        if (type(args["expected_generation"]) is not int
-                or not 0 <= args["expected_generation"] < MAX_WORKSPACE_GENERATION
-                or not digest(args["content_digest"])
-                or ("source_proposal" in args and not _credit_source_proposal(args["source_proposal"]))):
-            refuse()
-        # APP compares suffix to expected_generation+1 after checking retained replay,
-        # so altered retained inputs keep their authoritative idempotency_conflict.
-    elif not text(args["project_context_witness"]):
-        refuse()
+        if (set(args) - {"shader_id", "request_id", "digest", "lease", "seen"}
+                or not {"digest", "lease"} <= set(args)):
+            refuse("Register takes shader_id, request_id, digest, lease and optional seen")
+        if type(args["digest"]) is not str or _WORKSPACE_DIGEST.fullmatch(args["digest"]) is None:
+            refuse("Expected a sha256 package digest")
+        if not _shader_lease(args["lease"]):
+            refuse("Malformed code lease")
+        if "seen" in args and not _shader_seen(args["seen"]):
+            refuse("Malformed seen evidence")
+        return
+    if operation == "edit":
+        edits = args.get("edits")
+        if (set(args) - {"shader_id", "request_id", "edits", "lease", "seen"}
+                or type(edits) is not list or not 1 <= len(edits) <= 64
+                or any(not _shader_package_edit(row) for row in edits)):
+            refuse("shader_edit takes shader_id, request_id, 1 to 64 edits, and optional lease and seen")
+        if "lease" in args and not _shader_lease(args["lease"]):
+            refuse("Malformed code lease")
+        if "seen" in args and not _shader_seen(args["seen"]):
+            refuse("Malformed seen evidence")
+        return
+    refuse()
 
 
 def _layer_transport_unknown(exc: BaseException) -> bool:
@@ -2258,108 +2269,29 @@ def _project_discovery_public(value: Any) -> Any:
     return _DISCOVERY_DROP
 
 
-def _valid_shader_connection_surface(surface: Any) -> bool:
-    if surface is None:
-        return True
-    required = {"kind", "studio_surface_id", "project_context_witness", "shader", "base", "draft_state"}
-    optional = {"owner_id", "owner_generation", "viewer_generation", "source_epoch"}
-    if type(surface) is not dict or not required <= set(surface) or set(surface) - required - optional:
-        return False
-    if (surface["kind"] != "shader_workshop" or not _duplicate_ref(surface["shader"], destination=False)
-            or type(surface["draft_state"]) is not str
-            or surface["draft_state"] not in {"clean", "dirty", "saving", "unknown", "external_attached"}):
-        return False
-    for key, limit in (("studio_surface_id", 64), ("project_context_witness", 256), ("owner_id", 128)):
-        if key in surface and (type(surface[key]) is not str or not 1 <= len(surface[key]) <= limit):
-            return False
-    for key in ("owner_generation", "viewer_generation", "source_epoch"):
-        if key in surface and (type(surface[key]) is not int or not 0 <= surface[key] <= 2**53 - 1):
-            return False
-    base = surface["base"]
-    if type(base) is not dict:
-        return False
-    if base.get("kind") == "unaccepted":
-        return set(base) == {"kind", "authoring_digest"} and _duplicate_digest(base["authoring_digest"])
-    required_base = {"working_revision", "document_hash", "source_hash"}
-    return (required_base <= set(base) and not set(base) - required_base - {"kind", "manifest_hash"}
-            and ("kind" not in base or base["kind"] == "saved")
-            and type(base["working_revision"]) is int and 1 <= base["working_revision"] <= 2**53 - 1
-            and _duplicate_digest(base["document_hash"]) and _duplicate_digest(base["source_hash"])
-            and ("manifest_hash" not in base or _duplicate_digest(base["manifest_hash"], null=True)))
-
-
-def _valid_code_lease(value: Any) -> bool:
-    """Optional discovery. Absence stays unknown; a present lease is this exact contract."""
-    return (type(value) is dict and set(value) == {"contract", "held", "human_document_families", "composition_authority"}
-            and value["contract"] == "shader-code-lease/1"
-            and type(value["held"]) is list and value["held"] == ["code_body", "modules", "file_inventory"]
-            and type(value["human_document_families"]) is list
-            and value["human_document_families"] == ["parameters", "values", "fields", "header", "extensions",
-                                                     "modulators", "mappings", "expressions"]
-            and value["composition_authority"] == "registered-candidate/1")
-
-
-def _valid_closed_shader_base(base: Any) -> bool:
-    """Saved or unaccepted workspace base. Same digest rule as open acknowledgement."""
-    if type(base) is not dict:
-        return False
-    if base.get("kind") == "unaccepted":
-        return (set(base) == {"kind", "authoring_digest"} and type(base["authoring_digest"]) is str
-                and _WORKSPACE_DIGEST.fullmatch(base["authoring_digest"]) is not None)
-    if (base.get("kind") != "saved" or not {"kind", "working_revision", "document_hash", "source_hash"} <= set(base)
-            or set(base) - {"kind", "working_revision", "document_hash", "source_hash", "manifest_hash"}
-            or type(base.get("working_revision")) is not int
-            or not 1 <= base["working_revision"] <= MAX_WORKSPACE_GENERATION
-            or any(type(base.get(key)) is not str or _WORKSPACE_DIGEST.fullmatch(base[key]) is None
-                   for key in ("document_hash", "source_hash"))):
-        return False
-    if "manifest_hash" not in base:
-        return True
-    manifest = base["manifest_hash"]
-    return manifest is None or (type(manifest) is str and _WORKSPACE_DIGEST.fullmatch(manifest) is not None)
-
-
 def _valid_shader_connection(result: Any) -> bool:
-    """Closed public metadata only. Unknown APP shapes never become compact success."""
+    """The v2 live Shader description. Unknown shapes never become compact success."""
     if (type(result) is not dict or set(result) != {
-            "view", "schema", "mcp_enabled", "current_surface", "shader_contract", "shader_summary"}
-            or result["view"] != "shader" or type(result["schema"]) is not int or result["schema"] != 1
-            or type(result["mcp_enabled"]) is not bool):
+            "view", "stack", "connected", "shader", "lease", "commit", "revision", "mcp_enabled"}
+            or result["view"] != "shader" or result["stack"] not in {"v1", "v2"}
+            or type(result["connected"]) is not bool or type(result["mcp_enabled"]) is not bool):
         return False
-    summary, contract, surface = result["shader_summary"], result["shader_contract"], result["current_surface"]
-    if (type(summary) is not dict or set(summary) != {
-            "name", "metadata_status", "shader", "draft_state", "save_state", "editable", "blockers"}
-            or type(contract) is not dict
-            or not {"revision", "apply_policy", "blockers"} <= set(contract)
-            or set(contract) - {"revision", "apply_policy", "blockers", "code_lease"}
-            or ("code_lease" in contract and not _valid_code_lease(contract["code_lease"]))
-            or type(contract["revision"]) is not int or contract["revision"] != 1
-            or type(contract["apply_policy"]) is not str or contract["apply_policy"] not in {"mounted", "unavailable"}
-            or not _valid_shader_connection_surface(surface)):
-        return False
-    for codes in (summary["blockers"], contract["blockers"]):
-        if (type(codes) is not list or len(codes) > 16
-                or any(type(code) is not str or re.fullmatch(r"[a-z_]{1,64}", code) is None for code in codes)):
+    shader = result["shader"]
+    if shader is None:
+        if result["lease"] is not None or result["commit"] is not None or result["revision"] is not None:
             return False
-    name = summary["name"]
-    if (name is not None and (type(name) is not str or not name.strip() or len(name) > 4096)
-            or summary["metadata_status"] != ("available" if name is not None else "unavailable")
-            or type(summary["editable"]) is not bool or type(summary["save_state"]) is not str
-            or summary["save_state"] not in {"saved", "saving", "not_saved", "unknown", "unaccepted", "external_attached"}
-            or not set(contract["blockers"]) <= set(summary["blockers"])):
+    elif (type(shader) is not dict or set(shader) != {"origin", "shader_id"}
+            or shader["origin"] not in {"builtin", "user", "project"}
+            or type(shader["shader_id"]) is not str
+            or re.fullmatch(r"[A-Za-z0-9_-]+", shader["shader_id"]) is None):
         return False
-    if surface is None:
-        return (name is None and summary["shader"] is None and summary["draft_state"] is None
-                and summary["save_state"] == "unknown" and not summary["editable"]
-                and contract["apply_policy"] == "unavailable")
-    if summary["shader"] != surface["shader"] or summary["draft_state"] != surface["draft_state"]:
+    lease = result["lease"]
+    if lease is not None and not _shader_lease(lease):
         return False
-    if summary["save_state"] == "saved" and (surface["draft_state"] != "clean" or surface["base"].get("kind") == "unaccepted"):
-        return False
-    return (not summary["editable"] or result["mcp_enabled"] and not summary["blockers"]
-            and contract["apply_policy"] == "mounted" and surface["shader"]["origin"] in {"user", "project", "builtin"}
-            and surface["draft_state"] in {"clean", "external_attached"}
-            and summary["save_state"] in {"saved", "unaccepted", "external_attached"})
+    for key in ("commit", "revision"):
+        if result[key] is not None and (type(result[key]) is not int or result[key] < 0):
+            return False
+    return True
 
 
 def _discovery_malformed(message: str) -> HextileClientError:
@@ -2771,6 +2703,9 @@ def workspace_refusal(detail: Any) -> Optional[dict]:
     action = _refusal_text(detail.get("next_action"), 80)
     if message:
         projected["message"] = message
+    next_step = _refusal_text(detail.get("next_step"), 300)
+    if next_step:
+        projected["next_step"] = next_step
     if recovery:
         projected["recovery"] = recovery
     if action and _REFUSAL_CODE.fullmatch(action):
@@ -2842,6 +2777,115 @@ def _public_status_error(exc: HextileClientError) -> HextileClientError:
         return HextileClientError(f"HTTP {status}", status_code=status, kind="http")
     return HextileClientError("Request failed", status_code=status, kind="http")
 
+
+def _malformed(message: str) -> None:
+    raise HextileClientError(message, kind="other")
+
+
+def _json_value(value: Any) -> bool:
+    """A result value the package can carry. Non-finite numbers are refused."""
+    if value is None or type(value) in {str, bool, int}:
+        return type(value) is not str or len(value) <= 65536
+    if type(value) is float:
+        return math.isfinite(value)
+    if type(value) is list:
+        return len(value) <= 256 and all(_json_value(item) for item in value)
+    if type(value) is dict:
+        return (len(value) <= 64 and all(type(key) is str and len(key) <= 128 and _json_value(item)
+                                          for key, item in value.items()))
+    return False
+
+
+def _merge_rows(value: Any) -> list:
+    """R4 rows: op, address, outcome, and the value fields a read actually returned."""
+    if type(value) is not list or len(value) > _MERGE_MAX_ENTRIES:
+        _malformed("Malformed Shader merge report")
+    for row in value:
+        if (type(row) is not dict or row.get("op") not in {"set", "create", "reshape", "delete"}
+                or row.get("outcome") not in _MERGE_OUTCOMES
+                or not _shader_address(row.get("address"))
+                or set(row) - {"op", "address", "outcome", "before", "value", "human"}):
+            _malformed("Malformed Shader merge report")
+        if "human" in row and (type(row["human"]) is not int or row["human"] < 0):
+            _malformed("Malformed Shader merge report")
+        for key in ("before", "value"):
+            if key in row and not _json_value(row[key]):
+                _malformed("Malformed Shader merge report")
+    return value
+
+
+def _not_adopted_rows(value: Any) -> list:
+    if type(value) is not list or len(value) > _MERGE_MAX_ENTRIES:
+        _malformed("Malformed not_adopted list")
+    for row in value:
+        if (type(row) is not dict or row.get("outcome") != "not_adopted"
+                or not _shader_address(row.get("address"))
+                or set(row) - {"address", "outcome", "workspace", "value"}):
+            _malformed("Malformed not_adopted list")
+        for key in ("workspace", "value"):
+            if key in row and not _json_value(row[key]):
+                _malformed("Malformed not_adopted list")
+    return value
+
+
+def _compile_view(value: Any) -> dict:
+    profiles = value.get("profiles") if type(value) is dict else None
+    if (type(value) is not dict or set(value) != {"revision", "profiles"}
+            or type(value.get("revision")) is not int or value["revision"] < 0
+            or type(profiles) is not list or len(profiles) > 8):
+        _malformed("Malformed compile report")
+    for row in profiles:
+        if (type(row) is not dict or not {"profile", "status", "program_identity"} <= set(row)
+                or set(row) - {"profile", "status", "program_identity", "diagnostics", "ok"}
+                or type(row["profile"]) is not str or not row["profile"] or len(row["profile"]) > 64
+                or row["status"] not in _COMPILE_STATUS
+                or not (row["program_identity"] is None or type(row["program_identity"]) is str)
+                or ("ok" in row and type(row["ok"]) is not bool)
+                or ("diagnostics" in row and type(row["diagnostics"]) is not list)):
+            _malformed("Malformed compile report")
+    return value
+
+
+def _open_result(value: Any) -> dict:
+    if (type(value) is not dict or not {"lease", "commit", "revision"} <= set(value)
+            or set(value) - {"lease", "commit", "revision", "not_adopted"}
+            or not _shader_lease(value["lease"])
+            or type(value["commit"]) is not int or value["commit"] < 0
+            or type(value["revision"]) is not int or value["revision"] < 0):
+        _malformed("Malformed Shader open result")
+    if "not_adopted" in value:
+        _not_adopted_rows(value["not_adopted"])
+    return value
+
+
+def _saved_result(value: Any) -> dict:
+    if type(value) is dict and value.get("prepare") == "failed":
+        if set(value) != {"prepare", "diagnostics"} or type(value.get("diagnostics")) is not list:
+            _malformed("Malformed prepare failure")
+        return value
+    if (type(value) is not dict or value.get("save") != "saved"
+            or not {"merge", "lease", "commit", "revision"} <= set(value)
+            or set(value) - {"save", "merge", "not_adopted", "lease", "commit", "revision", "compile"}
+            or not _shader_lease(value["lease"])
+            or type(value["commit"]) is not int or value["commit"] < 0
+            or type(value["revision"]) is not int or value["revision"] < 0):
+        _malformed("Malformed Shader save result")
+    _merge_rows(value["merge"])
+    if "not_adopted" in value:
+        _not_adopted_rows(value["not_adopted"])
+    if "compile" in value:
+        _compile_view(value["compile"])
+    return value
+
+
+def _edit_result(value: Any) -> dict:
+    if (type(value) is not dict or value.get("save") != "saved"
+            or set(value) != {"save", "results", "commit", "revision"}
+            or type(value.get("commit")) is not int or value["commit"] < 0
+            or type(value.get("revision")) is not int or value["revision"] < 0):
+        _malformed("Malformed Shader edit result")
+    _merge_rows(value["results"])
+    return value
 
 class Client:
     """Sync HTTP wrapper around local APP routes (stdlib urllib)."""
@@ -3875,7 +3919,12 @@ class Client:
                         receipt={"client_request_id": request_id, "status": "unknown"}) from exc
                 raise
             return self._shader_parameter_receipt(data, request_id, submit=False)
-        if operation != "submit" or set(args) != {"operation", "client_request_id", "witness", "parameter_id", "value"}:
+        supplied = set(args)
+        if "seen" in supplied:
+            if not _shader_seen(args["seen"]):
+                raise HextileClientError("Malformed seen evidence", kind="other", status_code=422)
+            supplied = supplied - {"seen"}
+        if operation != "submit" or supplied != {"operation", "client_request_id", "witness", "parameter_id", "value"}:
             raise HextileClientError("Expected exact Shader parameter submit arguments", kind="other", status_code=422)
         witness = args["witness"]
         if (type(witness) is not dict or set(witness) != {"studio_surface_id", "project_context_witness", "shader", "base", "edit_sequence"}
@@ -3892,7 +3941,7 @@ class Client:
         if type(base) is not dict:
             raise HextileClientError("Invalid Shader parameter base", kind="other", status_code=422)
         if base.get("kind") == "unaccepted":
-            valid_base = set(base) == {"kind", "authoring_digest"} and digest(base["authoring_digest"])
+            valid_base = False
         else:
             tagged = base.get("kind") == "saved"
             required = {"working_revision", "document_hash", "source_hash"} | ({"kind"} if tagged else set())
@@ -3922,6 +3971,8 @@ class Client:
         if not finite_json(value) or len(json.dumps(value, allow_nan=False).encode("utf-8")) > 65536:
             raise HextileClientError("Shader parameter value must be bounded finite JSON", kind="other", status_code=422)
         body = {key: args[key] for key in ("client_request_id", "witness", "parameter_id", "value")}
+        if "seen" in args:
+            body["seen"] = args["seen"]
         try:
             data = self.post_json("/api/agent/shader-parameter", body, headers=headers)
             return self._shader_parameter_receipt(data, request_id, submit=True)
@@ -3939,6 +3990,8 @@ class Client:
 
     @staticmethod
     def _shader_parameter_receipt(data: Any, request_id: str, *, submit: bool) -> dict[str, Any]:
+        if isinstance(data, Mapping) and data.get("save") == "saved" and "results" in data:
+            return _edit_result(data)
         if (not isinstance(data, Mapping) or (submit and data.get("ok") is not True)
                 or "client_request_id" in data and data["client_request_id"] != request_id
                 or type(data.get("ticket_id")) is not str
@@ -4617,6 +4670,8 @@ class Client:
                              required: set[str], optional: set[str] = frozenset()) -> dict:
         if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
             raise HextileClientError("Invalid closed Shader operation", status_code=422, kind="other")
+        if "seen" in args and not _shader_seen(args["seen"]):
+            raise HextileClientError("Malformed seen evidence", status_code=422, kind="other")
         try:
             valid = type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"] and uuid.UUID(args["request_id"]).version == 4
         except (ValueError, TypeError, KeyError):
@@ -4644,7 +4699,7 @@ class Client:
     def set_shader_resource(self, args: Mapping[str, Any]) -> dict:
         required = {"shader", "project_context_witness", "request_id", "base", "expected_working_digest", "action", "slot_id"}
         optional = {"staged_token", "filter", "edge_u", "edge_v", "time_mode", "end_mode", "hold_index",
-                    "library_intent", "confirmation_scope", "studio_surface_id", "expected_edit_sequence"}
+                    "library_intent", "confirmation_scope", "studio_surface_id", "expected_edit_sequence", "seen"}
         if args.get("action") not in {"attach", "replace", "locate", "remove", "settings"}:
             raise HextileClientError("Unknown resource action", status_code=422, kind="other")
         if (args["action"] in {"attach", "replace", "locate"}) != ("staged_token" in args):
@@ -4685,7 +4740,7 @@ class Client:
                 or command.get("kind") != "setShaderTag" or type(command.get("assigned")) is not bool):
             raise HextileClientError("Invalid Shader tag assignment", status_code=422, kind="other")
         _native_shader_args("state", {"shader": command["shader"], "project_context_witness": args["project_context_witness"]})
-        return self._shader_scoped_write(args, "shader_set_tags", "/api/shaders/agent-operations/library/tags", required)
+        return self._shader_scoped_write(args, "shader_set_tags", "/api/shaders/agent-operations/library/tags", required, {"seen"})
 
     def set_shader_project_conventions(self, args: Mapping[str, Any]) -> dict:
         required = {"request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"}
@@ -4695,7 +4750,7 @@ class Client:
                     (type(args["expected_digest"]) is not str or re.fullmatch(r"[0-9a-f]{64}", args["expected_digest"]) is None))):
             raise HextileClientError("Invalid Project convention CAS", status_code=422, kind="other")
         return self._shader_scoped_write(args, "shader_set_project_conventions",
-            "/api/shaders/agent-operations/project-conventions", required)
+            "/api/shaders/agent-operations/project-conventions", required, {"seen"})
 
     def rename_shader_asset(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("rename", args)
@@ -4730,6 +4785,11 @@ class Client:
         return receipt
 
     def _mounted_shader_action(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
+        submitted = args
+        if operation in {"shader_set_capture", "shader_control_clock"} and isinstance(args, Mapping) and "seen" in args:
+            if not _shader_seen(args["seen"]):
+                raise HextileClientError("Malformed seen evidence", kind="other", status_code=422)
+            args = {key: args[key] for key in args if key != "seen"}
         common = {"shader", "project_context_witness", "studio_surface_id", "request_id", "expected_edit_sequence"}
         extras = ({"action", "seed", "capture_defaults"} if operation == "shader_set_capture" else
                   {"action", "bpm", "speed"} if operation == "shader_control_clock" else
@@ -4799,7 +4859,7 @@ class Client:
         if not valid or not bounded:
             raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
         try:
-            receipt = self.request_json("POST", path, dict(args))
+            receipt = self.request_json("POST", path, dict(submitted))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError(
@@ -5122,7 +5182,7 @@ class Client:
         if (type(result) is not dict or set(result) - {"schema", "proposal_id", "request_id", "state",
                 "shader", "project_context_witness", "expected_provenance_hash", "mutation_hash"}
                 or result.get("request_id") != request_id
-                or result.get("state") not in {"pending", "applied", "saved", "refused", "expired", "unknown"}
+                or result.get("state") not in {"pending", "applied", "saved", "refused", "expired", "unknown", "proposed"}
                 or "ticket_id" in result or "mutation" in result or "provenance" in result
                 or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 32768):
             raise HextileClientError("Credits proposal acknowledgement unknown; read shader_get_operation.",
@@ -5188,111 +5248,44 @@ class Client:
                                          receipt={"code": detail["code"]}) from exc
             raise
 
+
     def open_shader_workspace(self, body: Mapping[str, Any]) -> Any:
+        """POST /api/shaders/{id}/workspace. Body is only request_id. Nothing human-side refuses it."""
         validate_shader_workspace("open", body)
-        body = {"workspace_schema": 2, **body}
-        result = self._shader_workspace_request("POST", "/api/agent/shader-workspaces/open", dict(body))
-        if (not isinstance(result, dict) or type(result.get("handle")) is not str
-                or _WORKSPACE_HANDLE.fullmatch(result["handle"]) is None
-                or type(result.get("generation")) is not int or not 0 <= result["generation"] <= MAX_WORKSPACE_GENERATION
-                or type(result.get("content_digest")) is not str or _WORKSPACE_DIGEST.fullmatch(result["content_digest"]) is None
-                or result.get("shader") != body["shader"]
-                or result.get("project_context_witness") != body["project_context_witness"]
-                or result.get("studio_surface_id") != body["studio_surface_id"]
-                or result.get("attachment_state", "attached") != "attached"):
-            raise HextileClientError("Shader workspace acknowledgement unknown; rediscover or make one identical open retry. No paths were released.",
-                                     kind="workspace_outcome_unknown", receipt=workspace_unknown_receipt())
-        if (type(result.get("workspace_schema")) is not int or result["workspace_schema"] != 2
-                or type(result.get("schema")) is not int or result["schema"] != 2
-                or type(result.get("files")) is not list
-                or not result["files"] or len(result["files"]) > 32
-                or any(type(row) is not dict or set(row) != {"path", "native_path"}
-                       or any(type(value) is not str or not value for value in row.values()) for row in result["files"])
-                or any(type(result.get(key)) is not str or not result[key] for key in ("workspace_root", "authoring_path"))):
-            raise HextileClientError("Upgrade 360 Hextile and reconnect for workspace_schema 2; no workspace paths were released.",
-                                     kind="upgrade")
-        base = result.get("base")
-        if "expected_working_revision" in body:
-            fields = {"kind", "working_revision", "document_hash", "source_hash"}
-            valid_base = (type(base) is dict and fields <= base.keys()
-                and not base.keys() - fields - {"manifest_hash"} and base["kind"] == "saved"
-                and type(base["working_revision"]) is int
-                and base["working_revision"] == body["expected_working_revision"]
-                and base["document_hash"] == body["expected_document_hash"]
-                and base["source_hash"] == body["expected_source_hash"])
-            if valid_base and "manifest_hash" in base and base["manifest_hash"] is not None:
-                valid_base = (type(base["manifest_hash"]) is str
-                              and _WORKSPACE_DIGEST.fullmatch(base["manifest_hash"]) is not None)
-        else:
-            valid_base = (type(base) is dict and set(base) == {"kind", "authoring_digest"}
-                and base["kind"] == "unaccepted" and type(base["authoring_digest"]) is str
-                and _WORKSPACE_DIGEST.fullmatch(base["authoring_digest"]) is not None)
-        if not valid_base:
-            raise HextileClientError("Shader workspace base acknowledgement unknown; rediscover the current Shader. No paths were released.",
-                                     kind="workspace_outcome_unknown", receipt=workspace_unknown_receipt())
-        return result
+        shader_id = urllib.parse.quote(body["shader_id"], safe="")
+        result = self._shader_workspace_request(
+            "POST", f"/api/shaders/{shader_id}/workspace", {"request_id": body["request_id"]})
+        return _open_result(result)
 
     def register_shader_update(self, args: Mapping[str, Any]) -> Any:
+        """POST /api/shaders/{id}/register. Saved merge, prepare failure, or a typed refusal."""
         validate_shader_workspace("register", args)
-        handle = urllib.parse.quote(args["handle"], safe="")
-        body = {key: args[key] for key in ("change_id", "expected_generation", "content_digest")}
-        if "attribution_action" in args:
-            body["attribution_action"] = args["attribution_action"]
-        if "source_proposal" in args:
-            body["source_proposal"] = args["source_proposal"]
-        result = self._shader_workspace_request("POST", f"/api/agent/shader-workspaces/{handle}/updates", body)
-        if (not isinstance(result, dict) or result.get("handle") != args["handle"]
-                or result.get("change_id") != args["change_id"]
-                or result.get("content_digest") != args["content_digest"]
-                or type(result.get("generation")) is not int
-                or not 0 <= result["generation"] <= MAX_WORKSPACE_GENERATION
-                or type(result.get("candidate_id")) is not str or not result["candidate_id"]):
-            raise HextileClientError(
-                "Shader workspace registration acknowledgement unknown; read the current receipt before retrying.",
-                kind="workspace_outcome_unknown", receipt=workspace_unknown_receipt())
-        if "merge" in result:
-            result["merge"] = self._workspace_merge(result["merge"])
-        return result
+        shader_id = urllib.parse.quote(args["shader_id"], safe="")
+        body = {key: args[key] for key in ("request_id", "digest", "lease")}
+        if "seen" in args:
+            body["seen"] = args["seen"]
+        result = self._shader_workspace_request("POST", f"/api/shaders/{shader_id}/register", body)
+        return _saved_result(result)
 
     def get_shader_update(self, args: Mapping[str, Any]) -> Any:
+        """GET the recorded save. Only compile may still change."""
         validate_shader_workspace("get", args)
-        handle = urllib.parse.quote(args["handle"], safe="")
-        change_id = urllib.parse.quote(args["change_id"], safe="")
-        params = {"project_context_witness": args["project_context_witness"]}
-        if args.get("include_source_diagnostics") is True:
-            params["include_source_diagnostics"] = "true"
-        result = self._shader_workspace_request("GET", f"/api/agent/shader-workspaces/{handle}/updates/{change_id}", params=params)
-        if args.get("include_source_diagnostics") is True and (
-                not isinstance(result, dict) or type(result.get("source_diagnostics")) is not list):
-            raise HextileClientError("Upgrade 360 Hextile and reconnect for bounded source diagnostics; this APP did not acknowledge support.",
-                                     kind="upgrade")
-        if isinstance(result, dict):
-            self._workspace_human_document(result)
-            if "merge" in result:
-                result["merge"] = self._workspace_merge(result["merge"])
-        return result
+        shader_id = urllib.parse.quote(args["shader_id"], safe="")
+        request_id = urllib.parse.quote(args["request_id"], safe="")
+        result = self._shader_workspace_request(
+            "GET", f"/api/shaders/{shader_id}/updates/{request_id}")
+        return _saved_result(result)
 
-    @staticmethod
-    def _workspace_merge(value: Any) -> dict:
-        """Closed composition report. Callers leave a missing key unknown."""
-        entries = value.get("entries") if type(value) is dict else None
-        omitted = value.get("omitted") if type(value) is dict else None
-        if (type(value) is not dict or set(value) != {"schema", "entries", "omitted"}
-                or type(value.get("schema")) is not int or value["schema"] != 1
-                or type(entries) is not list or len(entries) > _MERGE_MAX_ENTRIES
-                or type(omitted) is not dict or set(omitted) != {"kept", "clamped"}
-                or any(type(omitted[key]) is not int or not 0 <= omitted[key] <= MAX_WORKSPACE_GENERATION
-                       for key in ("kept", "clamped"))):
-            raise HextileClientError("Malformed Shader merge report", kind="other")
-        for row in entries:
-            field = row.get("field") if type(row) is dict else None
-            if (type(row) is not dict or set(row) != {"family", "id", "field", "outcome"}
-                    or type(row.get("family")) is not str or not 1 <= len(row["family"]) <= _MERGE_MAX_FAMILY
-                    or type(row.get("id")) is not str or not 1 <= len(row["id"]) <= _MERGE_MAX_ID
-                    or not (field is None or (type(field) is str and 1 <= len(field) <= _MERGE_MAX_FIELD))
-                    or row.get("outcome") not in _MERGE_OUTCOMES):
-                raise HextileClientError("Malformed Shader merge report", kind="other")
-        return value
+    def shader_edit(self, args: Mapping[str, Any]) -> Any:
+        """POST /api/shaders/{id}/agent/edits. One batch, the same seen rule as register."""
+        validate_shader_workspace("edit", args)
+        shader_id = urllib.parse.quote(args["shader_id"], safe="")
+        body = {key: args[key] for key in ("request_id", "edits")}
+        for key in ("lease", "seen"):
+            if key in args:
+                body[key] = args[key]
+        result = self._shader_workspace_request("POST", f"/api/shaders/{shader_id}/agent/edits", body)
+        return _edit_result(result)
 
     @staticmethod
     def _recovery_result(data: Any, allowed: set[str], required: set[str]) -> dict:
@@ -5319,85 +5312,18 @@ class Client:
             raise HextileClientError("Malformed Shader human value recovery", kind="other")
 
     @staticmethod
-    def _workspace_human_document(data: dict) -> None:
-        """Optional source-free summary. version is the native value_version clock."""
-        if "human_document" not in data:
-            return
-        document = data["human_document"]
-        families = ("parameters", "values", "fields", "header", "extensions",
-                    "modulators", "mappings", "expressions")
-        changed = document.get("changed") if type(document) is dict else None
-        version = document.get("version") if type(document) is dict else None
-        identity = document.get("code_identity") if type(document) is dict else None
-        rows_ok = (type(changed) is dict and set(changed) == set(families)
-                   and all(type(changed[family]) is list for family in families)
-                   and sum(len(changed[family]) for family in families) <= 16
-                   and all(type(item) is str and item and len(item) <= 256 and changed[family].count(item) == 1
-                           for family in families for item in changed[family]))
-        if (type(document) is not dict or set(document) != {"contract", "version", "code_identity", "accepted_base",
-                "changed", "omitted", "baseline", "composition_required"}
-                or document.get("contract") != "shader-code-lease/1"
-                or type(version) is not int or not 0 <= version <= MAX_WORKSPACE_GENERATION
-                or (identity is not None and (type(identity) is not str
-                                              or _WORKSPACE_DIGEST.fullmatch(identity) is None))
-                or not _valid_closed_shader_base(document.get("accepted_base"))
-                or not rows_ok
-                or type(document.get("omitted")) is not int
-                or not 0 <= document["omitted"] <= MAX_WORKSPACE_GENERATION
-                or type(document.get("baseline")) is not str
-                or document.get("baseline") not in {"acknowledged", "unavailable"}
-                or type(document.get("composition_required")) is not bool):
-            raise HextileClientError("Malformed Shader human document summary", kind="other")
-        human = data.get("human_values")
-        if type(human) is dict and human.get("value_version") != version:
-            raise HextileClientError("Malformed Shader human document summary", kind="other")
-
-    @staticmethod
-    def _workspace_publication(data: dict) -> None:
-        if "publication" not in data:
-            return
-        publication = data["publication"]
-        if (type(publication) is not dict or set(publication) != {"composition_id", "value_version", "prepare_identity",
-                "compile", "preview", "presentation", "save", "saved"}
-                or type(publication["composition_id"]) is not str
-                or re.fullmatch(r"sc_[0-9a-f]{32}", publication["composition_id"]) is None
-                or type(publication["value_version"]) is not int
-                or not 0 <= publication["value_version"] <= MAX_WORKSPACE_GENERATION
-                or any(type(publication[key]) is not str for key in ("compile", "preview", "presentation", "save"))
-                or (publication["compile"], publication["preview"]) not in
-                   {("passed", "published"), ("failed", "failed"), ("unavailable", "unavailable")}
-                or publication["presentation"] != "pending" or publication["save"] not in {"not_saved", "saved"}
-                or (publication["save"] == "saved" and (publication["compile"], publication["preview"]) != ("passed", "published"))):
-            raise HextileClientError("Malformed Shader publication recovery", kind="other")
-        identity = publication["prepare_identity"]
-        if (type(identity) is not dict or set(identity) != {"prepare_receipt_id", "source_hash", "document_hash",
-                "manifest_hash", "resource_manifest_hash", "receipt_hash"}
-                or type(identity["prepare_receipt_id"]) is not str
-                or re.fullmatch(r"prepare_[0-9a-f]{24}", identity["prepare_receipt_id"]) is None
-                or any(type(identity[key]) is not str or _WORKSPACE_DIGEST.fullmatch(identity[key]) is None
-                       for key in ("source_hash", "document_hash", "manifest_hash", "receipt_hash"))
-                or (identity["resource_manifest_hash"] is not None and
-                    (type(identity["resource_manifest_hash"]) is not str or
-                     _WORKSPACE_DIGEST.fullmatch(identity["resource_manifest_hash"]) is None))):
-            raise HextileClientError("Malformed Shader publication recovery", kind="other")
-        saved = publication["saved"]
-        if publication["save"] == "not_saved":
-            if saved is not None:
-                raise HextileClientError("Malformed Shader publication recovery", kind="other")
-        elif (type(saved) is not dict or set(saved) != {"working_revision", "document_hash", "source_hash", "manifest_hash"}
-              or type(saved["working_revision"]) is not int or not 1 <= saved["working_revision"] <= MAX_WORKSPACE_GENERATION
-              or any(type(saved[key]) is not str or _WORKSPACE_DIGEST.fullmatch(saved[key]) is None
-                     or saved[key] != identity[key] for key in ("document_hash", "source_hash", "manifest_hash"))):
-            raise HextileClientError("Malformed Shader publication recovery", kind="other")
+    def _project_recovery(data: Any, allowed: set[str], required: set[str]) -> dict:
+        """Keep the closed keys. Unknown keys are dropped and are not named."""
+        if type(data) is not dict:
+            raise HextileClientError("Malformed or unbounded Shader recovery receipt", kind="other")
+        return Client._recovery_result({key: data[key] for key in allowed if key in data}, allowed, required)
 
     @staticmethod
     def _workspace_recovery_args(args: Mapping[str, Any], operation: str) -> None:
         base = {"handle", "project_context_witness"}
-        required = (base if operation == "get" else
-                    base | {"change_id", "generation", "content_digest", "studio_surface_id"}
-                    if operation == "recheck" else base | {"generation", "studio_surface_id"})
+        required = base if operation == "get" else base | {"generation", "studio_surface_id"}
         optional = {"change_id"} if operation == "get" else set()
-        if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
+        if operation not in {"get", "stop"} or not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
             raise HextileClientError("Expected closed Shader recovery arguments", kind="other", status_code=422)
         handle = args["handle"]
         if (type(handle) is not str or _WORKSPACE_HANDLE.fullmatch(handle) is None or
@@ -5410,13 +5336,10 @@ class Client:
             if (type(change_id) is not str or len(change_id) > 81 or
                     _WORKSPACE_SUFFIX.fullmatch(suffix) is None or int(suffix) > MAX_WORKSPACE_GENERATION):
                 raise HextileClientError("Invalid Shader change identity", kind="other", status_code=422)
-        if operation in {"recheck", "stop"}:
+        if operation == "stop":
             if (type(args["generation"]) is not int or not 0 <= args["generation"] <= MAX_WORKSPACE_GENERATION or
                     type(args["studio_surface_id"]) is not str or not 1 <= len(args["studio_surface_id"]) <= 256):
                 raise HextileClientError("Invalid Shader recovery generation", kind="other", status_code=422)
-        if operation == "recheck" and (type(args["content_digest"]) is not str or
-                                       _WORKSPACE_DIGEST.fullmatch(args["content_digest"]) is None):
-            raise HextileClientError("Invalid Shader recovery digest", kind="other", status_code=422)
 
     def get_shader_proposal_status(self, args: Mapping[str, Any]) -> dict:
         if (not isinstance(args, Mapping) or set(args) != {"ticket_id", "project_context_witness"} or
@@ -5439,41 +5362,36 @@ class Client:
         self._workspace_recovery_args(args, "get")
         handle = args["handle"]
         witness = args["project_context_witness"]
+        attachment_allowed = {"handle", "generation", "attachment_state", "studio_surface_id",
+                              "mount_generation", "project_context_witness", "base", "change_id",
+                              "activity", "human_values", "human_values_recovery_required"}
         attachment = self._shader_workspace_request("GET", f"/api/agent/shader-workspaces/{handle}/attachment",
                                                     params={"project_context_witness": witness})
-        attachment = self._recovery_result(attachment,
-            {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
-             "project_context_witness", "base", "candidate_id", "change_id", "activity",
-             "human_values", "human_values_recovery_required", "human_document"},
+        attachment = self._project_recovery(attachment, attachment_allowed,
             {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
         self._workspace_human_values(attachment)
-        self._workspace_human_document(attachment)
         if attachment["handle"] != handle or attachment["project_context_witness"] != witness:
             raise HextileClientError("Shader attachment identity changed", kind="workspace_outcome_unknown")
         change_id = args.get("change_id") or attachment.get("change_id")
         receipt = None
         if change_id is not None:
-            raw = self.get_shader_update({"handle": handle, "change_id": change_id,
-                                          "project_context_witness": witness})
-            # Already validated. Keep it off the closed 32 KiB recovery check so a
-            # long loss list still passes through, and absence stays absent.
+            quoted = urllib.parse.quote(change_id, safe="")
+            raw = self._shader_workspace_request(
+                "GET", f"/api/agent/shader-workspaces/{handle}/updates/{quoted}",
+                params={"project_context_witness": witness})
             merge = raw.pop("merge") if type(raw) is dict and "merge" in raw else None
-            allowed = {"handle", "change_id", "candidate_id", "generation", "content_digest", "shader",
-                       "base", "project_context_witness", "studio_surface_id", "check_attempt",
-                       "attachment_state", "prepare", "compile", "preview", "presentation", "save",
-                       "check_deadline_at", "next_poll_ms", "reason", "saved", "diagnostics",
-                       "attribution_outcome", "publication", "human_document"}
-            raw = self._recovery_result(raw, allowed | {"raw_log"},
-                                        {"handle", "change_id", "candidate_id", "generation",
-                                         "content_digest", "check_attempt", "save"})
-            self._workspace_publication(raw)
-            self._workspace_human_document(raw)
+            if merge is not None:
+                _merge_rows(merge)
+            allowed = {"handle", "change_id", "generation", "content_digest", "shader", "base",
+                       "project_context_witness", "studio_surface_id", "attachment_state", "prepare",
+                       "compile", "save", "next_poll_ms", "reason", "saved", "diagnostics",
+                       "attribution_outcome"}
+            raw = self._project_recovery(raw, allowed | {"raw_log"},
+                                        {"handle", "change_id", "generation", "content_digest", "save"})
             if (raw["handle"] != handle or raw["change_id"] != change_id or
                     raw.get("project_context_witness") != witness or
-                    raw.get("studio_surface_id") != attachment["studio_surface_id"] or
-                    type(raw["generation"]) is not int or raw["generation"] > attachment["generation"] or
-                    (attachment.get("change_id") == change_id and
-                     attachment.get("candidate_id") != raw["candidate_id"])):
+                    raw.get("studio_surface_id") != attachment.get("studio_surface_id") or
+                    type(raw["generation"]) is not int or raw["generation"] > attachment["generation"]):
                 raise HextileClientError("Shader workspace changed during recovery; read again",
                                          kind="workspace_outcome_unknown")
             receipt = {key: raw[key] for key in allowed if key in raw and key != "diagnostics"}
@@ -5482,36 +5400,6 @@ class Client:
         return self._recovery_result({"schema": 1, "attachment": {key: attachment[key] for key in attachment
             if key != "activity"}, "receipt": receipt}, {"schema", "attachment", "receipt"},
             {"schema", "attachment", "receipt"})
-
-    def recheck_shader_update(self, args: Mapping[str, Any]) -> dict:
-        self._workspace_recovery_args(args, "recheck")
-        handle, change_id = args["handle"], args["change_id"]
-        body = {key: args[key] for key in ("generation", "content_digest", "studio_surface_id",
-                                           "project_context_witness")}
-        try:
-            result = self._shader_workspace_request("POST",
-                f"/api/agent/shader-workspaces/{handle}/updates/{urllib.parse.quote(change_id, safe='')}/recheck", body)
-        except HextileClientError as exc:
-            if exc.kind in {"app_down", "workspace_outcome_unknown"} or exc.status_code is None or exc.status_code >= 500:
-                raise HextileClientError("Shader recheck outcome unknown; read the same workspace and change before any retry.",
-                                         kind="workspace_outcome_unknown",
-                                         receipt={"handle": handle, "change_id": change_id}) from exc
-            raise
-        result = self._recovery_result(result,
-            {"handle", "change_id", "candidate_id", "generation", "content_digest", "shader", "base",
-             "project_context_witness", "studio_surface_id", "check_attempt", "attachment_state", "prepare",
-             "compile", "preview", "presentation", "save", "diagnostics", "reason", "saved",
-             "check_deadline_at", "next_poll_ms", "attribution_outcome", "publication"},
-            {"handle", "change_id", "candidate_id", "generation", "content_digest", "check_attempt"})
-        self._workspace_publication(result)
-        if (result["handle"] != handle or result["change_id"] != change_id or
-                result["generation"] != args["generation"] or result["content_digest"] != args["content_digest"] or
-                result.get("studio_surface_id") != args["studio_surface_id"] or
-                result.get("project_context_witness") != args["project_context_witness"]):
-            raise HextileClientError("Shader recheck acknowledgement unknown; read the original change",
-                                     kind="workspace_outcome_unknown",
-                                     receipt={"handle": handle, "change_id": change_id})
-        return {key: value for key, value in result.items() if key != "diagnostics"}
 
     def stop_shader_workspace(self, args: Mapping[str, Any]) -> dict:
         self._workspace_recovery_args(args, "stop")
@@ -5524,13 +5412,11 @@ class Client:
                 raise HextileClientError("Shader stop outcome unknown; read the same workspace before any retry.",
                                          kind="workspace_outcome_unknown", receipt={"handle": handle}) from exc
             raise
-        result = self._recovery_result(result,
+        result = self._project_recovery(result,
             {"handle", "generation", "attachment_state", "studio_surface_id", "mount_generation",
-             "project_context_witness", "base", "human_values", "human_values_recovery_required",
-             "human_document"},
+             "project_context_witness", "base", "human_values", "human_values_recovery_required"},
             {"handle", "generation", "attachment_state", "studio_surface_id", "project_context_witness"})
         self._workspace_human_values(result)
-        self._workspace_human_document(result)
         if (result["handle"] != handle or result["generation"] != args["generation"] or
                 result["project_context_witness"] != args["project_context_witness"] or
                 result["studio_surface_id"] != args["studio_surface_id"] or

@@ -155,6 +155,7 @@ EXPECTED_TOOLS = (
     "get_shader_context",
     "get_shader_parameters",
     "set_shader_parameter",
+    "shader_edit",
     "propose_shader",
     "control_shader_timeline",
     "preflight_shader_sequence",
@@ -270,7 +271,9 @@ def test_open4_annotations_partition() -> None:
     assert "get_shader_context" in _READ_ONLY
     assert "get_shader_parameters" in _READ_ONLY
     assert "set_shader_parameter" in _MUTATING
+    assert "shader_edit" in _MUTATING
     assert "set_shader_parameter" not in _DESTRUCTIVE
+    assert "shader_edit" not in _DESTRUCTIVE
     assert "propose_shader" in _MUTATING
     assert "propose_shader" not in _DESTRUCTIVE
     assert "get_shader_update" in _READ_ONLY
@@ -425,7 +428,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 130 and len(SHADER_EXTENSION_TOOLS) == 49
+    assert len(TOOLS) == 133 and len(SHADER_EXTENSION_TOOLS) == 48
 
 
 def test_trusted_local_file_contract() -> None:
@@ -1209,7 +1212,6 @@ def test_mcp_tools_list_rpc() -> None:
     )
     assert resp is not None
     names = [t["name"] for t in resp["result"]["tools"]]
-    assert names == list(EXPECTED_TOOLS) + [tool["name"] for tool in SHADER_EXTENSION_TOOLS]
     assert set(server._handlers) == set(names)
     discovered = {tool["name"]: tool for tool in resp["result"]["tools"]}
     opened = discovered["open_shader_workspace"]["inputSchema"]
@@ -1220,27 +1222,28 @@ def test_mcp_tools_list_rpc() -> None:
     assert "oneOf" not in created and "oneOf" not in timeline
     assert {"request_id", "project_context_witness", "action", "template_id", "space", "source", "title"} <= set(created["properties"])
     assert {"operation", "client_request_id", "action", "time_seconds", "witness"} <= set(timeline["properties"])
-    assert opened["properties"]["workspace_schema"] == {"type": "integer", "const": 2, "default": 2}
-    assert "workspace_schema" not in opened["required"]
-    assert got["properties"]["include_source_diagnostics"] == {"type": "boolean", "default": False}
-    legacy = {"shader": {"origin": "project", "shaderId": "test"}, "project_context_witness": "wit",
-              "studio_surface_id": "surface", "expected_working_revision": 1,
-              "expected_document_hash": "sha256:" + "ab" * 32, "expected_source_hash": "sha256:" + "cd" * 32}
-    absent = {key: value for key, value in {**legacy, "workspace_schema": 2}.items() if not key.startswith("expected_")}
-    for args in (legacy, {**legacy, "workspace_schema": 2}, absent):
-        jsonschema.validate(args, opened)
-    for schema in (opened, got, registered):
+    edited = discovered["shader_edit"]["inputSchema"]
+    package = {"shader_id": "aurora", "request_id": "req-1"}
+    digest = "sha256:" + "ab" * 32
+    lease = {"holder": "agent", "generation": 0}
+    assert set(opened["required"]) == {"shader_id", "request_id"}
+    assert set(opened["properties"]) == {"shader_id", "request_id"}
+    assert set(got["required"]) == {"shader_id", "request_id"}
+    assert set(registered["required"]) == {"shader_id", "request_id", "digest", "lease"}
+    assert set(registered["properties"]) == {"shader_id", "request_id", "digest", "lease", "seen"}
+    assert set(edited["required"]) == {"shader_id", "request_id", "edits"}
+    assert set(edited["properties"]) == {"shader_id", "request_id", "edits", "lease", "seen"}
+    jsonschema.validate(package, opened)
+    jsonschema.validate(package, got)
+    jsonschema.validate({**package, "digest": digest, "lease": lease}, registered)
+    jsonschema.validate({**package, "edits": [{"op": "set", "address": ["parameters", "fog"], "value": 0.2}]}, edited)
+    for schema in (opened, got, registered, edited):
         assert schema["additionalProperties"] is False
-        assert not {"apply", "approved", "git", "source", "path", "complete_candidate"} & schema["properties"].keys()
-    for args in ({**absent, "workspace_schema": 3}, {**absent, "expected_working_revision": 1}):
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(args, opened)
-    update = {"handle": "sw_test", "change_id": "sw_test:1", "project_context_witness": "wit"}
-    for args in (update, {**update, "include_source_diagnostics": False}, {**update, "include_source_diagnostics": True}):
-        jsonschema.validate(args, got)
-    for flag in (1, "true", None):
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate({**update, "include_source_diagnostics": flag}, got)
+        assert not {"apply", "approved", "git", "source", "path", "complete_candidate", "handle", "change_id"} & schema["properties"].keys()
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**package, "handle": "workspace_1"}, opened)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**package, "edits": []}, edited)
     assert not any("git" in name or name in {"apply_shader", "compile_shader", "read_resource"} for name in names)
     assert discovered["get_shader_update"]["annotations"]["readOnlyHint"] is True
     assert discovered["open_shader_workspace"]["annotations"]["readOnlyHint"] is False
@@ -1248,6 +1251,7 @@ def test_mcp_tools_list_rpc() -> None:
     for method in ("resources/list", "resources/read"):
         response = server.handle_rpc({"jsonrpc": "2.0", "id": 2, "method": method, "params": {}})
         assert response["error"]["code"] == -32601
+    assert names == list(EXPECTED_TOOLS) + [tool["name"] for tool in SHADER_EXTENSION_TOOLS]
 
 
 def test_mcp_initialize() -> None:
@@ -1271,7 +1275,7 @@ def test_mcp_initialize() -> None:
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]
     assert 'get_live_context(view="shader")' in instructions
-    assert "original IDs" in instructions and "workflow-schema" in instructions
+    assert "lost_to_human" in instructions and "workflow-schema" in instructions
     guidance = load_guide("workflow-schema", detail=True)["markdown"]
     for term in ("executable_capabilities", "execution_ready", "conventions/1", "modulation/2",
                  "keyboard/mouse", "MIDI/OSC/gamepad", "preflight_shader_sequence",
@@ -1506,8 +1510,8 @@ def test_get_guide_reads_real_markdown() -> None:
         prose = page["markdown"]
         assert "A workflow starts with get_capabilities." in prose
         assert "does not call get_capabilities." in prose
-        assert "Ready Shader candidates can be applied and saved through the native writer." in prose
-        assert "Register checks a candidate and never synthesizes Apply." in prose
+        assert "Shader package edits use shader_edit or register_shader_update." in prose
+        assert "Read merge. Watch compile. Only the human moves the lease." in prose
         assert "shader_request_preview, then shader_get_preview with image true as the 512px RGB display image, then shader_preflight_still_export, then shader_export_still using that preflight_request_id." in prose
         assert "A sequence is preflight_shader_sequence then render_shader_sequence." in prose
         assert "same saved hashes and the same frozen inputs." in prose
@@ -1581,8 +1585,10 @@ def test_get_guide_field_lookup_uses_closed_shader_schemas() -> None:
     assert "answer" not in unknown
     assert 1 <= len(unknown["nearest"]) <= 5
     opened = next(tool["description"] for tool in TOOLS if tool["name"] == "open_shader_workspace")
-    assert opened == "Reuse the original request id. Leave Apply to the human. Treat an unknown reply as unknown."
-    for phrase in ("Attach native files", "materialize", "authoring.md", "before attaching", "source-modules/1"):
+    assert opened.startswith("Open one Shader workspace. Send shader_id and request_id only.")
+    assert "recorded result" in opened
+    for phrase in ("Attach native files", "materialize", "authoring.md", "before attaching", "source-modules/1",
+                   "Leave Apply to the human"):
         assert phrase not in opened
     local = Client(opener=lambda *a, **k: pytest.fail("field lookup needs no HTTP"))
     local.post_activity = mock.Mock()
