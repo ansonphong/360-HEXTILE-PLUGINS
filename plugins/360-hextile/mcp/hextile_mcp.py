@@ -1942,27 +1942,6 @@ TOOLS: list[dict[str, Any]] = [
         required=["pipeline_id", "model_id", "expected_queue_entry_id"],
     ),
     _tool_def(
-        "search_docs",
-        "Search the public 360 Hextile docs bundled with this APP version. "
-        "Returns page/section hits with URLs; then call read_doc for the text.",
-        {
-            "query": {"type": "string", "minLength": 1, "maxLength": 200},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 10},
-        },
-        required=["query"],
-    ),
-    _tool_def(
-        "read_doc",
-        "Read one docs page or one section (anchor from search_docs). "
-        "Long pages return an outline; request a section. If the APP is closed, "
-        'use get_guide(name="website-index") and https://360hextile.com/llms.txt.',
-        {
-            "path": {"type": "string", "minLength": 1, "maxLength": 200},
-            "section": {"type": "string", "maxLength": 200},
-        },
-        required=["path"],
-    ),
-    _tool_def(
         "get_guide",
         "Read bundled agent documentation (schema, best practices, "
         "website index, recipes, shader cookbook). Pass name, or omit to list guides.",
@@ -1991,6 +1970,27 @@ TOOLS: list[dict[str, Any]] = [
                 ),
             },
         },
+    ),
+    _tool_def(
+        "search_docs",
+        "Search the public 360 Hextile docs bundled with this APP version. "
+        "Returns page/section hits with URLs; then call read_doc for the text.",
+        {
+            "query": {"type": "string", "minLength": 1, "maxLength": 200},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+        },
+        required=["query"],
+    ),
+    _tool_def(
+        "read_doc",
+        "Read one docs page or one section (anchor from search_docs). "
+        "Long pages return an outline; request a section. If the APP is closed, "
+        'use get_guide(name="website-index") and https://360hextile.com/llms.txt.',
+        {
+            "path": {"type": "string", "minLength": 1, "maxLength": 200},
+            "section": {"type": "string", "maxLength": 200},
+        },
+        required=["path"],
     ),
     _tool_def(
         "extract_sequence_video",
