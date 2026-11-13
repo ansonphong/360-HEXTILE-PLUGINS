@@ -1853,6 +1853,58 @@ def test_modulation_schema_refuses_malformed_batches(change: str) -> None:
         jsonschema.validate(proposal, _schema("propose_shader")["inputSchema"])
 
 
+def _board_candidate(ident: str) -> dict[str, Any]:
+    return {
+        "candidate_id": ident,
+        "complete_candidate": {"source": "x", "values": {}, "capture_defaults": {},
+                               "output": {}, "space": "direction_360", "extensions": {}},
+        "explanation": "One look",
+    }
+
+
+def _variation_board(count: int) -> dict[str, Any]:
+    base = {**_proposal()["base"], "frozen_capture_hash": "sha256:" + "ef" * 32}
+    return {"kind": "shader_variation_board", "board_id": "board-1", "base": base,
+            "candidates": [_board_candidate(f"row-{index}") for index in range(count)]}
+
+
+def test_variation_board_schema_matches_the_app_route() -> None:
+    sys.path.insert(0, str(ROOT.parents[2] / "360-HEXTILE-APP"))
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+    from backend.api.routes.agent_shader_proposals import (
+        MAX_BOARD_CANDIDATES, _reject_proposal_caps, parse_shader_proposal,
+    )
+
+    schema = _schema("propose_shader")["inputSchema"]
+    assert schema["properties"]["candidates"]["maxItems"] == MAX_BOARD_CANDIDATES == 4
+    board = _variation_board(4)
+    parse_shader_proposal(board)
+    jsonschema.validate(board, schema)
+    missing = _variation_board(1)
+    del missing["candidates"][0]["candidate_id"]
+    with pytest.raises(ValidationError):
+        parse_shader_proposal(missing)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(missing, schema)
+    extra = _variation_board(5)
+    parsed = parse_shader_proposal(extra)
+    with pytest.raises(HTTPException) as capped:
+        _reject_proposal_caps(parsed)
+    assert capped.value.status_code == 413
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(extra, schema)
+    client = mock.Mock()
+    client.propose_shader.return_value = {"ticket_id": "spt_board", "kind": "shader_variation_board"}
+    assert HextileMcpServer(client=client)._propose_shader(board)["ticket_id"] == "spt_board"
+    client.propose_shader.assert_called_once_with(board)
+    for refused in (missing, extra):
+        client.propose_shader.reset_mock()
+        with pytest.raises(HextileClientError):
+            HextileMcpServer(client=client)._propose_shader(refused)
+        client.propose_shader.assert_not_called()
+
+
 def test_client_transports_exact_typed_batch_and_explicit_formula_consent() -> None:
     client = Client()
     metadata = {"modulation": {"definitions": [{"id": "mod_" + "a" * 24, "alias": "MOD1"}],
@@ -2024,6 +2076,10 @@ def test_package_tool_schemas_are_closed() -> None:
         jsonschema.validate(_package_args(edits=[]), edited)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(_package_args(edits=[{"op": "set", "address": "parameters.fog", "value": 1}]), edited)
+    for op in ("set", "create", "reshape"):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(_package_args(edits=[{"op": op, "address": ["parameters", "fog"]}]), edited)
+        jsonschema.validate(_package_args(edits=[{"op": op, "address": ["parameters", "fog"], "value": 1}]), edited)
 
 
 def _capture(monkeypatch, reply):
@@ -2121,9 +2177,11 @@ _SHIPPED_HEADER = re.compile(r"/\*@hextile-shader\n.*?\*/\n", re.S)
 
 def _playable_recipe() -> tuple[list[str], dict[str, Any]]:
     guide = (ROOT / "skills/360-hextile/references/recipes.md").read_text(encoding="utf-8")
-    shader_section = guide.split("## Recipe I — Playable Shaders:", 1)[1]
-    sources = re.findall(r"```glsl\n(.*?)```", shader_section, re.S)
-    document = json.loads(re.search(r"```json\n(.*?)```", shader_section, re.S).group(1))
+    playable = guide.split("## Recipe I — Playable Shaders:", 1)[1]
+    playable = playable.split("\n# Inspect an exact full-quality", 1)[0]
+    sources = re.findall(r"```glsl\n(.*?)```", playable, re.S)
+    recipe_j = playable.split("## Recipe J — Playable Shaders:", 1)[1]
+    document = json.loads(re.search(r"```json\n(.*?)```", recipe_j, re.S).group(1))
     return sources, document
 
 
@@ -2138,6 +2196,7 @@ def test_playable_recipes_match_shipped_sources_and_bound_contracts() -> None:
     shipped = [_SHIPPED_HEADER.sub("", row["candidate"]["source"], count=1) for row in examples]
     assert sources == shipped
     assert validate_shader(document)["hexshader"] == 1
+    assert document["meta"]["title"] == "Enter blast"
     assert document["controls"]["camera"] is None
     assert "vec3 ro = hxCameraPosition;" in sources[0]
     assert "vec3 rd = hxCameraDirection(hx.direction);" in sources[0]

@@ -20,7 +20,7 @@ A package must contain `shader.json`, `source.glsl` and `provenance.json`. Text 
 
 An address is a list of strings, never a dotted path. `["drivers", "tint.r"]` is the driver whose target is `tint.r`. An edit is one of `set`, `create`, `reshape` or `delete`, and it names one unit. Do not replace a parent object.
 
-`shader_edit` posts one batch of those edits. It cannot write `provenance.json`. Typed tools (`set_shader_parameter`, clock and timeline settings, Looks, tags, resources, capture) are the same engine. Send `seen` for every unit a human has edited: `{address, human}` from a read. A unit no human has edited needs none. The same `request_id` returns the recorded result.
+`shader_edit` posts one batch of those edits and returns its own saved commit immediately. Register saves file-workspace changes. `shader_edit` cannot write `provenance.json`. Typed tools (`set_shader_parameter`, clock and timeline settings, Looks, tags, resources, capture) are the same engine. Send `seen` for every unit a human has edited: `{address, human}` from a read. A unit no human has edited needs none. The same `request_id` returns that saved commit.
 
 Open takes `shader_id` and `request_id` only and returns the lease, commit and revision. A workspace with no snapshot also returns `not_adopted`. Register takes the package digest, the lease and `seen`, and saves. Read `merge`. Watch `compile`. Prepare failure returns `prepare: failed` and diagnostics; fix the package and register again with a new request id. `get_shader_update` reads the recorded save. Only `compile` may still change.
 
@@ -58,8 +58,8 @@ The code lease owns the shape. Label, default, min, max, step, clamp, control, o
 
 1. `get_live_context(view="shader")` once. The reply names `shader.origin`, `shader.shader_id`, `lease`, `commit` and `revision`. A builtin is not edited in place; duplicate it into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
 2. `open_shader_workspace` with that `shader_id` and one new `request_id`. Nothing human-side refuses open. The same request id returns the recorded open.
-3. Edit the opened package files, or call `shader_edit` and the typed tools. Recompute the package digest from the member bytes before register. Do not edit `.local/`.
-4. `register_shader_update` with the digest, the lease you were given, and `seen`. Then read `merge` and `compile`.
+3. Call `shader_edit` or the typed tools. `shader_edit` returns its own saved commit immediately. To save edits made in the package files, change those files, not `.local/`, recompute the package digest from the member bytes, and register. Register saves those file-workspace changes.
+4. `register_shader_update` saves file-workspace changes. Send the digest, the lease you were given, and `seen`. Then read `merge` and `compile`. A `shader_edit` batch already returned its commit.
 
 An unknown register reply is read with `get_shader_update` for that same request id. Do not mint a second id for the same save. A repair after `prepare: failed` is a new request id.
 

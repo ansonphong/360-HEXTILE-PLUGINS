@@ -603,6 +603,10 @@ _PACKAGE_EDIT = _shader_closed({
     "value": {},
     "born": {"type": "integer", "minimum": 0},
 }, ("value", "born"))
+_PACKAGE_EDIT["allOf"] = [{
+    "if": {"properties": {"op": {"enum": ["set", "create", "reshape"]}}, "required": ["op"]},
+    "then": {"required": ["value"]},
+}]
 _CREDIT_HASH = {"anyOf": [_WORKSPACE_DIGEST, {"type": "null"}]}
 _CREDIT_PROFILE = {"oneOf": [
     _shader_closed({"id": _WORKSPACE_DIGEST}),
@@ -1128,13 +1132,18 @@ _SHADER_CANDIDATE = _shader_closed({"source": {"type": "string"}, "values": {"ty
     "space": {"enum": ["direction_360", "equirect_map", "ray_360", "shadertoy_image"]}, "extensions": {"type": "object"}})
 _SHADER_SOURCE_EDIT = _shader_closed({"from_utf16": {"type": "integer", "minimum": 0},
     "to_utf16": {"type": "integer", "minimum": 0}, "expected_text": {"type": "string"}, "replacement": {"type": "string"}})
+_BOARD_ROW = _shader_closed({
+    "candidate_id": {"type": "string", "minLength": 1, "pattern": r"^[a-zA-Z0-9_-]+$"},
+    "complete_candidate": _SHADER_CANDIDATE,
+    "explanation": _SHADER_TEXT,
+})
 _SHADER_PROPOSAL_SCHEMA = _layer_object({"kind": {"enum": ["shader_document_candidate", "shader_variation_board"]},
     "base": {"oneOf": [_shader_closed(_SHADER_BASE_PROPERTIES),
         _shader_closed({**_SHADER_BASE_PROPERTIES, "frozen_capture_hash": _SHADER_DIGEST})]},
     "explanation": _SHADER_TEXT, "complete_candidate": _SHADER_CANDIDATE,
     "source_edit": _SHADER_SOURCE_EDIT, "modulation_edits": _SHADER_EDITS,
-    "board_id": _SHADER_TEXT, "candidates": {"type": "array", "minItems": 1,
-        "items": _shader_closed({"complete_candidate": _SHADER_CANDIDATE, "explanation": _SHADER_TEXT})}},
+    "board_id": _SHADER_TEXT, "candidates": {"type": "array", "minItems": 1, "maxItems": 4,
+        "items": _BOARD_ROW}},
     ("kind", "base"))
 _SHADER_PROPOSAL_SCHEMA["oneOf"] = [
     {"properties": {"kind": {"const": "shader_document_candidate"}, "base": _shader_closed(_SHADER_BASE_PROPERTIES)},
@@ -1145,6 +1154,33 @@ _SHADER_PROPOSAL_SCHEMA["oneOf"] = [
         "base": _shader_closed({**_SHADER_BASE_PROPERTIES, "frozen_capture_hash": _SHADER_DIGEST})},
       "required": ["board_id", "candidates"], "not": {"anyOf": [{"required": [field]} for field in
         ("explanation", "complete_candidate", "source_edit", "modulation_edits")]}}]
+
+
+def _closed_board(body: Mapping[str, Any]) -> bool:
+    """Refuse a Variation Board the propose_shader schema would refuse, before HTTP."""
+    if not isinstance(body, Mapping) or body.get("kind") != "shader_variation_board":
+        return True
+    spec = _SHADER_PROPOSAL_SCHEMA["properties"]["candidates"]
+    rows = body.get("candidates")
+    item = spec["items"]
+    if type(rows) is not list or not spec["minItems"] <= len(rows) <= spec["maxItems"]:
+        return False
+    required = set(item["required"])
+    for row in rows:
+        if type(row) is not dict or set(row) != required:
+            return False
+        for key, rule in item["properties"].items():
+            value = row[key]
+            if rule.get("type") == "string":
+                if type(value) is not str or len(value) < rule.get("minLength", 0):
+                    return False
+                pattern = rule.get("pattern")
+                if pattern is not None and re.fullmatch(pattern, value) is None:
+                    return False
+            elif type(value) is not dict:
+                return False
+    return True
+
 
 _LAYER_ID = {"type": "string", "pattern": "^[0-9a-f]{12}([0-9a-f]{20})?$"}
 _LAYER_JOB_ID = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
@@ -4931,6 +4967,8 @@ class HextileMcpServer:
             if banned in args:
                 raise HextileClientError("Shader proposal cannot import, delete, or consume", kind="other")
         validate_shader_proposal(args)
+        if not _closed_board(args):
+            raise HextileClientError("Expected a closed Shader proposal", kind="other")
         return self._shader_ticket_identity(self.client.propose_shader(args))
 
     def _get_shader_parameters(self, args: dict[str, Any]) -> Any:
