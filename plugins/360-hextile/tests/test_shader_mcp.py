@@ -1,4 +1,4 @@
-"""get_shader_context and propose_shader are thin proxies, not apply or import."""
+"""Shader MCP tools use the named v2 doors and bounded receipts."""
 
 from __future__ import annotations
 
@@ -653,20 +653,27 @@ def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> No
     calls = []
     monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
                         calls.append((method, path, body, kwargs)) or
-                        {"schema": 1, "request_id": body["request_id"], "state": "pending",
-                         "operation": {"capture": "shader_set_capture", "clock": "shader_control_clock",
-                                       "frame-step": "shader_step_frame"}[path.rsplit("/", 1)[-1]]})
+                        ({"delivery": "delivered"} if path.endswith("/playback") else
+                         {"schema": 1, "request_id": body["request_id"], "state": "pending",
+                          "operation": "shader_set_capture"}))
     target = {"shader": {"origin": "user", "shaderId": "aurora"},
               "project_context_witness": "witness", "studio_surface_id": "surface",
               "request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e",
               "expected_edit_sequence": 3}
     assert client.set_shader_capture({**target, "action": "live_seed", "seed": 7})["state"] == "pending"
     assert calls[-1][1].endswith("/capture")
-    assert client.control_shader_clock({**target, "action": "align"})["state"] == "pending"
-    assert calls[-1][1].endswith("/clock")
-    assert client.step_shader_frame({**target, "direction": 1, "owner": {"owner_id": "view",
-        "owner_generation": 1, "viewer_generation": 2, "source_epoch": 3}})["state"] == "pending"
-    assert calls[-1][1].endswith("/frame-step")
+    playback = {key: target[key] for key in ("shader", "project_context_witness", "request_id")}
+    assert client.control_shader_clock({**playback, "action": "play"})["state"] == "applied"
+    assert calls[-1][1:] == ("/api/shaders/aurora/playback",
+                           {"origin": "user", "action": "play", "request_id": target["request_id"]}, {})
+    assert client.control_shader_clock({**playback, "action": "seek", "time": 2.5})["state"] == "applied"
+    assert calls[-1][2]["time"] == 2.5
+    assert client.step_shader_frame({**playback, "direction": 1})["state"] == "applied"
+    assert calls[-1][2]["action"] == "step" and calls[-1][2]["direction"] == 1
+    with pytest.raises(HextileClientError):
+        client.control_shader_clock({**playback, "action": "reanchor", "bpm": 120})
+    with pytest.raises(HextileClientError):
+        client.step_shader_frame({**playback, "direction": 0})
     with pytest.raises(HextileClientError):
         client.set_shader_capture({**target, "action": "live_seed", "seed": 7, "actor": "human"})
 
@@ -783,14 +790,14 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     names = {tool["name"] for tool in SHADER_EXTENSION_TOOLS}
     assert {"shader_list_assets", "shader_get_history", "shader_get_looks",
             "shader_get_project_conventions"} <= names
-    assert "shader_get_proposal" in names
+    assert "shader_get_proposal" not in names
     assert "shader_get_workspace" not in names
     assert "shader_stop_workspace" not in names
     assert "shader_recheck_update" not in names
     assert "shader_edit" in {tool["name"] for tool in TOOLS}
     assert "shader_edit" not in names
     assert {"shader_get_asset_state", "shader_rename_asset", "shader_delete_asset",
-            "shader_open_asset", "shader_save_asset", "shader_create_asset", "shader_fork_asset",
+            "shader_open_asset", "shader_create_asset", "shader_fork_asset",
             "shader_duplicate_asset",
             "shader_save_as", "shader_import_bundle", "shader_get_operation"} <= names
     assert {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look",
@@ -842,8 +849,7 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     sent = []
     monkeypatch.setattr(client, "request_json", lambda method, path, payload:
                         sent.append((method, path, payload)) or {"request_id": request_id,
-                            "operation": "shader_save_asset" if path.endswith("/save") else
-                                         "shader_save_as" if path.endswith("/save-as") else "shader_open_asset",
+                            "operation": "shader_save_as" if path.endswith("/save-as") else "shader_open_asset",
                             "state": "applied"})
     assert client.delete_shader_asset(body)["state"] == "applied"
     assert sent == [("POST", "/api/shaders/agent-operations/delete", body)]
@@ -857,11 +863,6 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     with pytest.raises(HextileClientError):
         client.open_shader_asset({**mounted, "target": ref})
     save = {key: value for key, value in mounted.items() if key != "target"}
-    assert client.save_shader_asset(save)["state"] == "applied"
-    assert sent[-1] == ("POST", "/api/shaders/agent-operations/save", save)
-    builtin_save = {**save, "shader": {"origin": "builtin", "shaderId": "hx_starter"}}
-    assert client.save_shader_asset(builtin_save)["state"] == "applied"  # APP owns the developer-mode gate
-    assert sent[-1] == ("POST", "/api/shaders/agent-operations/save", builtin_save)
     as_copy = {**save, "title": "A copy"}
     assert client.save_shader_as(as_copy)["state"] == "applied"
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/save-as", as_copy)
@@ -1337,43 +1338,8 @@ def _operations() -> list[dict[str, Any]]:
     ]
 
 
-def test_closed_modulation_catalog_and_existing_alternatives() -> None:
-    schema = _schema("propose_shader")["inputSchema"]
-    for operation in _operations():
-        proposal = _proposal()
-        proposal["modulation_edits"]["edits"] = [operation]
-        jsonschema.validate(proposal, schema)
-    for field, value in (("source_edit", {"from_utf16": 0, "to_utf16": 0,
-                                         "expected_text": "", "replacement": "x"}),
-                         ("complete_candidate", {"source": "x", "values": {}, "capture_defaults": {},
-                          "output": {}, "space": "direction_360", "extensions": {}})):
-        proposal = _proposal()
-        del proposal["modulation_edits"]
-        proposal[field] = value
-        jsonschema.validate(proposal, schema)
-    variants = schema["properties"]["modulation_edits"]["oneOf"][0]["properties"]["edits"]["items"]["oneOf"]
-    assert {variant["properties"]["op"]["const"] for variant in variants} == {op["op"] for op in _operations()}
 
 
-@pytest.mark.parametrize("change", ["xor", "none", "unknown", "partial", "foreign", "null",
-                                     "count", "reference", "definition_id", "boolean"])
-def test_modulation_schema_refuses_malformed_batches(change: str) -> None:
-    proposal = _proposal()
-    edit = proposal["modulation_edits"]["edits"][0]
-    if change == "xor": proposal["source_edit"] = {}
-    elif change == "none": del proposal["modulation_edits"]
-    elif change == "unknown": edit["op"] = "arm"
-    elif change == "partial": del edit["value"]["abi"]
-    elif change == "foreign": edit["value"]["armed"] = True
-    elif change == "null": proposal["modulation_edits"] = None
-    elif change == "count": proposal["modulation_edits"]["edits"] *= 33
-    elif change == "reference": proposal["modulation_edits"]["edits"] = [{"op": "remove_source", "source": "MOD1"}]
-    elif change == "definition_id":
-        proposal["modulation_edits"]["edits"] = [_operations()[0]]
-        proposal["modulation_edits"]["edits"][0]["definition"]["id"] = "mod_" + "a" * 24
-    elif change == "boolean": edit["value"]["enabled"] = 1
-    with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(proposal, _schema("propose_shader")["inputSchema"])
 
 
 def _board_candidate(ident: str) -> dict[str, Any]:
@@ -1391,151 +1357,13 @@ def _variation_board(count: int) -> dict[str, Any]:
             "candidates": [_board_candidate(f"row-{index}") for index in range(count)]}
 
 
-def test_variation_board_schema_matches_the_app_route() -> None:
-    sys.path.insert(0, str(ROOT.parents[2] / "360-HEXTILE-APP"))
-    from fastapi import HTTPException
-    from pydantic import ValidationError
-    from backend.api.routes.agent_shader_proposals import (
-        MAX_BOARD_CANDIDATES, _reject_proposal_caps, parse_shader_proposal,
-    )
-
-    schema = _schema("propose_shader")["inputSchema"]
-    assert schema["properties"]["candidates"]["maxItems"] == MAX_BOARD_CANDIDATES == 4
-    board = _variation_board(4)
-    parse_shader_proposal(board)
-    jsonschema.validate(board, schema)
-    missing = _variation_board(1)
-    del missing["candidates"][0]["candidate_id"]
-    with pytest.raises(ValidationError):
-        parse_shader_proposal(missing)
-    with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(missing, schema)
-    extra = _variation_board(5)
-    parsed = parse_shader_proposal(extra)
-    with pytest.raises(HTTPException) as capped:
-        _reject_proposal_caps(parsed)
-    assert capped.value.status_code == 413
-    with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(extra, schema)
-    client = mock.Mock()
-    client.propose_shader.return_value = {"ticket_id": "spt_board", "kind": "shader_variation_board"}
-    assert HextileMcpServer(client=client)._propose_shader(board)["ticket_id"] == "spt_board"
-    client.propose_shader.assert_called_once_with(board)
-    for refused in (missing, extra):
-        client.propose_shader.reset_mock()
-        with pytest.raises(HextileClientError):
-            HextileMcpServer(client=client)._propose_shader(refused)
-        client.propose_shader.assert_not_called()
 
 
-def test_client_transports_exact_typed_batch_and_explicit_formula_consent() -> None:
-    client = Client()
-    metadata = {"modulation": {"definitions": [{"id": "mod_" + "a" * 24, "alias": "MOD1"}],
-                               "bindings": [], "mouse_input": {"schema": 1, "enabled": True, "abi": "hx-mouse/1"}}}
-    with mock.patch.object(client, "get_json", return_value=metadata) as get:
-        assert client.get_shader_context(origin="user", shader_id="aurora", project_context_witness="wit") == metadata
-        assert get.call_args.kwargs["params"]["include_source"] == "false"
-        assert get.call_args.kwargs["params"]["include_formula"] == "false"
-        assert "source" not in metadata
-        client.get_shader_context(origin="user", shader_id="aurora", project_context_witness="wit",
-                                  include_source=True, include_formula=True)
-        assert get.call_args.kwargs["params"]["include_source"] == "true"
-        assert get.call_args.kwargs["params"]["include_formula"] == "true"
-    proposal = _proposal()
-    original = deepcopy(proposal)
-    with mock.patch.object(client, "post_json", return_value={"ticket_id": "spt_abc"}) as post:
-        client.propose_shader(proposal)
-        assert post.call_args.args == ("/api/agent/shader-proposals", original)
-        assert proposal == original
-        for malformed in ({**proposal, "source_edit": {}}, {**proposal, "foreign": True},
-                          {**proposal, "modulation_edits": {"schema": 1, "edits": [proposal["modulation_edits"]["edits"][0]] * 33}},
-                          {**proposal, "modulation_edits": {"schema": 1, "edits": [{"op": "arm"}]}},
-                          {**proposal, "modulation_edits": {"schema": 1, "edits": [{"op": "set_label", "source": {"id": "mod_" + "a" * 24}, "label": "x" * 65537}]}}):
-            with pytest.raises(HextileClientError): client.propose_shader(malformed)
-        assert post.call_count == 1
-
-def test_shader_tool_schemas_cannot_import_delete_or_consume() -> None:
-    for name in ("get_shader_context", "propose_shader"):
-        schema = _schema(name)["inputSchema"]
-        assert schema["additionalProperties"] is False
-        assert not {"import", "delete", "accept", "consume", "config_partial", "path"} & set(schema["properties"])
-    assert _schema("get_shader_context")["annotations"]["readOnlyHint"] is True
-    assert _schema("propose_shader")["annotations"]["readOnlyHint"] is False
-    assert _schema("propose_shader")["annotations"]["destructiveHint"] is False
-    assert _schema("get_shader_context")["inputSchema"]["properties"]["include_source"]["default"] is False
 
 
-def test_shader_client_calls_context_and_proposal_only() -> None:
-    seen: list[Any] = []
-
-    class Response:
-        status = 200
-
-        def read(self) -> bytes:
-            return b'{"ticket_id":"spt_abc","kind":"shader_document_candidate","ready":true,"source":"secret"}'
-
-        def __enter__(self) -> "Response":
-            return self
-
-        def __exit__(self, *_exc: object) -> None:
-            return None
-
-    def opener(req: Any, timeout: Any = None) -> Response:
-        del timeout
-        seen.append(req)
-        return Response()
-
-    client = Client(opener=opener)
-    client.get_shader_context(
-        origin="user", shader_id="aurora", project_context_witness="wit", include_source=False,
-    )
-    client.propose_shader(_proposal())
-    assert [req.get_method() for req in seen] == ["GET", "POST"]
-    assert seen[0].full_url.startswith("http://127.0.0.1:8000/api/agent/shader-context?")
-    assert "include_source=false" in seen[0].full_url
-    assert seen[0].get_header("X-hextile-agent") == "mcp"
-    assert seen[0].get_header("X-hextile-project-witness") == "wit"
-    assert seen[1].full_url == "http://127.0.0.1:8000/api/agent/shader-proposals"
-    assert seen[1].get_header("X-hextile-agent") == "mcp"
-    body = json.loads(seen[1].data)
-    assert body["kind"] == "shader_document_candidate"
-    assert all("imports" not in req.full_url and "consume" not in req.full_url for req in seen)
-    with pytest.raises(HextileClientError):
-        client.propose_shader({"kind": "config_partial", "config_partial": {"gain": 1}})
-    with pytest.raises(HextileClientError):
-        client.propose_shader({"kind": "shader_document_candidate", "base": {}, "consume": True})
 
 
-def test_shader_handlers_return_context_and_ticket_identity() -> None:
-    client = mock.Mock()
-    client.get_shader_context.return_value = {"source_hash": "sha256:" + "ab" * 32, "manifest": {}}
-    client.propose_shader.return_value = {
-        "ticket_id": "spt_abc", "kind": "shader_document_candidate", "ready": True,
-        "shader": {"origin": "user", "shaderId": "aurora"},
-        "complete_candidate": {"source": "secret"},
-    }
-    server = HextileMcpServer(client=client)
-    context = server._get_shader_context({
-        "origin": "user", "shader_id": "aurora", "project_context_witness": "wit",
-        "include_source": False,
-    })
-    assert context["manifest"] == {}
-    client.get_shader_context.assert_called_once_with(
-        origin="user", shader_id="aurora", project_context_witness="wit",
-        include_source=False, include_formula=False, working_revision=None,
-    )
-    identity = server._propose_shader(_proposal())
-    assert identity == {
-        "ticket_id": "spt_abc", "kind": "shader_document_candidate",
-        "shader": {"origin": "user", "shaderId": "aurora"}, "ready": False,
-    }
-    assert "complete_candidate" not in identity
-    with pytest.raises(HextileClientError):
-        server._propose_shader({"kind": "shader_document_candidate", "base": {}, "accept": True})
-    with pytest.raises(HextileClientError):
-        server._get_shader_context({
-            "origin": "user", "shader_id": "aurora", "project_context_witness": "wit", "import": True,
-        })
+
 
 
 def _lease() -> dict[str, Any]:
@@ -1755,11 +1583,8 @@ def test_playable_recipe_variants_use_real_intrinsic_admission(variant: str) -> 
 def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls() -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     context = _schema("get_shader_context")["description"]
-    proposal = _schema("propose_shader")["description"]
     workspace = _schema("open_shader_workspace")["description"]
     assert "source-free" in context and "include_formula selects" in context
-    assert "every Board row" in proposal and "preserve" in proposal
-    assert "envelope" in proposal and "Credits card" in proposal
     assert "shader_id and request_id" in workspace
     assert "lease, commit and revision" in workspace
     assert "recorded result" in workspace
@@ -1768,9 +1593,7 @@ def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls()
     assert "conventions/1" in detail and "modulation/2" in detail
     assert "hxCameraDirection(vec3 canonicalDirection)" in detail
     assert "never arms Interact" in detail
-    operations = _schema("propose_shader")["inputSchema"]["properties"]["modulation_edits"]
-    assert {variant["properties"]["schema"]["const"] for variant in operations["oneOf"]} == {1, 2}
-    assert all(variant["additionalProperties"] is False for variant in operations["oneOf"])
+    assert not {"propose_shader", "shader_get_proposal", "shader_save_asset"} & {tool["name"] for tool in TOOLS}
     assert not {"press_key", "set_pose", "arm_interact", "save_project_convention"} & {tool["name"] for tool in TOOLS}
     source = (ROOT / "skills/360-hextile/SKILL.md").read_text(encoding="utf-8")
     fragment = (ROOT / "codex/AGENTS-fragment.md").read_text(encoding="utf-8")

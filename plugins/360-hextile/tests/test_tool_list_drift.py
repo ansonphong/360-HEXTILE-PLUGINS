@@ -155,7 +155,6 @@ EXPECTED_TOOLS = (
     "get_shader_context",
     "get_shader_parameters",
     "shader_edit",
-    "propose_shader",
     "preflight_shader_sequence",
     "inspect_shader_sequence_output",
     "render_shader_sequence",
@@ -270,8 +269,6 @@ def test_open4_annotations_partition() -> None:
     assert "get_shader_parameters" in _READ_ONLY
     assert "shader_edit" in _MUTATING
     assert "shader_edit" not in _DESTRUCTIVE
-    assert "propose_shader" in _MUTATING
-    assert "propose_shader" not in _DESTRUCTIVE
     assert "get_shader_update" in _READ_ONLY
     assert "get_shader_doctor" in _READ_ONLY
     assert "request_shader_doctor" in _MUTATING
@@ -424,7 +421,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 131 and len(SHADER_EXTENSION_TOOLS) == 46
+    assert len(TOOLS) == 130 and len(SHADER_EXTENSION_TOOLS) == 44
 
 
 def test_trusted_local_file_contract() -> None:

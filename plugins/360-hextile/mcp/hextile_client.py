@@ -2138,67 +2138,6 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
 
 # Transport shape only. The APP store alone resolves references, checks domains/current ownership,
 # and materializes a canonical candidate; this proxy never generates IDs or replays edits.
-_SHADER_EDIT_FIELDS = {
-    "add_source": ({"definition"}, {"ref"}), "remove_source": ({"source"}, set()),
-    "set_label": ({"source", "label"}, set()), "install_wave": ({"source", "wave"}, set()),
-    "set_expression": ({"source", "source_text"}, set()),
-    "set_setting": ({"source", "setting", "value"}, set()),
-    "set_period_unit": ({"source", "period_unit"}, set()),
-    "set_click": ({"source", "button", "mode"}, set()), "rename_alias": ({"source", "alias"}, set()),
-    "set_source_enabled": ({"source", "enabled"}, set()), "add_binding": ({"binding"}, {"ref"}),
-    "update_binding": ({"binding", "value"}, set()), "remove_binding": ({"binding"}, set()),
-    "set_binding_enabled": ({"binding", "enabled"}, set()), "set_mouse_input": ({"value"}, set()),
-    "set_master_clock": ({"value"}, set()),
-}
-_SHADER_EDIT_FIELDS_V2 = {
-    **_SHADER_EDIT_FIELDS,
-    "set_parameter_expression": ({"target", "source_text", "refs"}, set()),
-    "remove_parameter_expression": ({"target"}, set()),
-    "set_parameter_mode": ({"target", "mode"}, {"binding"}),
-    "set_timeline": ({"start", "end", "loop"}, set()),
-}
-
-
-def validate_shader_proposal(body: Mapping[str, Any]) -> None:
-    """Reject foreign/XOR/oversized transport bodies before a local HTTP request."""
-    def refuse() -> None:
-        raise HextileClientError("Expected a closed Shader proposal", kind="other")
-
-    if not isinstance(body, Mapping):
-        refuse()
-    kind = body.get("kind")
-    if kind == "shader_document_candidate":
-        alternatives = set(body) & {"complete_candidate", "source_edit", "modulation_edits"}
-        if len(alternatives) != 1:
-            refuse()
-        field = next(iter(alternatives))
-        if set(body) != {"kind", "base", "explanation", field} or type(body[field]) is not dict:
-            refuse()
-        if field == "modulation_edits":
-            batch = body[field]
-            if (set(batch) != {"schema", "edits"} or type(batch["schema"]) is not int
-                    or batch["schema"] not in (1, 2) or type(batch["edits"]) is not list or len(batch["edits"]) > 32):
-                refuse()
-            try:
-                size = len(json.dumps(batch, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
-            except (TypeError, ValueError, UnicodeError, RecursionError):
-                refuse()
-            if size > 65536:
-                refuse()
-            for edit in batch["edits"]:
-                fields = _SHADER_EDIT_FIELDS if batch["schema"] == 1 else _SHADER_EDIT_FIELDS_V2
-                if type(edit) is not dict or type(edit.get("op")) is not str or edit["op"] not in fields:
-                    refuse()
-                required, optional = fields[edit["op"]]
-                if not (required | {"op"}) <= edit.keys() or edit.keys() - required - optional - {"op"}:
-                    refuse()
-    elif kind == "shader_variation_board":
-        if set(body) != {"kind", "base", "board_id", "candidates"}:
-            refuse()
-    else:
-        refuse()
-
-
 _DISCOVERY_MAX_BYTES = 256 * 1024
 _CONFIG_MODEL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
 _PIPELINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -3900,15 +3839,6 @@ class Client:
         return self.get_json("/api/agent/shader-parameters",
                              headers=self._shader_parameter_headers(session_id))
 
-    def propose_shader(self, body: Mapping[str, Any]) -> Any:
-        """POST /api/agent/shader-proposals. Does not prepare, consume, import, or delete."""
-        validate_shader_proposal(body)
-        return self.post_json(
-            "/api/agent/shader-proposals",
-            dict(body),
-            headers={"X-Hextile-Agent": "mcp"},
-        )
-
     @staticmethod
     def _shader_sequence_error(exc: HextileClientError, *, uncertain: bool = False) -> HextileClientError:
         code = None
@@ -4562,19 +4492,18 @@ class Client:
 
     def _mounted_shader_action(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
         submitted = args
-        if operation in {"shader_set_capture", "shader_control_clock"} and isinstance(args, Mapping) and "seen" in args:
+        if operation == "shader_set_capture" and isinstance(args, Mapping) and "seen" in args:
             if not _shader_seen(args["seen"]):
                 raise HextileClientError("Malformed seen evidence", kind="other", status_code=422)
             args = {key: args[key] for key in args if key != "seen"}
-        common = {"shader", "project_context_witness", "studio_surface_id", "request_id", "expected_edit_sequence"}
+        common = {"shader", "project_context_witness", "studio_surface_id", "request_id"}
         extras = ({"action", "seed", "capture_defaults"} if operation == "shader_set_capture" else
-                  {"action", "bpm", "speed"} if operation == "shader_control_clock" else
                   {"target"} if operation == "shader_open_asset" else
-                  set() if operation == "shader_save_asset" else
                   {"title"} if operation == "shader_save_as" else
                   {"direction", "owner"})
-        if not isinstance(args, Mapping) or not common <= set(args) or set(args) - common - extras:
+        if not isinstance(args, Mapping) or not common <= set(args) or set(args) - common - extras - {"expected_edit_sequence"}:
             raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
+        keys = set(args) - {"expected_edit_sequence"}
         ref = args["shader"]
         try:
             valid_id = str(uuid.UUID(args["request_id"])) == args["request_id"] and uuid.UUID(args["request_id"]).version == 4
@@ -4585,39 +4514,28 @@ class Client:
                 or type(ref["shaderId"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ref["shaderId"])
                 or any(type(args[key]) is not str or not 1 <= len(args[key]) <= 256
                        for key in ("project_context_witness", "studio_surface_id"))
-                or type(args["expected_edit_sequence"]) is not int or not 0 <= args["expected_edit_sequence"] <= 2**53 - 1):
+                or ("expected_edit_sequence" in args and
+                    (type(args["expected_edit_sequence"]) is not int or not 0 <= args["expected_edit_sequence"] <= 2**53 - 1))):
             raise HextileClientError("Invalid mounted Shader owner", kind="other", status_code=422)
         if operation == "shader_set_capture":
             if args.get("action") == "live_seed":
-                valid = (set(args) == common | {"action", "seed"} and type(args["seed"]) is int
+                valid = (keys == common | {"action", "seed"} and type(args["seed"]) is int
                          and 0 <= args["seed"] <= 0xffffffff)
             else:
-                valid = (args.get("action") == "defaults" and set(args) == common | {"action", "capture_defaults"}
+                valid = (args.get("action") == "defaults" and keys == common | {"action", "capture_defaults"}
                          and type(args["capture_defaults"]) is dict
                          and set(args["capture_defaults"]) == {"frame", "time", "time_delta", "frame_rate",
                                                                 "pointer", "seed", "ray_origin"})
-        elif operation == "shader_control_clock":
-            action = args.get("action")
-            valid = action in {"tap", "align", "reset_master", "reanchor"}
-            if action == "reanchor":
-                valid = valid and bool({"bpm", "speed"} & set(args))
-                valid = valid and all(type(args[key]) in {int, float} and math.isfinite(args[key])
-                                      and (0 < args[key] <= 1000 if key == "bpm" else 0 <= args[key] <= 1024)
-                                      for key in ("bpm", "speed") if key in args)
-            else:
-                valid = valid and set(args) == common | {"action"}
         elif operation == "shader_open_asset":
             target = args.get("target")
-            valid = (set(args) == common | {"target"} and type(target) is dict
+            valid = (keys == common | {"target"} and type(target) is dict
                      and set(target) == {"origin", "shaderId"}
                      and target["origin"] in {"builtin", "user", "project"}
                      and type(target["shaderId"]) is str
                      and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", target["shaderId"]) is not None
                      and target != ref)
-        elif operation == "shader_save_asset":
-            valid = set(args) == common
         elif operation == "shader_save_as":
-            valid = (set(args) in (common, common | {"title"})
+            valid = (keys in (common, common | {"title"})
                      and ("title" not in args or type(args["title"]) is str
                           and 1 <= len(args["title"]) <= 256))
         else:
@@ -4652,17 +4570,47 @@ class Client:
     def set_shader_capture(self, args: Mapping[str, Any]) -> dict:
         return self._mounted_shader_action(args, "shader_set_capture", "/api/shaders/agent-operations/capture")
 
+    def _shader_playback(self, args: Mapping[str, Any], operation: str) -> dict:
+        step = operation == "shader_step_frame"
+        required = {"shader", "project_context_witness", "request_id", "direction" if step else "action"}
+        allowed = required | (set() if step else {"time"})
+        if not isinstance(args, Mapping) or not required <= set(args) or set(args) - allowed:
+            raise HextileClientError("Invalid Shader playback action", kind="other", status_code=422)
+        _native_read_args({key: args[key] for key in ("shader", "project_context_witness")},
+                          {"shader", "project_context_witness"})
+        request_id = args["request_id"]
+        try:
+            valid_id = type(request_id) is str and str(uuid.UUID(request_id)) == request_id and uuid.UUID(request_id).version == 4
+        except (ValueError, TypeError, AttributeError):
+            valid_id = False
+        action = "step" if step else args["action"]
+        if (not valid_id or action not in {"play", "pause", "seek", "step"}
+                or (step and (type(args["direction"]) is not int or args["direction"] not in {-1, 1}))
+                or (not step and ((action == "seek") != ("time" in args)
+                    or "time" in args and (type(args["time"]) not in {int, float}
+                                               or not math.isfinite(args["time"]) or args["time"] < 0)))):
+            raise HextileClientError("Invalid Shader playback action", kind="other", status_code=422)
+        ref = args["shader"]
+        payload = {"origin": ref["origin"], "action": action, "request_id": request_id}
+        if step:
+            payload["direction"] = args["direction"]
+        elif action == "seek":
+            payload["time"] = args["time"]
+        receipt = self.request_json("POST", f"/api/shaders/{ref['shaderId']}/playback", payload)
+        if type(receipt) is not dict or receipt.get("delivery") not in {"delivered", "no_workshop"}:
+            raise HextileClientError("Shader playback delivery unknown; inspect the Workshop before retrying.",
+                                     kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
+        return {"request_id": request_id, "operation": operation, "delivery": receipt["delivery"],
+                "state": "applied" if receipt["delivery"] == "delivered" else "refused"}
+
     def control_shader_clock(self, args: Mapping[str, Any]) -> dict:
-        return self._mounted_shader_action(args, "shader_control_clock", "/api/shaders/agent-operations/clock")
+        return self._shader_playback(args, "shader_control_clock")
 
     def step_shader_frame(self, args: Mapping[str, Any]) -> dict:
-        return self._mounted_shader_action(args, "shader_step_frame", "/api/shaders/agent-operations/frame-step")
+        return self._shader_playback(args, "shader_step_frame")
 
     def open_shader_asset(self, args: Mapping[str, Any]) -> dict:
         return self._mounted_shader_action(args, "shader_open_asset", "/api/shaders/agent-operations/open")
-
-    def save_shader_asset(self, args: Mapping[str, Any]) -> dict:
-        return self._mounted_shader_action(args, "shader_save_asset", "/api/shaders/agent-operations/save")
 
     def save_shader_as(self, args: Mapping[str, Any]) -> dict:
         return self._mounted_shader_action(args, "shader_save_as", "/api/shaders/agent-operations/save-as")
@@ -5079,23 +5027,6 @@ class Client:
         if type(data) is not dict:
             raise HextileClientError("Malformed or unbounded Shader recovery receipt", kind="other")
         return Client._recovery_result({key: data[key] for key in allowed if key in data}, allowed, required)
-
-    def get_shader_proposal_status(self, args: Mapping[str, Any]) -> dict:
-        if (not isinstance(args, Mapping) or set(args) != {"ticket_id", "project_context_witness"} or
-                type(args["ticket_id"]) is not str or not re.fullmatch(r"spt_[0-9a-f]{32}", args["ticket_id"]) or
-                type(args["project_context_witness"]) is not str or not 1 <= len(args["project_context_witness"]) <= 256):
-            raise HextileClientError("Expected closed Shader proposal identity", kind="other", status_code=422)
-        ticket = self.request_json("GET", f"/api/agent/shader-proposals/{args['ticket_id']}",
-                                   headers={"X-Hextile-Agent": "mcp",
-                                            "X-Hextile-Project-Witness": args["project_context_witness"]})
-        if type(ticket) is not dict or ticket.get("ticket_id") != args["ticket_id"]:
-            raise HextileClientError("Malformed Shader proposal status", kind="other")
-        visible = {"ticket_id", "kind", "shader", "project_context_witness", "base", "identity",
-                   "ready", "cancelled", "result", "board_id", "candidates"}
-        if type(ticket.get("ready")) is not bool or ticket.get("project_context_witness") != args["project_context_witness"]:
-            raise HextileClientError("Malformed Shader proposal status", kind="other")
-        return self._recovery_result({key: ticket[key] for key in visible if key in ticket},
-                                     visible, {"ticket_id", "ready", "project_context_witness"})
 
     def get_live_context(
         self,

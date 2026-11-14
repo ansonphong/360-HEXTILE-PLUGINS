@@ -32,7 +32,7 @@ Send `lease` when the edit touches a leased unit: `source.glsl` and the modules 
 
 A modulator or control-channel alias the code still names cannot be renamed or removed; such an edit comes back skipped (format.md P12, T4B.3) — change the code in the same batch to drop the name.
 
-Playback is not an edit. `shader_control_clock` and `shader_step_frame` do not take `seen` and do not save. Changing `bpm`, `speed`, `start`, `end` or `loop` is an edit of the clock or timeline settings.
+Playback is not an edit. `shader_control_clock` delivers `play`, `pause`, or `seek` (with `time` in seconds); `shader_step_frame` delivers `direction` 1 or -1. They return `applied` only after delivery to the mounted Workshop, or `refused` when no Workshop is connected. They do not take `seen` and do not save. If delivery is uncertain, inspect the Workshop before retrying a step. Changing `bpm`, `speed`, `start`, `end` or `loop` is an edit of the clock or timeline settings.
 
 ## Credits and sources
 

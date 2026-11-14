@@ -38,7 +38,6 @@ from hextile_client import (  # noqa: E402
     Client,
     HextileClientError,
     error_payload,
-    validate_shader_proposal,
     validate_shader_doctor,
     validate_shader_workspace,
 )
@@ -147,7 +146,6 @@ TOOL_NAMES = (
     "get_shader_context",
     "get_shader_parameters",
     "shader_edit",
-    "propose_shader",
     "preflight_shader_sequence",
     "inspect_shader_sequence_output",
     "render_shader_sequence",
@@ -303,7 +301,6 @@ _MUTATING = frozenset(
         "land_generated_layer",
         "commit_layer_draft",
         "clone_spot",
-        "propose_shader",
         "shader_edit",
         "render_shader_sequence",
         "control_shader_sequence",
@@ -474,7 +471,6 @@ _GUIDE_ROOT = Path(__file__).resolve().parent.parent / "skills" / "360-hextile" 
 def _annotations(name: str) -> dict[str, bool]:
     if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation",
                                      "shader_get_credits", "shader_research_sources",
-                                     "shader_get_proposal",
                                      "shader_get_library_organization", "shader_get_preview",
                                      "shader_get_output_job"}:
         return {"readOnlyHint": True, "destructiveHint": False}
@@ -1118,65 +1114,6 @@ _FRACTAL_SEQUENCE_CONTROL = {"type": "object", "oneOf": [
 ]}
 _FRACTAL_INSPECT = _shader_closed({"request": _FRACTAL_SEQUENCE_REQUEST,
                                    "destination": _NATIVE_FOLDER_INTENT})
-_SHADER_BASE_PROPERTIES = {"shader": _shader_closed({"origin": {"enum": ["builtin", "user", "project"]}, "shaderId": {"type": "string", "minLength": 1, "pattern": r"^[a-zA-Z0-9_-]+$"}}),
-    "project_context_witness": _SHADER_TEXT, "working_revision": {"type": "integer", "minimum": 1},
-    "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST,
-    "manifest_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]}}
-_SHADER_CANDIDATE = _shader_closed({"source": {"type": "string"}, "values": {"type": "object"},
-    "capture_defaults": {"type": "object"}, "output": {"type": "object"},
-    "space": {"enum": ["direction_360", "equirect_map", "ray_360", "shadertoy_image"]}, "extensions": {"type": "object"}})
-_SHADER_SOURCE_EDIT = _shader_closed({"from_utf16": {"type": "integer", "minimum": 0},
-    "to_utf16": {"type": "integer", "minimum": 0}, "expected_text": {"type": "string"}, "replacement": {"type": "string"}})
-_BOARD_ROW = _shader_closed({
-    "candidate_id": {"type": "string", "minLength": 1, "pattern": r"^[a-zA-Z0-9_-]+$"},
-    "complete_candidate": _SHADER_CANDIDATE,
-    "explanation": _SHADER_TEXT,
-})
-_SHADER_PROPOSAL_SCHEMA = _layer_object({"kind": {"enum": ["shader_document_candidate", "shader_variation_board"]},
-    "base": {"oneOf": [_shader_closed(_SHADER_BASE_PROPERTIES),
-        _shader_closed({**_SHADER_BASE_PROPERTIES, "frozen_capture_hash": _SHADER_DIGEST})]},
-    "explanation": _SHADER_TEXT, "complete_candidate": _SHADER_CANDIDATE,
-    "source_edit": _SHADER_SOURCE_EDIT, "modulation_edits": _SHADER_EDITS,
-    "board_id": _SHADER_TEXT, "candidates": {"type": "array", "minItems": 1, "maxItems": 4,
-        "items": _BOARD_ROW}},
-    ("kind", "base"))
-_SHADER_PROPOSAL_SCHEMA["oneOf"] = [
-    {"properties": {"kind": {"const": "shader_document_candidate"}, "base": _shader_closed(_SHADER_BASE_PROPERTIES)},
-     "required": ["explanation", field], "not": {"anyOf": [{"required": [other]} for other in
-        ("complete_candidate", "source_edit", "modulation_edits", "board_id", "candidates") if other != field]}}
-    for field in ("complete_candidate", "source_edit", "modulation_edits")
-] + [{"properties": {"kind": {"const": "shader_variation_board"},
-        "base": _shader_closed({**_SHADER_BASE_PROPERTIES, "frozen_capture_hash": _SHADER_DIGEST})},
-      "required": ["board_id", "candidates"], "not": {"anyOf": [{"required": [field]} for field in
-        ("explanation", "complete_candidate", "source_edit", "modulation_edits")]}}]
-
-
-def _closed_board(body: Mapping[str, Any]) -> bool:
-    """Refuse a Variation Board the propose_shader schema would refuse, before HTTP."""
-    if not isinstance(body, Mapping) or body.get("kind") != "shader_variation_board":
-        return True
-    spec = _SHADER_PROPOSAL_SCHEMA["properties"]["candidates"]
-    rows = body.get("candidates")
-    item = spec["items"]
-    if type(rows) is not list or not spec["minItems"] <= len(rows) <= spec["maxItems"]:
-        return False
-    required = set(item["required"])
-    for row in rows:
-        if type(row) is not dict or set(row) != required:
-            return False
-        for key, rule in item["properties"].items():
-            value = row[key]
-            if rule.get("type") == "string":
-                if type(value) is not str or len(value) < rule.get("minLength", 0):
-                    return False
-                pattern = rule.get("pattern")
-                if pattern is not None and re.fullmatch(pattern, value) is None:
-                    return False
-            elif type(value) is not dict:
-                return False
-    return True
-
-
 _LAYER_ID = {"type": "string", "pattern": "^[0-9a-f]{12}([0-9a-f]{20})?$"}
 _LAYER_JOB_ID = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
 _LAYER_TARGET = {"type": "string", "enum": ["saved", "live"]}
@@ -2613,15 +2550,6 @@ TOOLS: list[dict[str, Any]] = [
          "edits": {"type": "array", "minItems": 1, "maxItems": 64, "items": _PACKAGE_EDIT},
          "lease": _LEASE, "seen": _SEEN},
         ["shader_id", "request_id", "edits"]),
-    {"name": "propose_shader",
-     "description": "POST one closed Shader proposal, including schema-2 parameter expression, mode and saved timeline edits, and return ticket identity. "
-                    "APP alone checks current ownership/base and materializes IDs. Legacy proposals and every Board row must preserve Playable "
-                    "conventions, envelope definitions/input refs/settings, envelope-sourced mappings and their capability declarations. "
-                    "To first create or revise Playable controls, edit the Shader package and read the installed shader skill. "
-                    "A credits change is proposed for the Credits card and does not write provenance.json. "
-                    "Does not Import, Accept, Apply, Run, arm Interact, press keys, "
-                    "set live pose or write Project presets.",
-     "inputSchema": _SHADER_PROPOSAL_SCHEMA, "annotations": _annotations("propose_shader")},
     {"name": "preflight_shader_sequence",
      "description": "Check a confirmed saved Shader revision and exact rational native interval without queuing. "
                     "Use the returned deterministic sequence_id and request_hash for uncertain render recovery. "
@@ -2890,7 +2818,7 @@ _NATIVE_WORKSPACE_WITNESS = {"type": "string", "minLength": 1, "maxLength": 256}
 _MOUNTED_SHADER_FIELDS = {**_NATIVE_SHADER_TARGET,
     "studio_surface_id": _WORKSPACE_ID,
     "request_id": _NATIVE_SHADER_REQUEST_ID,
-    "expected_edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}
+    }
 _MOUNTED_SHADER_REQUIRED = list(_MOUNTED_SHADER_FIELDS)
 _CAPTURE_DEFAULTS = _shader_closed({
     "frame": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
@@ -2901,8 +2829,9 @@ _CAPTURE_DEFAULTS = _shader_closed({
     "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
     "ray_origin": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
 })
-_OUTPUT_OWNER = {**_MOUNTED_SHADER_FIELDS, "base": _NATIVE_SHADER_BASE}
-_OUTPUT_OWNER_REQUIRED = [*_MOUNTED_SHADER_REQUIRED, "base"]
+_OUTPUT_OWNER = {**_MOUNTED_SHADER_FIELDS, "base": _NATIVE_SHADER_BASE,
+                 "expected_edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}
+_OUTPUT_OWNER_REQUIRED = [*_MOUNTED_SHADER_REQUIRED, "base", "expected_edit_sequence"]
 _OUTPUT_PROFILE = {"enum": ["png-master/1", "shader-linear-rgba-exr/1", "dome-png/1",
                             "shader-raster-still/1"]}
 _PREVIEW_OUTPUT = {"oneOf": [
@@ -3147,10 +3076,6 @@ SHADER_EXTENSION_TOOLS = [
                "default_profile_id": {"oneOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
                "seen": _SEEN},
               ["request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"]),
-    _tool_def("shader_get_proposal", "Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. This is source free.",
-              {"ticket_id": {"type": "string", "pattern": "^spt_[0-9a-f]{32}$"},
-               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
-              ["ticket_id", "project_context_witness"]),
     _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. An uncertain write must be checked by shader_get_operation.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
@@ -3198,8 +3123,6 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_open_asset", "Open one saved Shader only while the current mounted draft is clean and settled. No implicit Save or Discard. Recover uncertainty by the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"]},
               _MOUNTED_SHADER_REQUIRED + ["target"]),
-    _tool_def("shader_save_asset", "Save the current merged Workshop draft (agent and human edits) through the native Prepare and writer ticket; a clean draft returns applied with no new revision. Recover uncertainty by the original request ID.",
-              _MOUNTED_SHADER_FIELDS, _MOUNTED_SHADER_REQUIRED),
     _tool_def("shader_save_as", "Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. A dirty draft is saved as merged. The new asset is selected only after its original-ticket transition acknowledgement.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
@@ -3230,19 +3153,15 @@ SHADER_EXTENSION_TOOLS = [
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
                "capture_defaults": _CAPTURE_DEFAULTS, "seen": _SEEN}, _MOUNTED_SHADER_REQUIRED + ["action"]),
-    _tool_def("shader_control_clock", "Reanchor the authored Master Clock at the native preview action time, collect Tap tempo, Align beat, or reset Master. The Workshop's native gesture and writer own the change. An applied edit is not a saved document; recover uncertainty with shader_get_operation.",
-              {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["reanchor", "tap", "align", "reset_master"]},
-               "bpm": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
-               "speed": {"type": "number", "minimum": 0, "maximum": 1024},
-               "seen": _SEEN},
-              _MOUNTED_SHADER_REQUIRED + ["action"]),
-    _tool_def("shader_step_frame", "Step one exact frame on the current mounted published Shader. Uses the native scrub clock port, pauses playback and resets live input; cannot synthesize physical input. Boundary or stale owner refuses. Session transport is not Save. Recover uncertainty with shader_get_operation.",
-              {**_MOUNTED_SHADER_FIELDS, "direction": {"enum": [-1, 1]},
-               "owner": _shader_closed({"owner_id": {"type": "string", "minLength": 1, "maxLength": 128},
-                   "owner_generation": {"type": "integer", "minimum": 0},
-                   "viewer_generation": {"type": "integer", "minimum": 0},
-                   "source_epoch": {"type": "integer", "minimum": 0}})},
-              _MOUNTED_SHADER_REQUIRED + ["direction", "owner"]),
+    _tool_def("shader_control_clock", "Deliver play, pause or seek to the mounted v2 Shader Workshop. Seek uses time in seconds. Delivery is session transport, not a saved edit; inspect the Workshop if a reply is lost.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "action": {"enum": ["play", "pause", "seek"]},
+               "time": {"type": "number", "minimum": 0}},
+              ["shader", "project_context_witness", "request_id", "action"]),
+    _tool_def("shader_step_frame", "Deliver one forward or backward frame step to the mounted v2 Shader Workshop. Delivery is session transport, not a saved edit; inspect the Workshop if a reply is lost.",
+              {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
+               "direction": {"enum": [-1, 1]}},
+              ["shader", "project_context_witness", "request_id", "direction"]),
 ]
 
 next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_preview")["inputSchema"]["allOf"] = [
@@ -3260,11 +3179,6 @@ for _name, _variants in {
     "shader_set_capture": [
         {"properties": {"action": {"const": "live_seed"}}, "required": ["seed"], "not": {"required": ["capture_defaults"]}},
         {"properties": {"action": {"const": "defaults"}}, "required": ["capture_defaults"], "not": {"required": ["seed"]}},
-    ],
-    "shader_control_clock": [
-        {"properties": {"action": {"const": "reanchor"}}, "anyOf": [{"required": ["bpm"]}, {"required": ["speed"]}]},
-        {"properties": {"action": {"enum": ["tap", "align", "reset_master"]}},
-         "not": {"anyOf": [{"required": ["bpm"]}, {"required": ["speed"]}]}},
     ],
 }.items():
     next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == _name)["inputSchema"]["oneOf"] = _variants
@@ -3856,11 +3770,9 @@ class HextileMcpServer:
             "shader_organize_library": self._shader_organize_library,
             "shader_set_tags": self._shader_set_tags,
             "shader_set_project_conventions": self._shader_set_project_conventions,
-            "shader_get_proposal": self._shader_get_proposal,
             "shader_rename_asset": self._shader_rename_asset,
             "shader_delete_asset": self._shader_delete_asset,
             "shader_open_asset": self._shader_open_asset,
-            "shader_save_asset": self._shader_save_asset,
             "shader_save_as": self._shader_save_as,
             "shader_create_asset": self._shader_create_asset,
             "shader_fork_asset": self._shader_fork_asset,
@@ -3875,7 +3787,6 @@ class HextileMcpServer:
             "shader_step_frame": self._shader_step_frame,
             "get_shader_parameters": self._get_shader_parameters,
             "shader_edit": self._shader_edit,
-            "propose_shader": self._propose_shader,
             "preflight_shader_sequence": self._preflight_shader_sequence,
             "inspect_shader_sequence_output": self._inspect_shader_sequence_output,
             "render_shader_sequence": self._render_shader_sequence,
@@ -4023,7 +3934,7 @@ class HextileMcpServer:
             and getattr(self.client, "_opener", None) is None
             and name != "call_hextile_api"
             and name not in _LOCAL_FILE_DIAGNOSTICS
-            and name not in {"shader_get_operation", "shader_get_proposal",
+            and name not in {"shader_get_operation",
                              "shader_get_output_job",
                              "shader_stop_output_job", "shader_get_preview", "shader_release_preview"}
         ):
@@ -4699,17 +4610,6 @@ class HextileMcpServer:
         body = {key: args[key] for key in allowed - {"target", "render_id"} if key in args}
         return self.client.clone_spot(args["render_id"], body)
 
-    def _shader_ticket_identity(self, data: Any) -> dict[str, Any]:
-        if not isinstance(data, Mapping):
-            raise HextileClientError("Shader proposal did not return a ticket", kind="other")
-        if "ticket_id" not in data:
-            return dict(data)
-        identity = {key: data[key] for key in (
-            "ticket_id", "kind", "shader", "project_context_witness",
-        ) if key in data}
-        identity["ready"] = False
-        return identity
-
     def _get_shader_context(self, args: dict[str, Any]) -> Any:
         if (set(args) - {"origin", "shader_id", "project_context_witness", "include_source", "include_formula", "working_revision"}
                 or any(type(args[key]) is not bool for key in ("include_source", "include_formula") if key in args)):
@@ -4811,9 +4711,6 @@ class HextileMcpServer:
     def _shader_set_project_conventions(self, args: dict[str, Any]) -> Any:
         return self.client.set_shader_project_conventions(args)
 
-    def _shader_get_proposal(self, args: dict[str, Any]) -> Any:
-        return self.client.get_shader_proposal_status(args)
-
     def _shader_rename_asset(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_asset(args)
 
@@ -4822,9 +4719,6 @@ class HextileMcpServer:
 
     def _shader_open_asset(self, args: dict[str, Any]) -> Any:
         return self.client.open_shader_asset(args)
-
-    def _shader_save_asset(self, args: dict[str, Any]) -> Any:
-        return self.client.save_shader_asset(args)
 
     def _shader_save_as(self, args: dict[str, Any]) -> Any:
         return self.client.save_shader_as(args)
@@ -4861,15 +4755,6 @@ class HextileMcpServer:
 
     def _shader_step_frame(self, args: dict[str, Any]) -> Any:
         return self.client.step_shader_frame(args)
-
-    def _propose_shader(self, args: dict[str, Any]) -> Any:
-        for banned in ("import", "delete", "accept", "consume", "config_partial", "path"):
-            if banned in args:
-                raise HextileClientError("Shader proposal cannot import, delete, or consume", kind="other")
-        validate_shader_proposal(args)
-        if not _closed_board(args):
-            raise HextileClientError("Expected a closed Shader proposal", kind="other")
-        return self._shader_ticket_identity(self.client.propose_shader(args))
 
     def _get_shader_parameters(self, args: dict[str, Any]) -> Any:
         if args:

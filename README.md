@@ -116,7 +116,7 @@ Skip any step for something you never installed. Start a new host session afterw
 
 ## All tools
 
-### `hextile` MCP server — 177 tools
+### `hextile` MCP server — 174 tools
 
 Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forwards to the running 360 Hextile app on `127.0.0.1:8000`, except `get_guide`, which reads the bundled guides. Full argument schemas come from the host's `tools/list`.
 
@@ -174,14 +174,13 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 </details>
 
 <details>
-<summary><strong>Shader</strong> (62)</summary>
+<summary><strong>Shader</strong> (59)</summary>
 
 | Tool | What it does |
 |:--|:--|
 | `get_shader_context` | Read the open Shader, including bounded source-free conventions/1, modulation/2 or /3, parameter-expressions/1, shader-timeline/1, stable typed parameter addresses … |
 | `get_shader_parameters` | Read exposed controls on the mounted Shader without including source. |
 | `shader_edit` | Edit one Shader package. Each edit is set, create, reshape or delete on one address. Send seen for a unit a human has edited. |
-| `propose_shader` | POST one closed Shader proposal, including schema-2 parameter expression, mode and saved timeline edits, and return ticket identity. |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision and exact rational native interval without queuing. |
 | `inspect_shader_sequence_output` | Inspect one selected Shader destination with metadata only. |
 | `render_shader_sequence` | Queue only the exact saved Shader request already preflighted, with its caller-known idempotency_key and confirmed revision. |
@@ -223,7 +222,6 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `shader_organize_library` | Create, rename, remove or move Shader folders/items, including one atomic move-many and native Undo. |
 | `shader_set_tags` | Assign or remove one existing personal Tag for one exact Shader through the native tag registry. |
 | `shader_set_project_conventions` | Replace Project convention profiles through the fixed native document writer with exact expected digest and Project witness. |
-| `shader_get_proposal` | Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. |
 | `shader_rename_asset` | Rename one saved Shader with an exact base, owner and request ID. |
 | `shader_delete_asset` | Delete one exact saved Shader. |
 | `shader_get_operation` | Read one original Shader operation outcome by exact request ID and asset, creation, library, Project, or output scope without starting work. |
@@ -231,15 +229,14 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `shader_propose_credits` | Freeze a credits-only pending review intent; recover uncertain outcomes by request ID. |
 | `shader_research_sources` | Fetch only one supplied public HTTP(S) source URL and up to four supplied links locally with bounded text. |
 | `shader_open_asset` | Open one saved Shader only while the current mounted draft is clean and settled. |
-| `shader_save_asset` | Save the exact dirty MCP-held RAM draft through the native Prepare and writer ticket. |
 | `shader_save_as` | Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. |
 | `shader_create_asset` | Create a saved Shader from hx_starter or paste exact supplied UTF-8 source as an inert original while MCP is connected. |
 | `shader_fork_asset` | Fork the exact saved source Shader and retain its credits, Looks, resources and history pins. |
 | `shader_duplicate_asset` | Duplicate one exact saved Shader into My Library or the active Project. |
 | `shader_import_bundle` | Import an absolute .hexshader file through the native importer. |
 | `shader_set_capture` | Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. |
-| `shader_control_clock` | Reanchor the authored Master Clock at the native preview action time, collect Tap tempo, Align beat, or reset Master. |
-| `shader_step_frame` | Step one exact frame on the current mounted published Shader. |
+| `shader_control_clock` | Deliver play, pause or seek to the mounted v2 Shader Workshop. Seek takes time in seconds; this does not save. |
+| `shader_step_frame` | Deliver one forward or backward frame step to the mounted v2 Shader Workshop; this does not save. |
 
 </details>
 
