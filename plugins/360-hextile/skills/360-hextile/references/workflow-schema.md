@@ -87,6 +87,10 @@ at the first unpublished frame using the original frozen recipe. Inspect/Continu
 status and observed-run Stop remain the same native operations. Recover unknown
 outcomes with the original UUID/key/sequence/run/attempt and original request;
 missing status is unknown, never permission to mint a new request.
+An old sequence may refuse Continue with `shader_source_format_retired` when its
+frozen source uses the retired format, or `shader_source_unavailable` when the
+frozen source cannot be read. Read, list and delete still work; start a new
+render instead of retrying Continue with altered source.
 
 
 Full-quality Shader inspection advertises `native_render.shader_preview.profile`

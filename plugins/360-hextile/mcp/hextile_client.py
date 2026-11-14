@@ -3787,42 +3787,6 @@ class Client:
             headers={"X-Hextile-Agent": "mcp"},
         )
 
-    def get_shader_context(
-        self,
-        *,
-        origin: str,
-        shader_id: str,
-        project_context_witness: str,
-        include_source: bool = False,
-        include_formula: bool = False,
-        working_revision: Optional[int] = None,
-    ) -> Any:
-        """GET /api/agent/shader-context. Metadata unless include_source is true."""
-        if (origin not in ("builtin", "user", "project") or not shader_id or not project_context_witness
-                or type(include_source) is not bool or type(include_formula) is not bool
-                or (working_revision is not None and (type(working_revision) is not int or working_revision < 1))):
-            raise HextileClientError(
-                "origin, shader_id, and project_context_witness are required",
-                status_code=None,
-                kind="other",
-            )
-        params: dict[str, Any] = {
-            "origin": origin,
-            "shader_id": shader_id,
-            "include_source": "true" if include_source else "false",
-            "include_formula": "true" if include_formula else "false",
-        }
-        if working_revision is not None:
-            params["working_revision"] = int(working_revision)
-        return self.get_json(
-            "/api/agent/shader-context",
-            params=params,
-            headers={
-                "X-Hextile-Agent": "mcp",
-                "X-Hextile-Project-Witness": project_context_witness,
-            },
-        )
-
     @staticmethod
     def _shader_parameter_headers(session_id: str) -> dict[str, str]:
         """The stdio proxy supplies this origin; tool arguments never do."""
@@ -3855,7 +3819,11 @@ class Client:
                 "Shader sequence POST outcome unknown. GET the preflight-known sequence_id and compare request_hash; never mint a new ID or blindly repost.",
                 status_code=exc.status_code, kind="shader_sequence_outcome_unknown",
                 receipt={"status": "unknown"})
-        return HextileClientError("Shader sequence refused or unavailable", status_code=exc.status_code,
+        source_messages = {
+            "shader_source_format_retired": "Frozen from the retired Shader format. Start a new render.",
+            "shader_source_unavailable": "Frozen Shader source is unavailable. Start a new render.",
+        }
+        return HextileClientError(source_messages.get(code, "Shader sequence refused or unavailable"), status_code=exc.status_code,
                                   kind=exc.kind, receipt={"code": code or "shader_sequence_refused"})
 
     @staticmethod

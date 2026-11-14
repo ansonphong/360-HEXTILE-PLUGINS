@@ -116,7 +116,7 @@ Skip any step for something you never installed. Start a new host session afterw
 
 ## All tools
 
-### `hextile` MCP server — 174 tools
+### `hextile` MCP server — 173 tools
 
 Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forwards to the running 360 Hextile app on `127.0.0.1:8000`, except `get_guide`, which reads the bundled guides. Full argument schemas come from the host's `tools/list`.
 
@@ -178,7 +178,6 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 
 | Tool | What it does |
 |:--|:--|
-| `get_shader_context` | Read the open Shader, including bounded source-free conventions/1, modulation/2 or /3, parameter-expressions/1, shader-timeline/1, stable typed parameter addresses … |
 | `get_shader_parameters` | Read exposed controls on the mounted Shader without including source. |
 | `shader_edit` | Edit one Shader package. Each edit is set, create, reshape or delete on one address. Send seen for a unit a human has edited. |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision and exact rational native interval without queuing. |

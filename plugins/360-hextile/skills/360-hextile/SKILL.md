@@ -146,7 +146,6 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `remove_hotkey_binding` | Remove one assigned Hotkey chord | **yes** |
 | `restore_hotkey` | Restore one Hotkey to its factory bindings | **yes** |
 | `reset_hotkeys` | Clear Hotkey binding overrides; the single-key switch stays | **yes** |
-| `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. include_source selects source/resolved authoring bytes; include_formula separately selects formulas. MCP enablement authorizes access; native identity and bounds still apply. No Import, delete, or Apply | no |
 | `get_shader_parameters` | Read current mounted parameter IDs, values, bounds, exact witness and native `writable` state | no |
 | `shader_edit` | Edit one Shader package. Each edit is set, create, reshape or delete on one address. Send seen for a unit a human has edited. The same request_id returns the recorded result | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |

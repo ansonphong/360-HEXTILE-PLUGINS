@@ -143,7 +143,6 @@ TOOL_NAMES = (
     "preflight_spot_clone",
     "clone_spot",
     "get_spot_clone",
-    "get_shader_context",
     "get_shader_parameters",
     "shader_edit",
     "preflight_shader_sequence",
@@ -234,7 +233,6 @@ _READ_ONLY = frozenset(
         "get_layer_generation",
         "preflight_spot_clone",
         "get_spot_clone",
-        "get_shader_context",
         "get_shader_parameters",
         "preflight_shader_sequence",
         "inspect_shader_sequence_output",
@@ -2512,26 +2510,6 @@ TOOLS: list[dict[str, Any]] = [
         {"render_id": {"type": "string"}, "node_id": _CLONE_NODE_ID},
         required=["render_id", "node_id"],
     ),
-    _tool_def(
-        "get_shader_context",
-        "Read the open Shader, including bounded source-free conventions/1, modulation/2 or /3, "
-        "parameter-expressions/1, shader-timeline/1, stable typed parameter addresses, aliases and camera helpers. "
-        "Default metadata omits both hx-math and parameter expression formula source. "
-        "include_formula selects bounded content from both formula families; "
-        "include_source selects bounded GLSL and resolved authoring bytes. "
-        "Does not Import, delete, Accept a Board, prepare, or consume. "
-        "Never returns an absolute path or pixels.",
-        {
-            "origin": {"type": "string", "enum": ["builtin", "user", "project"]},
-            "shader_id": {"type": "string", "minLength": 1},
-            "project_context_witness": {"type": "string", "minLength": 1},
-            "include_source": {"type": "boolean", "default": False},
-            "include_formula": {"type": "boolean", "default": False,
-                "description": "Include bounded hx-math and parameter-expression formulas in metadata; include_source independently selects GLSL content."},
-            "working_revision": {"type": "integer", "minimum": 1},
-        },
-        required=["origin", "shader_id", "project_context_witness"],
-    ),
     _tool_def("get_shader_parameters",
         "Read exposed controls on the mounted Shader without including source. Returns bounded IDs, labels, "
         "types, current/default values, UI bounds and choices, plus an exact witness, authoring writable state, "
@@ -3740,7 +3718,6 @@ class HextileMcpServer:
             "preflight_spot_clone": self._preflight_spot_clone,
             "clone_spot": self._clone_spot,
             "get_spot_clone": self._get_spot_clone,
-            "get_shader_context": self._get_shader_context,
             "shader_get_asset_state": self._shader_get_asset_state,
             "shader_request_preview": self._shader_request_preview,
             "shader_capture_sequence_input": self._shader_capture_sequence_input,
@@ -4609,19 +4586,6 @@ class HextileMcpServer:
                 raise HextileClientError(f"{pose_name} must be a closed pose", kind="other")
         body = {key: args[key] for key in allowed - {"target", "render_id"} if key in args}
         return self.client.clone_spot(args["render_id"], body)
-
-    def _get_shader_context(self, args: dict[str, Any]) -> Any:
-        if (set(args) - {"origin", "shader_id", "project_context_witness", "include_source", "include_formula", "working_revision"}
-                or any(type(args[key]) is not bool for key in ("include_source", "include_formula") if key in args)):
-            raise HextileClientError("Expected closed Shader context arguments", kind="other")
-        return self.client.get_shader_context(
-            origin=str(args.get("origin") or ""),
-            shader_id=str(args.get("shader_id") or ""),
-            project_context_witness=str(args.get("project_context_witness") or ""),
-            include_source=args.get("include_source", False),
-            include_formula=args.get("include_formula", False),
-            working_revision=args.get("working_revision"),
-        )
 
     def _shader_get_asset_state(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_asset_state(args)

@@ -1582,9 +1582,7 @@ def test_playable_recipe_variants_use_real_intrinsic_admission(variant: str) -> 
 
 def test_playable_tool_guidance_preserves_legacy_authority_and_no_new_controls() -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
-    context = _schema("get_shader_context")["description"]
     workspace = _schema("open_shader_workspace")["description"]
-    assert "source-free" in context and "include_formula selects" in context
     assert "shader_id and request_id" in workspace
     assert "lease, commit and revision" in workspace
     assert "recorded result" in workspace
