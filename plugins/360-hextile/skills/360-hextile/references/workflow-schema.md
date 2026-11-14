@@ -306,4 +306,4 @@ render admission, use normal native status and Stop with its observed `run_id`.
 
 The lease is `{holder, generation}`. `holder` is `human` or `agent`. Only the human moves the lease, with Take control or Hand back. No MCP tool moves the lease. A `stale_lease` result means the lease moved. While the human holds the code, register is refused: the human holds the code and can hand it back. Hand the code back, then register again.
 
-Send `seen` as `{address, human}` for every unit a human has edited. A `lost_to_human` row kept their value and returns the new number. Send the edit again with that pair only if you still mean it. Stop cancels work. It does not move the lease.
+Send `seen` as `{address, human}` for every unit a human has edited. A `lost_to_human` row kept their value and returns the new number. Resend a lost register unit with `shader_edit` and that pair only if you still mean it. Stop cancels work. It does not move the lease.

@@ -671,7 +671,7 @@ _WORKSPACE_GUIDANCE = (
     "Register saves the digest with the lease and seen. "
     "Register saves. Read merge to see what was kept. Watch compile; if it fails, fix and register again. "
     "A field the human has edited carries a human number wherever you read it. To change such a field, send that pair in seen with your edit. "
-    "If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Send your edit again with it only if you still mean it. "
+    "If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Resend that unit with shader_edit and the new seen pair only if you still mean it. "
     "Only the human moves the lease."
 )
 
@@ -2673,7 +2673,7 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def("register_shader_update",
         "Register saves the captured package. Send shader_id, request_id, the sha256 digest, the lease, "
         "and seen for units a human has edited. Read merge to see what was kept. Watch compile. "
-        "A lost_to_human row kept the human value and returns the new number. "
+        "A lost_to_human row kept the human value and returns the new number. Resend that unit with shader_edit and the new seen pair if you still mean it. "
         "stale_lease means the lease moved. Only the human moves the lease. "
         "Prepare failure returns prepare failed and diagnostics. The same request_id returns the recorded result.",
         {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST,
