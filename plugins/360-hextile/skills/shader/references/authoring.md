@@ -20,7 +20,7 @@ A package must contain `shader.json`, `source.glsl` and `provenance.json`. Text 
 
 An address is a list of strings, never a dotted path. `["drivers", "tint.r"]` is the driver whose target is `tint.r`. An edit is one of `set`, `create`, `reshape` or `delete`, and it names one unit. Do not replace a parent object.
 
-`shader_edit` posts one batch of those edits and returns its own saved commit immediately. Register saves file-workspace changes. `shader_edit` cannot write `provenance.json`. Typed tools (`set_shader_parameter`, clock and timeline settings, Looks, tags, resources, capture) are the same engine. Send `seen` for every unit a human has edited: `{address, human}` from a read. A unit no human has edited needs none. The same `request_id` returns that saved commit.
+`shader_edit` posts one batch of those edits and returns its own saved commit immediately. Register saves file-workspace changes. `shader_edit` cannot write `provenance.json`. Typed tools (clock and timeline settings, Looks, tags, resources, capture) are the same engine. Send `seen` for every unit a human has edited: `{address, human}` from a read. A unit no human has edited needs none. The same `request_id` returns that saved commit.
 
 Open takes `shader_id` and `request_id` only and returns the lease, commit and revision. A workspace with no snapshot also returns `not_adopted`. Register takes the package digest, the lease and `seen`, and saves. Read `merge`. Watch `compile`. Prepare failure returns `prepare: failed` and diagnostics; fix the package and register again with a new request id. `get_shader_update` reads the recorded save. Only `compile` may still change.
 
@@ -32,7 +32,7 @@ Send `lease` when the edit touches a leased unit: `source.glsl` and the modules 
 
 A modulator or control-channel alias the code still names cannot be renamed or removed; such an edit comes back skipped (format.md P12, T4B.3) — change the code in the same batch to drop the name.
 
-Playback is not an edit. `control_shader_timeline` play, pause, seek and reset, and `shader_step_frame`, do not take `seen` and do not save. Changing `bpm`, `speed`, `start`, `end` or `loop` is an edit of the clock or timeline settings.
+Playback is not an edit. `shader_control_clock` and `shader_step_frame` do not take `seen` and do not save. Changing `bpm`, `speed`, `start`, `end` or `loop` is an edit of the clock or timeline settings.
 
 ## Credits and sources
 

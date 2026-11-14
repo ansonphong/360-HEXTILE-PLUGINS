@@ -116,7 +116,7 @@ Skip any step for something you never installed. Start a new host session afterw
 
 ## All tools
 
-### `hextile` MCP server — 181 tools
+### `hextile` MCP server — 177 tools
 
 Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forwards to the running 360 Hextile app on `127.0.0.1:8000`, except `get_guide`, which reads the bundled guides. Full argument schemas come from the host's `tools/list`.
 
@@ -174,16 +174,14 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 </details>
 
 <details>
-<summary><strong>Shader</strong> (66)</summary>
+<summary><strong>Shader</strong> (62)</summary>
 
 | Tool | What it does |
 |:--|:--|
 | `get_shader_context` | Read the open Shader, including bounded source-free conventions/1, modulation/2 or /3, parameter-expressions/1, shader-timeline/1, stable typed parameter addresses … |
 | `get_shader_parameters` | Read exposed controls on the mounted Shader without including source. |
-| `set_shader_parameter` | Change one exposed control on the exact witnessed mounted Shader. |
 | `shader_edit` | Edit one Shader package. Each edit is set, create, reshape or delete on one address. Send seen for a unit a human has edited. |
 | `propose_shader` | POST one closed Shader proposal, including schema-2 parameter expression, mode and saved timeline edits, and return ticket identity. |
-| `control_shader_timeline` | Control only the currently mounted Shader Workshop session after fresh get_live_context discovery. |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision and exact rational native interval without queuing. |
 | `inspect_shader_sequence_output` | Inspect one selected Shader destination with metadata only. |
 | `render_shader_sequence` | Queue only the exact saved Shader request already preflighted, with its caller-known idempotency_key and confirmed revision. |
@@ -226,8 +224,6 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `shader_set_tags` | Assign or remove one existing personal Tag for one exact Shader through the native tag registry. |
 | `shader_set_project_conventions` | Replace Project convention profiles through the fixed native document writer with exact expected digest and Project witness. |
 | `shader_get_proposal` | Read one existing Shader proposal ticket, including acceptance or expiry and saved identity when confirmed. |
-| `shader_get_workspace` | Recover an existing workspace attachment and current source-free candidate receipt, including before first registration. |
-| `shader_stop_workspace` | Stop only this current workspace attachment and preserve files. |
 | `shader_rename_asset` | Rename one saved Shader with an exact base, owner and request ID. |
 | `shader_delete_asset` | Delete one exact saved Shader. |
 | `shader_get_operation` | Read one original Shader operation outcome by exact request ID and asset, creation, library, Project, or output scope without starting work. |

@@ -192,7 +192,6 @@ def test_discovery_tools_are_closed_read_only_and_dispatched() -> None:
     assert capabilities["inputSchema"]["additionalProperties"] is False
     assert "get_shader_context" in _READ_ONLY
     assert "get_shader_parameters" in _READ_ONLY
-    assert "set_shader_parameter" in _MUTATING
     assert "register_animation" not in TOOL_NAMES
     assert "create_animation" not in TOOL_NAMES
 

@@ -41,9 +41,8 @@ the code, or the generation you sent is no longer current.
 A Shader technique question is `get_guide(name="shader-cookbook")` and does not
 open a Shader. Load only the guides the procedure names.
 
-Playback (`control_shader_timeline` play, pause, seek and reset, and
-`shader_step_frame`) is not an edit. Changing bpm, speed, start, end or loop is
-an edit.
+Playback (`shader_control_clock` and `shader_step_frame`) is not an edit.
+Changing bpm, speed, start, end or loop is an edit.
 
 Never auto-install, restart or change host permissions. After an update, observe
 the installed package, the registered tools and the running APP. A source checkout

@@ -154,7 +154,7 @@ def test_mcp_activity_minilog_projects_only_confirmed_safe_facts() -> None:
     server = HextileMcpServer(client=client, child_token="")
     server.client_name = "Codex <private-host-name>"
     server._handlers["get_status"] = lambda _args: {"run_id": "run_1", "status": "running"}
-    server._handlers["set_shader_parameter"] = lambda _args: {"status": "pending", "ticket_id": "ticket_1"}
+    server._handlers["shader_edit"] = lambda _args: {"status": "pending", "ticket_id": "ticket_1"}
     server._handlers["save_workflow"] = lambda _args: {"id": "new_workflow", "document": "secret-document"}
     server._handlers["get_shader_parameters"] = lambda _args: {
         "witness": {"shader": {"shaderId": "aurora"}}, "source": "secret-source"}
@@ -164,8 +164,9 @@ def test_mcp_activity_minilog_projects_only_confirmed_safe_facts() -> None:
     server._handlers["start_batch"] = lambda _args: {"job_id": "batch_1", "prompt": "secret-prompt"}
 
     assert server.call_tool("get_status", {"run_id": "run_1"})["isError"] is False
-    assert server.call_tool("set_shader_parameter", {"witness": {"shader": {"shaderId": "aurora"}},
-                                                     "value": "secret-value"})["isError"] is False
+    assert server.call_tool("shader_edit", {"shader_id": "aurora", "request_id": "req-1",
+                                            "edits": [{"op": "set", "address": ["parameters", "fog"],
+                                                       "value": "secret-value"}]})["isError"] is False
     assert server.call_tool("save_workflow", {"id": "new_workflow", "document": {"prompt": "secret-prompt"}})["isError"] is False
     assert server.call_tool("get_shader_parameters", {})["isError"] is False
     assert server.call_tool("get_render_config", {"render_id": "render_1"})["isError"] is False
@@ -176,7 +177,7 @@ def test_mcp_activity_minilog_projects_only_confirmed_safe_facts() -> None:
         None, "pending", "saved", None, None, None, None, None]
     assert client.events[0]["subject"] == {"kind": "run", "id": "run_1"}
     assert client.events[2]["subject"] == {"kind": "shader", "id": "aurora"}
-    assert client.events[3]["ticket_id"] == "ticket_1"
+    assert "ticket_id" not in client.events[3]
     assert client.events[4]["subject"] == {"kind": "workflow", "id": "new_workflow"}
     assert client.events[6]["subject"] == {"kind": "shader"}
     assert client.events[7]["subject"] == {"kind": "shader", "id": "aurora"}

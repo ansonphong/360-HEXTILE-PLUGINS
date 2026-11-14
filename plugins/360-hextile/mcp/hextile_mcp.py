@@ -146,10 +146,8 @@ TOOL_NAMES = (
     "get_spot_clone",
     "get_shader_context",
     "get_shader_parameters",
-    "set_shader_parameter",
     "shader_edit",
     "propose_shader",
-    "control_shader_timeline",
     "preflight_shader_sequence",
     "inspect_shader_sequence_output",
     "render_shader_sequence",
@@ -306,9 +304,7 @@ _MUTATING = frozenset(
         "commit_layer_draft",
         "clone_spot",
         "propose_shader",
-        "set_shader_parameter",
         "shader_edit",
-        "control_shader_timeline",
         "render_shader_sequence",
         "control_shader_sequence",
         "export_shader_sequence",
@@ -386,7 +382,6 @@ _CONTROL_TOOLS = frozenset(
         "cancel_model_download",
         "get_layer_generation",
         "cancel_layer_generation",
-        "control_shader_timeline",
     }
 )
 _LAYER_TOOLS = frozenset({
@@ -479,7 +474,7 @@ _GUIDE_ROOT = Path(__file__).resolve().parent.parent / "skills" / "360-hextile" 
 def _annotations(name: str) -> dict[str, bool]:
     if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation",
                                      "shader_get_credits", "shader_research_sources",
-                                     "shader_get_proposal", "shader_get_workspace",
+                                     "shader_get_proposal",
                                      "shader_get_library_organization", "shader_get_preview",
                                      "shader_get_output_job"}:
         return {"readOnlyHint": True, "destructiveHint": False}
@@ -2606,33 +2601,6 @@ TOOLS: list[dict[str, Any]] = [
         "and current writer readiness or its block reason. No GLSL, formula or help source is returned. "
         "MCP must be enabled.",
         {}),
-    _tool_def("set_shader_parameter",
-        "Change one exposed control on the exact witnessed mounted Shader. The APP binds this MCP "
-        "session and the actual current writer locally. "
-        "Submit a caller-known ID once; use operation=status with that original ID after "
-        "an uncertain reply. This is an engine edit. Send seen for a unit a human has edited. "
-        "A lost_to_human row kept their value and returns the new number. "
-        "A v2 reply is save, results, commit and revision. The current host may still return a ticket. "
-        "An unknown outcome needs status with the same ID.",
-        {"operation": {"enum": ["submit", "status"]},
-         "client_request_id": {"type": "string", "minLength": 1, "maxLength": 64,
-                               "pattern": r"^[A-Za-z0-9_-]+$"},
-         "witness": _shader_closed({
-             "studio_surface_id": _WORKSPACE_ID,
-             "project_context_witness": _WORKSPACE_WITNESS,
-             "shader": _SHADER_BASE_PROPERTIES["shader"],
-             "base": {"oneOf": [
-                 _shader_closed({"working_revision": {"type": "integer", "minimum": 1},
-                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST,
-                                 "manifest_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]},
-                                }, ("manifest_hash",)),
-                 _shader_closed({"kind": {"const": "saved"}, "working_revision": {"type": "integer", "minimum": 1},
-                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST}),]},
-             "edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}),
-         "parameter_id": {"type": "string", "minLength": 1, "maxLength": 128},
-         "value": {"description": "JSON value matching the current exposed parameter descriptor."},
-         "seen": _SEEN},
-        required=["operation", "client_request_id"]),
     _tool_def("shader_edit",
         "Edit one Shader package. Each edit is set, create, reshape or delete on one address. "
         "An address is a list of strings naming one unit. Do not replace a parent object. "
@@ -2654,35 +2622,6 @@ TOOLS: list[dict[str, Any]] = [
                     "Does not Import, Accept, Apply, Run, arm Interact, press keys, "
                     "set live pose or write Project presets.",
      "inputSchema": _SHADER_PROPOSAL_SCHEMA, "annotations": _annotations("propose_shader")},
-    _tool_def("control_shader_timeline",
-        "Control only the currently mounted Shader Workshop session after fresh get_live_context discovery. "
-        "Submit play, pause, seek (seconds), or reset with a caller-known client_request_id and the exact "
-        "current_surface witness including opaque owner generations. APP binds its private current writer. "
-        "If the reply is uncertain, call this same tool with operation=status and that ID; unknown or 404 "
-        "is not proof of refusal. Never mint a fresh ID or blindly replay the action. "
-        "This changes session playback, not the saved timeline or Shader document.",
-        {"operation": {"enum": ["submit", "status"]},
-         "client_request_id": {"type": "string", "minLength": 1, "maxLength": 64,
-                               "pattern": r"^[A-Za-z0-9_-]+$"},
-         "action": {"enum": ["play", "pause", "seek", "reset"]},
-         "time_seconds": {"type": "number", "minimum": 0, "maximum": 86400},
-         "witness": _shader_closed({
-             "studio_surface_id": {"type": "string", "minLength": 1, "maxLength": 64,
-                                   "pattern": r"^[A-Za-z0-9_-]+$"},
-             "project_context_witness": _WORKSPACE_WITNESS,
-             "shader": _SHADER_BASE_PROPERTIES["shader"],
-             "base": {"oneOf": [
-                 _shader_closed({"working_revision": {"type": "integer", "minimum": 1},
-                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST,
-                                 "manifest_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]},
-                                }, ("manifest_hash",)),
-                 _shader_closed({"kind": {"const": "saved"}, "working_revision": {"type": "integer", "minimum": 1},
-                                 "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST}),]},
-             "owner_id": {"type": "string", "minLength": 1, "maxLength": 128},
-             "owner_generation": {"type": "integer", "minimum": 0},
-             "viewer_generation": {"type": "integer", "minimum": 0},
-             "source_epoch": {"type": "integer", "minimum": 0}})},
-        required=["operation", "client_request_id"]),
     {"name": "preflight_shader_sequence",
      "description": "Check a confirmed saved Shader revision and exact rational native interval without queuing. "
                     "Use the returned deterministic sequence_id and request_hash for uncertain render recovery. "
@@ -3212,17 +3151,6 @@ SHADER_EXTENSION_TOOLS = [
               {"ticket_id": {"type": "string", "pattern": "^spt_[0-9a-f]{32}$"},
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
               ["ticket_id", "project_context_witness"]),
-    _tool_def("shader_get_workspace", "Recover an existing workspace attachment and its current source-free receipt, including before the first save. Unknown receipt fields are dropped.",
-              {"handle": _NATIVE_WORKSPACE_HANDLE,
-               "change_id": _NATIVE_WORKSPACE_CHANGE,
-               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
-              ["handle", "project_context_witness"]),
-    _tool_def("shader_stop_workspace", "Stop only this current workspace attachment and preserve files. Stop is cancellation, not automatic code possession. This does not transfer human ownership or stop reasoning.",
-              {"handle": _NATIVE_WORKSPACE_HANDLE,
-               "generation": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
-               "studio_surface_id": _NATIVE_WORKSPACE_WITNESS,
-               "project_context_witness": _NATIVE_WORKSPACE_WITNESS},
-              ["handle", "generation", "studio_surface_id", "project_context_witness"]),
     _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. An uncertain write must be checked by shader_get_operation.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
@@ -3341,13 +3269,6 @@ for _name, _variants in {
 }.items():
     next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == _name)["inputSchema"]["oneOf"] = _variants
 
-_parameter_tool = next(t for t in TOOLS if t["name"] == "set_shader_parameter")
-_parameter_tool["inputSchema"]["oneOf"] = [
-    {"properties": {"operation": {"const": "status"}},
-     "not": {"anyOf": [{"required": [key]} for key in ("witness", "parameter_id", "value", "seen")]}},
-    {"properties": {"operation": {"const": "submit"}},
-     "required": ["witness", "parameter_id", "value"]},
-]
 TOOLS.insert(0, _tool_def("call_hextile_api", "Call the configured local Hextile native API with relative /api/... paths, or GET /openapi.json. Named tools remain preferred. No mutation retry; recover an uncertain result through its native status API.",
     {"method": {"enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]},
      "path": {"type": "string", "minLength": 1},
@@ -3674,7 +3595,7 @@ def _activity_error_code(exc: "HextileClientError") -> Optional[str]:
 
 
 def _activity_outcome(name: str, data: Any) -> Optional[str]:
-    if name in {"apply_config_delta", "set_shader_parameter", "shader_edit", "register_shader_update"} and isinstance(data, Mapping):
+    if name in {"apply_config_delta", "shader_edit", "register_shader_update"} and isinstance(data, Mapping):
         if data.get("save") == "saved":
             return "saved"
         status = data.get("status")
@@ -3685,7 +3606,7 @@ def _activity_outcome(name: str, data: Any) -> Optional[str]:
 
 
 def _activity_ticket(name: str, data: Any) -> Optional[str]:
-    if name not in {"apply_config_delta", "set_shader_parameter"} or not isinstance(data, Mapping):
+    if name not in {"apply_config_delta"} or not isinstance(data, Mapping):
         return None
     value = data.get("ticket_id")
     return value if type(value) is str and _ACTIVITY_ID.fullmatch(value) else None
@@ -3936,8 +3857,6 @@ class HextileMcpServer:
             "shader_set_tags": self._shader_set_tags,
             "shader_set_project_conventions": self._shader_set_project_conventions,
             "shader_get_proposal": self._shader_get_proposal,
-            "shader_get_workspace": self._shader_get_workspace,
-            "shader_stop_workspace": self._shader_stop_workspace,
             "shader_rename_asset": self._shader_rename_asset,
             "shader_delete_asset": self._shader_delete_asset,
             "shader_open_asset": self._shader_open_asset,
@@ -3955,10 +3874,8 @@ class HextileMcpServer:
             "shader_control_clock": self._shader_control_clock,
             "shader_step_frame": self._shader_step_frame,
             "get_shader_parameters": self._get_shader_parameters,
-            "set_shader_parameter": self._set_shader_parameter,
             "shader_edit": self._shader_edit,
             "propose_shader": self._propose_shader,
-            "control_shader_timeline": self._control_shader_timeline,
             "preflight_shader_sequence": self._preflight_shader_sequence,
             "inspect_shader_sequence_output": self._inspect_shader_sequence_output,
             "render_shader_sequence": self._render_shader_sequence,
@@ -4106,8 +4023,8 @@ class HextileMcpServer:
             and getattr(self.client, "_opener", None) is None
             and name != "call_hextile_api"
             and name not in _LOCAL_FILE_DIAGNOSTICS
-            and name not in {"shader_get_operation", "shader_get_proposal", "shader_get_workspace",
-                             "shader_stop_workspace", "shader_get_output_job",
+            and name not in {"shader_get_operation", "shader_get_proposal",
+                             "shader_get_output_job",
                              "shader_stop_output_job", "shader_get_preview", "shader_release_preview"}
         ):
             probe = getattr(self.client, "request_json", None)
@@ -4237,20 +4154,6 @@ class HextileMcpServer:
             )
             return _err_result(safe_error)
         except Exception as exc:  # noqa: BLE001
-            if name == "control_shader_timeline":
-                request_id = args.get("client_request_id")
-                submit = args.get("operation") == "submit"
-                safe = HextileClientError(
-                    "Shader timeline outcome unknown; check status with the caller-known client_request_id."
-                    if submit else "Shader timeline status unavailable",
-                    kind="shader_timeline_outcome_unknown" if submit else "other",
-                    receipt={"client_request_id": request_id} if submit and type(request_id) is str
-                    and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id) else None,
-                )
-                self._emit_activity(tool=name, call_id=call_id, phase="failed",
-                                    error={"kind": safe.kind, "status_code": None, "message": str(safe)},
-                                    overrides_keys=overrides_keys)
-                return _err_result(error_payload(safe))
             if name in {"preflight_shader_sequence", "render_shader_sequence", "get_shader_sequence",
                         "control_shader_sequence", "preflight_shader_sequence_export", "export_shader_sequence"}:
                 uncertain = name in {"render_shader_sequence", "control_shader_sequence", "export_shader_sequence"}
@@ -4911,12 +4814,6 @@ class HextileMcpServer:
     def _shader_get_proposal(self, args: dict[str, Any]) -> Any:
         return self.client.get_shader_proposal_status(args)
 
-    def _shader_get_workspace(self, args: dict[str, Any]) -> Any:
-        return self.client.get_shader_workspace_status(args)
-
-    def _shader_stop_workspace(self, args: dict[str, Any]) -> Any:
-        return self.client.stop_shader_workspace(args)
-
     def _shader_rename_asset(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_asset(args)
 
@@ -4979,15 +4876,9 @@ class HextileMcpServer:
             raise HextileClientError("Expected no Shader parameter discovery arguments", kind="other", status_code=422)
         return self.client.get_shader_parameters(session_id=self._ensure_session_id())
 
-    def _set_shader_parameter(self, args: dict[str, Any]) -> Any:
-        return self.client.set_shader_parameter(args, session_id=self._ensure_session_id())
-
     def _shader_edit(self, args: dict[str, Any]) -> Any:
         validate_shader_workspace("edit", args)
         return self.client.shader_edit(args)
-
-    def _control_shader_timeline(self, args: dict[str, Any]) -> Any:
-        return self.client.control_shader_timeline(args)
 
     def _preflight_shader_sequence(self, args: dict[str, Any]) -> Any:
         return self.client.preflight_shader_sequence(args)

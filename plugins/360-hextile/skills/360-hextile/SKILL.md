@@ -148,10 +148,8 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `reset_hotkeys` | Clear Hotkey binding overrides; the single-key switch stays | **yes** |
 | `get_shader_context` | Read Shader identity, manifest and bounded source-free Playable aliases/helper signatures. include_source selects source/resolved authoring bytes; include_formula separately selects formulas. MCP enablement authorizes access; native identity and bounds still apply. No Import, delete, or Apply | no |
 | `get_shader_parameters` | Read current mounted parameter IDs, values, bounds, exact witness and native `writable` state | no |
-| `set_shader_parameter` | Connected MCP edits one exposed value on the actual current writer. Use `operation=status` with the original `client_request_id` after an uncertain reply. `applied` acknowledges that value edit and does not save the package | **yes** |
 | `shader_edit` | Edit one Shader package. Each edit is set, create, reshape or delete on one address. Send seen for a unit a human has edited. The same request_id returns the recorded result | **yes** |
 | `propose_shader` | Post a legacy shader document or Board. Every row keeps Playable envelope bytes. Credits use the Credits card. No prepare, consume, Import, delete, or Board Accept | **yes** |
-| `control_shader_timeline` | Play, pause, seek, or reset the mounted Shader session through the connected APP and an exact owner witness; use its status branch with the same caller ID after an uncertain reply | **yes** |
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision, exact rational interval and explicit native output; returns a deterministic sequence ID before queueing | no |
 | `inspect_shader_sequence_output` | Inspect one chosen destination using native metadata; retain its identity and fingerprint before explicit Continue | no |
 | `render_shader_sequence` | Submit the exact saved-native direct PNG/JPG/EXR or explicit deferred request once; retain the preflight ID/hash and original key | **yes** |

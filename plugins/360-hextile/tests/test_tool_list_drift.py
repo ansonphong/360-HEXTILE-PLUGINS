@@ -154,10 +154,8 @@ EXPECTED_TOOLS = (
     "get_spot_clone",
     "get_shader_context",
     "get_shader_parameters",
-    "set_shader_parameter",
     "shader_edit",
     "propose_shader",
-    "control_shader_timeline",
     "preflight_shader_sequence",
     "inspect_shader_sequence_output",
     "render_shader_sequence",
@@ -270,9 +268,7 @@ def test_open4_annotations_partition() -> None:
     assert "clone_spot" in _MUTATING
     assert "get_shader_context" in _READ_ONLY
     assert "get_shader_parameters" in _READ_ONLY
-    assert "set_shader_parameter" in _MUTATING
     assert "shader_edit" in _MUTATING
-    assert "set_shader_parameter" not in _DESTRUCTIVE
     assert "shader_edit" not in _DESTRUCTIVE
     assert "propose_shader" in _MUTATING
     assert "propose_shader" not in _DESTRUCTIVE
@@ -428,7 +424,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 133 and len(SHADER_EXTENSION_TOOLS) == 48
+    assert len(TOOLS) == 131 and len(SHADER_EXTENSION_TOOLS) == 46
 
 
 def test_trusted_local_file_contract() -> None:
@@ -1218,10 +1214,8 @@ def test_mcp_tools_list_rpc() -> None:
     got = discovered["get_shader_update"]["inputSchema"]
     registered = discovered["register_shader_update"]["inputSchema"]
     created = discovered["shader_create_asset"]["inputSchema"]
-    timeline = discovered["control_shader_timeline"]["inputSchema"]
-    assert "oneOf" not in created and "oneOf" not in timeline
+    assert "oneOf" not in created
     assert {"request_id", "project_context_witness", "action", "template_id", "space", "source", "title"} <= set(created["properties"])
-    assert {"operation", "client_request_id", "action", "time_seconds", "witness"} <= set(timeline["properties"])
     edited = discovered["shader_edit"]["inputSchema"]
     package = {"shader_id": "aurora", "request_id": "req-1"}
     digest = "sha256:" + "ab" * 32
