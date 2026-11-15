@@ -37,6 +37,30 @@ A successful connection is not a save and not permission to write. Only use
 DevTools when the request needs visual or DOM inspection. Discovery does not
 navigate, duplicate, edit, register, render or take screenshots.
 
+## Export 8K equirect PNG at 2×
+
+Call `get_live_context(view="shader")` once and keep `studio_surface_id`, the
+witness, and the saved base. Every still needs that surface id, including
+App – High precision. Then `shader_preflight_still_export`, then
+`shader_export_still` with that preflight id.
+
+Profile `shader-raster-still/1`. Output: `projection` `equirectangular`,
+`encoding` `png`, `width` `8192`, `height` `4096`, `supersampling` `2`,
+`output_path` the absolute PNG file. A still writes a file. A sequence writes
+a folder: `preflight_shader_sequence` then `render_shader_sequence`, with
+top-level `width`, `height`, `supersampling`, and
+`folder_export.destination_folder`.
+
+Omit `render_route` for App – High precision. Otherwise send
+`{profile: "shader-render-route/1", route}` using
+`webgl-display-native-encode`, `webgl-browser-encode-desktop`,
+`webgl-browser-encode-backend`, or `webgl-raw-float`. The two browser routes
+also send `browser_codec`: `{format: "png"}`, `{format: "jpeg", jpeg_quality}`
+from 0.50 to 1.00, or `{format: "exr"}`. Equirect EXR uses profile
+`shader-linear-rgba-exr/1` and omits `projection`. Window supersampling presets
+are 1, 1.5, and 2. Any finite scale of at least 1 is sent through. Viewer –
+High precision sequences are EXR.
+
 ## Edit, controls, diagnostics or output
 
 Before any Shader change, read

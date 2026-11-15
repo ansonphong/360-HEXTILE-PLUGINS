@@ -482,7 +482,9 @@ def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
         return False
     projection = output.get("projection", "equirectangular")
     if projection == "equirectangular":
-        return (2 <= output["width"] <= 4096
+        # Window presets, raster stills, and the still schema share 16384x8192.
+        return (2 <= output["width"] <= 16384
+                and 1 <= output["height"] <= 8192
                 and output["width"] == output["height"] * 2
                 and not {"fov_deg", "pan", "tilt", "roll", "preserve_360", "preserve_360_profile"} & set(output))
     return (projection in {"fulldome", "fulldome_angular"}

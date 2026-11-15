@@ -264,6 +264,78 @@ def test_raster_still_and_dome_exr_preflight_use_native_contract(monkeypatch) ->
             client.get_shader_output_job(exr_args)
 
 
+def test_equirect_exr_and_supersampling_follow_the_export_window(monkeypatch) -> None:
+    """8K equirect EXR and 2× supersampling use the same still and sequence fields as the window."""
+    digest = "sha256:" + "a" * 64
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    owner = {"request_id": request_id, "shader": {"origin": "user", "shaderId": "aurora"},
+             "project_context_witness": "w", "base": {"kind": "saved", "working_revision": 1,
+             "document_hash": digest, "source_hash": digest},
+             "studio_surface_id": "surface", "expected_edit_sequence": 1}
+    from hextile_mcp import SHADER_EXTENSION_TOOLS, TOOLS
+    still_schema = next(tool["inputSchema"] for tool in SHADER_EXTENSION_TOOLS
+                        if tool["name"] == "shader_preflight_still_export")
+    sequence_schema = next(tool["inputSchema"] for tool in TOOLS
+                           if tool["name"] == "preflight_shader_sequence")
+    seen: list[tuple[str, dict]] = []
+    client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    monkeypatch.setattr(client, "get_capabilities", lambda: {"native_render": {
+        "contract": "native-render/1", "sequences": {},
+        "stills": {"shader-raster-still/1": {}, "shader-linear-rgba-exr/1": {}}}})
+
+    def reply(method, path, body=None, **kwargs):
+        seen.append((path, body))
+        return {"request_id": request_id, "state": "pending"}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    for width, height in ((6144, 3072), (8192, 4096), (12288, 6144), (16384, 8192)):
+        still = {**owner, "profile": "shader-linear-rgba-exr/1",
+                 "output": {"width": width, "height": height, "supersampling": 2,
+                            "output_path": "D:/Temp/frame.exr"}}
+        jsonschema.validate(still, still_schema)
+        assert client.preflight_shader_still(still)["state"] == "pending"
+        assert seen[-1][1]["output"]["width"] == width
+        assert seen[-1][1]["output"]["supersampling"] == 2
+        assert "projection" not in seen[-1][1]["output"]
+    raster = {**owner, "profile": "shader-raster-still/1",
+              "output": {"projection": "equirectangular", "encoding": "png",
+                         "width": 8192, "height": 4096, "supersampling": 2,
+                         "output_path": "D:/Temp/frame.png"}}
+    jsonschema.validate(raster, still_schema)
+    assert client.preflight_shader_still(raster)["state"] == "pending"
+    assert seen[-1][1]["output"]["supersampling"] == 2
+    for output in ({"width": 8192, "height": 4095, "output_path": "D:/Temp/frame.exr"},
+                   {"width": 20480, "height": 10240, "output_path": "D:/Temp/frame.exr"},
+                   {"width": 8192, "height": 4096, "supersampling": 0.5,
+                    "output_path": "D:/Temp/frame.exr"},
+                   {"width": 8192, "height": 4096, "fov_deg": 180, "pan": 0, "tilt": 0, "roll": 0,
+                    "output_path": "D:/Temp/frame.exr"}):
+        with pytest.raises(HextileClientError):
+            client.preflight_shader_still({**owner, "profile": "shader-linear-rgba-exr/1", "output": output})
+    sequence = {"shader_ref": {"origin": "user", "id": "e2e_fix17"},
+                "project_context_witness": "w", "working_revision": 1,
+                "document_hash": digest, "source_hash": digest, "idempotency_key": "key-1",
+                "name": "eight-k", "frame_rate": {"num": 30, "den": 1}, "frame_count": 3,
+                "start_time": {"num": "0", "den": "1"}, "end_time": {"num": "1", "den": "10"},
+                "width": 2048, "height": 1024, "seed": 0, "supersampling": 2,
+                "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0},
+                "folder_export": {"destination_folder": "D:/Temp/frames", "format": "PNG",
+                                  "quality_if_jpg": None}}
+    jsonschema.validate(sequence, sequence_schema)
+    posted: list[dict] = []
+
+    def post(path, body, headers=None):
+        posted.append(body)
+        return {"sequence_id": "seq_" + "ab" * 16, "status": "ready", "request_hash": digest}
+
+    monkeypatch.setattr(client, "post_json", post)
+    assert client.preflight_shader_sequence(sequence)["status"] == "ready"
+    assert posted[-1]["supersampling"] == 2
+    assert posted[-1]["folder_export"]["destination_folder"] == "D:/Temp/frames"
+    with pytest.raises(HextileClientError):
+        client.preflight_shader_sequence({**sequence, "supersampling": 0.5})
+
+
 def test_shader_preview_binary_transport_requires_explicit_image_opt_in() -> None:
     shader = {"origin": "user", "shaderId": "aurora"}
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
@@ -2197,6 +2269,13 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
     assert "current_surface" not in skill
     assert "shader.shaderId" in skill and "studio_surface_id" in skill
     assert "shader_capture_sequence_input" in skill
+    assert "shader-raster-still/1" in skill and "8192" in skill and "supersampling" in skill
+    assert "webgl-browser-encode-desktop" in skill and "folder_export.destination_folder" in skill
+    assert "8192" in described["shader_preflight_still_export"]
+    assert "supersampling" in described["shader_preflight_still_export"]
+    assert "destination_folder" in described["preflight_shader_sequence"]
+    from hextile_mcp import _GUIDE_INDEX
+    assert "8192" in _GUIDE_INDEX and "webgl-raw-float" in _GUIDE_INDEX
     assert "diameters from 2 through 8192" in authoring
     assert "Recommended native diameters are 1024, 2048" in authoring
     assert "hexshader-package-1" in authoring and "def package_digest" in authoring

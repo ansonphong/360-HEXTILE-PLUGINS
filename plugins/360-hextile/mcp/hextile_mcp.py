@@ -446,6 +446,9 @@ _GUIDE_INDEX = (
     "Read merge. Watch compile. Only the human moves the lease. "
     "A still is shader_request_preview, then shader_get_preview with image true as the 512px RGB display image, then shader_preflight_still_export, then shader_export_still using that preflight_request_id. "
     "A sequence is preflight_shader_sequence then render_shader_sequence. "
+    "8K equirect PNG at 2× is shader_preflight_still_export profile shader-raster-still/1, width 8192, height 4096, supersampling 2, and an absolute output_path. "
+    "Omit render_route for native. Other routes are webgl-display-native-encode, webgl-browser-encode-desktop, webgl-browser-encode-backend, and webgl-raw-float; browser routes add browser_codec. "
+    "Equirect EXR omits projection. A sequence folder is folder_export.destination_folder. Viewer - High precision sequences are EXR. "
     "Use the same saved hashes and the same frozen inputs. "
     "Width and height are top-level on shader_request_preview. "
     "preserve_360 is dome-only. "
@@ -2477,6 +2480,8 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Check a confirmed saved Shader revision and exact rational native interval without queuing. "
                     "Use the returned deterministic sequence_id and request_hash for uncertain render recovery. "
                     "Direct PNG/JPG/EXR uses folder_export; explicit deferred keeps its managed native master. "
+                    "Top-level supersampling is a finite scale of at least 1 (window presets 1, 1.5, and 2). "
+                    "folder_export.destination_folder is the sequence folder. Viewer - High precision sequences are EXR. "
                     "Absent render_route stays native. A WebGL route delivers shader_render_produce to the mounted Workshop.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("preflight_shader_sequence")},
@@ -2488,6 +2493,7 @@ TOOLS: list[dict[str, Any]] = [
                     "idempotency_key and confirmed revision. On an uncertain reply, GET the known sequence_id "
                     "and compare request_hash; unknown 404 is an unknown outcome, never blind repost. "
                     "Direct output uses its selected folder and encoding; explicit deferred retains the legacy master. "
+                    "Supersampling and folder_export.destination_folder are on that preflighted request. Viewer - High precision sequences are EXR. "
                     "Absent render_route stays native. The agent does not produce frames; shader_render_produce is claimed by the mounted Workshop.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("render_shader_sequence")},
@@ -2859,11 +2865,16 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_release_preview", "Cancel/release this original inspector, including a queued capture or resource freeze, without starting new work. A cancel_pending result retains the same request ID until cleanup is confirmed; it does not stop an accepted export Sequence.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_preflight_still_export", "Preflight one native PNG/JPG raster, PNG master, linear EXR, or Dome profile using the exact saved revision and capture defaults; no GPU start. Absent render_route stays native. WebGL admission delivers shader_render_produce to the mounted Workshop.",
+    _tool_def("shader_preflight_still_export", "Preflight one native PNG/JPG raster, PNG master, linear EXR, or Dome profile using the exact saved revision and capture defaults; no GPU start. Absent render_route stays native. WebGL admission delivers shader_render_produce to the mounted Workshop. "
+              "8K equirect PNG at 2×: profile shader-raster-still/1, output projection equirectangular, encoding png, width 8192, height 4096, supersampling 2, output_path the absolute PNG file. "
+              "Omit render_route for App - High precision. Otherwise render_route is profile shader-render-route/1 and route webgl-display-native-encode, webgl-browser-encode-desktop, webgl-browser-encode-backend, or webgl-raw-float. "
+              "The two browser routes also send browser_codec: png, jpeg with jpeg_quality 0.50-1.00, or exr. Equirect EXR uses shader-linear-rgba-exr/1 and omits projection. "
+              "Supersampling is a finite number of at least 1; window presets are 1, 1.5, and 2. Read studio_surface_id from get_live_context(view=shader).",
               {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT,
                "allow_unpreviewed_revision": {"type": "boolean"}, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["profile", "output"]),
-    _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting. Absent render_route stays native. The agent does not produce WebGL frames; the mounted Workshop claims shader_render_produce.",
+    _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting. Absent render_route stays native. The agent does not produce WebGL frames; the mounted Workshop claims shader_render_produce. "
+              "The preflight output holds resolution, supersampling, encoding, and output_path. 8K equirect PNG at 2× is width 8192, height 4096, supersampling 2.",
               {**_OUTPUT_OWNER, "preflight_request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["preflight_request_id", "profile"]),
