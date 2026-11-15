@@ -4172,6 +4172,8 @@ class Client:
             result["publication_attempts"] = [attempt(item) for item in data["publication_attempts"][:8]
                                               if isinstance(item, Mapping)]
         result.update(_native_sequence_fields(data))
+        if result.get("producer_state") == "stopped" and result.get("error") == "stop_requested":
+            result["stopped_by_user"] = True
         return result
 
     @staticmethod

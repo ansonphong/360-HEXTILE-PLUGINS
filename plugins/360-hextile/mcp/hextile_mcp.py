@@ -2499,7 +2499,8 @@ TOOLS: list[dict[str, Any]] = [
      "annotations": _annotations("render_shader_sequence")},
     _tool_def("get_shader_sequence",
         "Read a source-free and path-free Shader sequence status by the caller-known ID. "
-        "For a lost render reply compare request_hash from preflight. A missing ID does not prove the POST failed.",
+        "For a lost render reply compare request_hash from preflight. A missing ID does not prove the POST failed. "
+        "A sequence the user stopped reads status incomplete with producer_state stopped and stopped_by_user true: it is Stopped, not failed; Resume or Continue it, or leave it.",
         {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}},
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
@@ -2878,7 +2879,7 @@ SHADER_EXTENSION_TOOLS = [
               {**_OUTPUT_OWNER, "preflight_request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["preflight_request_id", "profile"]),
-    _tool_def("shader_get_output_job", "Read a native still job by original UUID and Project witness without starting GPU work.",
+    _tool_def("shader_get_output_job", "Read a native still job by the request_id you passed to the export call (never the preflight request_id, which returns 404 output_job_unknown) and Project witness, without starting GPU work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
     _tool_def("shader_stop_output_job", "Signal Stop for an existing exact native still job only.",
