@@ -774,6 +774,11 @@ def test_credits_metadata_and_research_transport_are_closed(monkeypatch) -> None
                                        if tool["name"] == "shader_propose_credits")["inputSchema"])
     assert client.propose_shader_credits(proposal)["state"] == "pending"
     assert calls[-1][2] == proposal
+    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
+                        {"schema": 1, "state": "proposed", "request_id": body["request_id"],
+                         "message": "A person applies this on the Credits card."}
+                        if str(path).endswith("/credits/proposals") else {"schema": 1, "pages": []})
+    assert client.propose_shader_credits(proposal)["message"] == "A person applies this on the Credits card."
     assert client.research_shader_sources({**target, "source_url": "https://example.com"})["pages"] == []
     with pytest.raises(HextileClientError):
         client.propose_shader_credits({**proposal, "changes": {"author": "Artist"}})
@@ -1420,6 +1425,20 @@ def test_shader_recheck_update_is_absent() -> None:
     assert "shader_edit" in TOOL_NAMES
 
 
+def test_asset_state_accepts_a_compact_input_list() -> None:
+    from hextile_client import _native_read_result
+    state = {"schema": 1, "shader": {"origin": "user", "shaderId": "aurora"},
+             "project_context_witness": "wit", "status": "saved", "provenance": "saved",
+             "base": {}, "capability": {}, "writable": True, "save_state": "saved",
+             "inputs": [{"id": "input1", "member": "resources/" + "ab" * 32 + ".png", "filter": "nearest"}]}
+    assert _native_read_result(state, kind="state")["inputs"][0]["filter"] == "nearest"
+    bare = {key: value for key, value in state.items() if key != "inputs"}
+    assert "inputs" not in _native_read_result(bare, kind="state")
+    state["inputs"] = [{"id": "input1", "member": "still", "filter": "bilinear"}]
+    with pytest.raises(HextileClientError):
+        _native_read_result(state, kind="state")
+
+
 def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     v2 = {"view": "shader", "stack": "v2", "connected": True, "mcp_enabled": True,
@@ -1427,6 +1446,15 @@ def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkey
           "lease": {"holder": "agent", "generation": 0}, "commit": 1, "revision": 1}
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: v2)
     assert client.get_live_context(view="shader") == v2
+    compact = {**v2, "shader": {"origin": "user", "shader_id": "aurora", "shaderId": "aurora"},
+               "title": "Aurora", "writable": True, "project_context_witness": "witness-desktop",
+               "studio_surface_id": "ws-surface-1"}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: compact)
+    assert client.get_live_context(view="shader") == compact
+    mismatched = {**compact, "shader": {"origin": "user", "shader_id": "aurora", "shaderId": "other"}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: mismatched)
+    with pytest.raises(HextileClientError):
+        client.get_live_context(view="shader")
     old = {"view": "shader", "schema": 1, "mcp_enabled": True, "current_surface": {},
            "shader_contract": {}, "shader_summary": {}}
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: old)
@@ -2165,7 +2193,12 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
     assert "title is accepted only for action paste" in described["shader_create_asset"]
     skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
     authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
-    assert "current_surface" in skill and "shader_capture_sequence_input" in skill
+    assert "connected: false" in skill and "shader: null" in skill
+    assert "current_surface" not in skill
+    assert "shader.shaderId" in skill and "studio_surface_id" in skill
+    assert "shader_capture_sequence_input" in skill
+    assert "diameters from 2 through 8192" in authoring
+    assert "Recommended native diameters are 1024, 2048" in authoring
     assert "hexshader-package-1" in authoring and "def package_digest" in authoring
     assert "render_observation.run_id" in authoring
     assert "sequence_input_unsupported" in authoring

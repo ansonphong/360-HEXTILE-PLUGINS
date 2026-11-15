@@ -74,7 +74,7 @@ The code lease owns the shape. Label, default, min, max, step, clamp, control, o
 
 Work on the Shader the user already has open. To change another Shader, edit it by id with `shader_edit` or `open_shader_workspace`; those do not switch the user's view. Call `shader_open_asset` only when the user asks to open a Shader, because it changes what the user sees. It is refused (`open_refused`) while the user is typing.
 
-1. `get_live_context(view="shader")` once. The reply names `shader.origin`, `shader.shader_id`, `lease`, `commit` and `revision`. If `get_live_context` has no `current_surface`, the Workshop is empty. Call `shader_list_assets` with the `project_context_witness` from that context. The list returns that witness on `project_context_witness`. A builtin is not edited in place; duplicate it into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
+1. `get_live_context(view="shader")` once. The compact reply names `shader.origin`, `shader.shaderId` (the same value as `shader.shader_id`), `title`, `writable`, `project_context_witness`, `studio_surface_id`, `lease`, `commit` and `revision`. `connected: false` or `shader: null` means the Workshop is empty. Call `shader_list_assets` with the `project_context_witness` from that context. The list returns that witness on `project_context_witness`. A builtin is not edited in place; duplicate it into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
 2. `open_shader_workspace` with that `shader_id` and one new `request_id`. Do not send `workspace_schema`. This does not switch the user's view. Nothing human-side refuses open. The same request id returns the recorded open.
 3. Call `shader_edit` or the typed tools. `shader_edit` returns its own saved commit immediately. To save edits made in the package files, change those files, not `.local/`, recompute the package digest from the member bytes, and register. Register saves those file-workspace changes.
 4. `register_shader_update` saves file-workspace changes. Send the digest, the lease you were given, and `seen`. Then read `merge` and `compile`. A `shader_edit` batch already returned its commit.
@@ -192,7 +192,8 @@ Still flow: use the mounted Shader owner and exact saved revision with
 `shader_get_output_job` / `shader_stop_output_job`. New `shader-raster-still/1`
 chooses `output.encoding:"png"|"jpg"` and exact absolute `output_path` on the APP
 machine. Equirectangular widths1024/2048/4096 have half-height. Both Dome variants
-use native diameters1024/2048/4096/8192 plus FOV/pose. Native raster JPG quality is
+use diameters from 2 through 8192. Recommended native diameters are 1024, 2048,
+4096 and 8192, plus FOV/pose. Native raster JPG quality is
 fixed95; raster stills have no supersampling/arbitrary-size option. Safe native
 Unicode/multidot filenames and JPG/JPEG suffixes are preserved.
 

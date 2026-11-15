@@ -14,15 +14,17 @@ Otherwise call `get_live_context(view="shader")` once. This read needs no
 `get_capabilities` handshake. Use the tools already exposed by the host; do not
 print the whole catalog or inspect DevTools just to discover the Shader.
 
-The reply is the live Shader: `shader.origin`, `shader.shader_id`, `lease`
-(`holder` and `generation`), `commit`, `revision`, `connected` and
-`mcp_enabled`. Report those. Do not guess a title from an id. Work on the
-Shader the user already has open. To change another Shader, edit it by id with
-`shader_edit` or `open_shader_workspace`; those do not switch the user's view.
-Call `shader_open_asset` only when the user asks to open a Shader, because it
+The reply is the compact live Shader: `shader.origin`, `shader.shaderId`
+(the same value as `shader.shader_id`), `title`, `writable`,
+`project_context_witness`, `studio_surface_id`, `lease` (`holder` and
+`generation`), `commit`, `revision`, `connected` and `mcp_enabled`. Report
+those. `title` is the saved package title. Work on the Shader the user already
+has open. To change another Shader, edit it by id with `shader_edit` or
+`open_shader_workspace`; those do not switch the user's view. Call
+`shader_open_asset` only when the user asks to open a Shader, because it
 changes what the user sees. It is refused (`open_refused`) while the user is
-typing. A missing Shader means none is open. If `get_live_context` has no
-`current_surface`, the Workshop is empty. Call `shader_list_assets` with the
+typing. A missing Shader means none is open. `connected: false` or
+`shader: null` means the Workshop is empty. Call `shader_list_assets` with the
 `project_context_witness` from that context. The list returns that witness.
 APP down: “Launch 360 Hextile, then retry.” MCP disabled: enable MCP in APP Settings.
 

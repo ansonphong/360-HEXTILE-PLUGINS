@@ -1341,6 +1341,19 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
         raise HextileClientError("Invalid copy destination", status_code=422, kind="other")
 
 
+def _valid_compact_inputs(value: Any) -> bool:
+    """Slot id, member path, and filter. Absent means an older asset-state reply."""
+    if type(value) is not list or len(value) > 32:
+        return False
+    for row in value:
+        if (type(row) is not dict or set(row) != {"id", "member", "filter"}
+                or type(row["id"]) is not str or not 1 <= len(row["id"]) <= 64
+                or type(row["member"]) is not str or not 1 <= len(row["member"]) <= 128
+                or row["filter"] not in {"linear", "nearest", "mipmap", None}):
+            return False
+    return True
+
+
 def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> dict:
     try:
         size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
@@ -1351,7 +1364,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                   "capability", "working_digest", "owner_generation", "title", "tags",
                   "document_schema", "draft_state", "writable", "save_state", "reasons",
                   "saved_values", "unaccepted_values", "mounted_values",
-                  "bundle_state", "human_only"},
+                  "bundle_state", "human_only", "inputs"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor", "total"},
@@ -1377,6 +1390,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
     }.get(kind)
     if (type(data) is not dict or size > 32768 or data.get("schema") != 1 or
             set(data) - allowed or required - set(data) or
+            (kind == "state" and "inputs" in data and not _valid_compact_inputs(data.get("inputs"))) or
             (kind == "state" and (data.get("status") not in {"saved", "unaccepted", "incomplete"}
                                   or data.get("provenance") not in {"saved", "mounted", "unaccepted", "incomplete"}
                                   or type(data.get("writable")) is not bool
@@ -2215,20 +2229,40 @@ def _project_discovery_public(value: Any) -> Any:
 
 def _valid_shader_connection(result: Any) -> bool:
     """The v2 live Shader description. Unknown shapes never become compact success."""
-    if (type(result) is not dict or set(result) != {
-            "view", "stack", "connected", "shader", "lease", "commit", "revision", "mcp_enabled"}
+    required = {"view", "stack", "connected", "shader", "lease", "commit", "revision", "mcp_enabled"}
+    optional = {"title", "writable", "project_context_witness", "studio_surface_id"}
+    if (type(result) is not dict or not required <= set(result) <= required | optional
             or result["view"] != "shader" or result["stack"] not in {"v1", "v2"}
             or type(result["connected"]) is not bool or type(result["mcp_enabled"]) is not bool):
         return False
+    if "title" in result and result["title"] is not None and (
+            type(result["title"]) is not str or not result["title"].strip()
+            or len(result["title"]) > 256):
+        return False
+    if "writable" in result and type(result["writable"]) is not bool:
+        return False
+    for key in ("project_context_witness", "studio_surface_id"):
+        if key in result and result[key] is not None and (
+                type(result[key]) is not str or not result[key].strip() or len(result[key]) > 256):
+            return False
     shader = result["shader"]
     if shader is None:
         if result["lease"] is not None or result["commit"] is not None or result["revision"] is not None:
             return False
-    elif (type(shader) is not dict or set(shader) != {"origin", "shader_id"}
-            or shader["origin"] not in {"builtin", "user", "project"}
-            or type(shader["shader_id"]) is not str
-            or re.fullmatch(r"[A-Za-z0-9_-]+", shader["shader_id"]) is None):
+    elif type(shader) is not dict:
         return False
+    else:
+        keys = set(shader)
+        if not keys <= {"origin", "shader_id", "shaderId"} or "origin" not in keys:
+            return False
+        if "shaderId" in keys and "shader_id" in keys and shader["shaderId"] != shader["shader_id"]:
+            return False
+        shader_id = shader.get("shaderId", shader.get("shader_id"))
+        if ("shaderId" not in keys and "shader_id" not in keys
+                or shader["origin"] not in {"builtin", "user", "project"}
+                or type(shader_id) is not str
+                or re.fullmatch(r"[A-Za-z0-9_-]+", shader_id) is None):
+            return False
     lease = result["lease"]
     if lease is not None and not _shader_lease(lease):
         return False
@@ -5058,7 +5092,10 @@ class Client:
                                          kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
             raise
         if (type(result) is not dict or set(result) - {"schema", "proposal_id", "request_id", "state",
-                "shader", "project_context_witness", "expected_provenance_hash", "mutation_hash"}
+                "shader", "project_context_witness", "expected_provenance_hash", "mutation_hash",
+                "message"}
+                or ("message" in result and (type(result["message"]) is not str
+                                             or not 1 <= len(result["message"]) <= 256))
                 or result.get("request_id") != request_id
                 or result.get("state") not in {"pending", "applied", "saved", "refused", "expired", "unknown", "proposed"}
                 or "ticket_id" in result or "mutation" in result or "provenance" in result
