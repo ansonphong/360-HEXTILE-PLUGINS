@@ -4639,6 +4639,19 @@ class Client:
         payload = {"origin": ref["origin"], "action": action, "request_id": request_id}
         if step:
             payload["direction"] = args["direction"]
+            data = self.get_live_context()
+            surface = data.get("current_surface") if isinstance(data, dict) else None
+            mounted = surface.get("shader") if isinstance(surface, dict) else None
+            owner_keys = ("owner_id", "owner_generation", "viewer_generation", "source_epoch")
+            same = (isinstance(surface, dict) and surface.get("kind") == "shader_workshop"
+                    and isinstance(mounted, dict)
+                    and mounted.get("origin") == ref.get("origin")
+                    and mounted.get("shaderId") == ref.get("shaderId")
+                    and all(surface.get(key) == owner[key] for key in owner_keys))
+            if not same:
+                message = "The mounted Shader preview owner changed. Read the current surface before stepping."
+                raise HextileClientError(message, kind="other", status_code=409, receipt={
+                    "code": "owner_changed", "message": message, "next_step": "get_live_context"})
         elif action == "seek":
             payload["time"] = args["time"]
         receipt = self.request_json("POST", f"/api/shaders/{ref['shaderId']}/playback", payload)

@@ -688,11 +688,18 @@ def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> No
     assert {"shader_set_capture", "shader_control_clock", "shader_step_frame"} <= names
     client = Client("http://127.0.0.1:9")
     calls = []
-    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
-                        calls.append((method, path, body, kwargs)) or
-                        ({"delivery": "delivered"} if path.endswith("/playback") else
-                         {"schema": 1, "request_id": body["request_id"], "state": "pending",
-                          "operation": "shader_set_capture"}))
+    surface = {"current_surface": {"kind": "shader_workshop",
+        "owner_id": "owner", "owner_generation": 1, "viewer_generation": 2, "source_epoch": 3,
+        "shader": {"origin": "user", "shaderId": "aurora"}}}
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if path.endswith("/live-context"):
+            return surface
+        if path.endswith("/playback"):
+            return {"delivery": "delivered"}
+        return {"schema": 1, "request_id": body["request_id"], "state": "pending",
+                "operation": "shader_set_capture"}
+    monkeypatch.setattr(client, "request_json", reply)
     target = {"shader": {"origin": "user", "shaderId": "aurora"},
               "project_context_witness": "witness", "studio_surface_id": "surface",
               "request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e",
@@ -705,12 +712,30 @@ def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> No
                            {"origin": "user", "action": "play", "request_id": target["request_id"]}, {})
     assert client.control_shader_clock({**playback, "action": "seek", "time": 2.5})["state"] == "applied"
     assert calls[-1][2]["time"] == 2.5
+    assert not any(path.endswith("/live-context") for _, path, *_ in calls)
     owner = {"owner_id": "owner", "owner_generation": 1, "viewer_generation": 2, "source_epoch": 3}
     step_schema = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_step_frame")["inputSchema"]
     assert "owner" in step_schema["required"] and step_schema["additionalProperties"] is False
     assert client.step_shader_frame({**playback, "direction": 1, "owner": owner})["state"] == "applied"
+    assert calls[-2][0] == "GET" and calls[-2][1] == "/api/agent/live-context"
+    assert "view" not in calls[-2][3]["params"]
     assert calls[-1][2] == {"origin": "user", "action": "step", "request_id": target["request_id"], "direction": 1}
     assert "owner" not in calls[-1][2]
+    with pytest.raises(HextileClientError) as stale:
+        client.step_shader_frame({**playback, "direction": 1, "owner": {**owner, "owner_generation": 9}})
+    assert stale.value.status_code == 409 and stale.value.receipt == {
+        "code": "owner_changed",
+        "message": "The mounted Shader preview owner changed. Read the current surface before stepping.",
+        "next_step": "get_live_context"}
+    assert calls[-1][1].endswith("/live-context")
+    def down(method, path, body=None, **kwargs):
+        if path.endswith("/live-context"):
+            raise HextileClientError("down", kind="app_down")
+        return {"delivery": "delivered"}
+    monkeypatch.setattr(client, "request_json", down)
+    with pytest.raises(HextileClientError) as transport:
+        client.step_shader_frame({**playback, "direction": 1, "owner": owner})
+    assert transport.value.kind == "app_down"
     with pytest.raises(HextileClientError):
         client.control_shader_clock({**playback, "action": "reanchor", "bpm": 120})
     with pytest.raises(HextileClientError):
