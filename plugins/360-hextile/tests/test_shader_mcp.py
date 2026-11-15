@@ -1086,14 +1086,67 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
                "target": {"origin": "builtin", "shaderId": "hx_starter"}}
     assert client.open_shader_asset(mounted)["state"] == "applied"
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/open", mounted)
-    with pytest.raises(HextileClientError):
-        client.open_shader_asset({**mounted, "target": ref})
+    same_target = {**mounted, "target": ref}
+    assert client.open_shader_asset(same_target)["state"] == "applied"
+    assert sent[-1] == ("POST", "/api/shaders/agent-operations/open", same_target)
     save = {key: value for key, value in mounted.items() if key != "target"}
     as_copy = {**save, "title": "A copy"}
     assert client.save_shader_as(as_copy)["state"] == "applied"
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/save-as", as_copy)
     with pytest.raises(HextileClientError):
         client.save_shader_as({**as_copy, "title": ""})
+
+
+def test_open_shader_asset_asks_without_requiring_the_mounted_pair(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    ref = {"origin": "user", "shaderId": "aurora"}
+    target = {"origin": "builtin", "shaderId": "hx_starter"}
+    bare = {"request_id": request_id, "project_context_witness": "wit", "target": target}
+    sent = []
+    states = iter(["requested", "dismissed", "superseded", "pending"])
+
+    def reply(method, path, payload):
+        sent.append((method, path, payload))
+        state = next(states)
+        receipt = {"request_id": request_id, "operation": "shader_open_asset", "state": state}
+        if state == "requested":
+            receipt["force_ignored"] = True
+        if state == "pending":
+            receipt["forced"] = True
+        return receipt
+
+    monkeypatch.setattr(client, "request_json", reply)
+    asked = client.open_shader_asset(bare)
+    assert asked["state"] == "requested" and asked["force_ignored"] is True
+    assert sent[-1] == ("POST", "/api/shaders/agent-operations/open", bare)
+    assert client.open_shader_asset(bare)["state"] == "dismissed"
+    assert client.open_shader_asset(bare)["state"] == "superseded"
+    forced = {**bare, "force": True, "shader": ref, "studio_surface_id": "surface"}
+    assert client.open_shader_asset(forced)["forced"] is True
+    assert sent[-1][2]["force"] is True and sent[-1][2]["shader"] == ref
+    with pytest.raises(HextileClientError):
+        client.open_shader_asset({**bare, "shader": ref})
+    with pytest.raises(HextileClientError):
+        client.open_shader_asset({**forced, "force": "yes"})
+
+    def unknown(method, path, payload):
+        return {"request_id": request_id, "operation": "shader_open_asset", "state": "holding"}
+
+    monkeypatch.setattr(client, "request_json", unknown)
+    with pytest.raises(HextileClientError) as exc:
+        client.open_shader_asset(bare)
+    assert exc.value.kind == "shader_operation_outcome_unknown"
+
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    tool = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_open_asset")
+    assert tool["inputSchema"]["required"] == ["request_id", "project_context_witness", "target"]
+    assert tool["inputSchema"]["properties"]["force"] == {"type": "boolean", "default": False}
+    assert "get_live_context(view=\"shader\").agent_open" in tool["description"]
+    jsonschema.validate(bare, tool["inputSchema"])
+    jsonschema.validate(forced, tool["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**bare, "shader": ref}, tool["inputSchema"])
 
 
 def test_rename_and_delete_receipts_match_route_bodies(monkeypatch) -> None:

@@ -3063,9 +3063,10 @@ SHADER_EXTENSION_TOOLS = [
                "source_url": {"type": "string", "minLength": 1, "maxLength": 2048},
                "links": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 2048}}},
               ["shader", "project_context_witness", "source_url"]),
-    _tool_def("shader_open_asset", "Work on the Shader the user already has open. Edit another Shader by id with shader_edit or open_shader_workspace; those do not switch the user's view. Call shader_open_asset only when the user asks to open a Shader, because it changes what the user sees. Refused (open_refused) while the user is typing. Opens one saved Shader only while the mounted draft is clean and settled. No implicit Save or Discard. Recover uncertainty by the original request ID.",
-              {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"]},
-              _MOUNTED_SHADER_REQUIRED + ["target"]),
+    _tool_def("shader_open_asset", "Ask the user to open another Shader. Work on the Shader the user already has open. Edit others by id with shader_edit or open_shader_workspace, which do not switch the user's view. By default this shows the user a request and returns state requested. Poll shader_get_operation with the same request_id until it is applied, dismissed, superseded or refused, and do not ask again for the same Shader. Read get_live_context(view=\"shader\").agent_open first: policy never → open_blocked. Send force:true only when the user asked for a fully agent-driven session, or asked you in this turn to open it. force switches at once, unless the user turned force-open off (force_ignored). It is still refused while the user is typing or has unsaved edits. Send shader and studio_surface_id of the mounted Shader, or omit both when none is mounted. No implicit Save or Discard. Recover uncertainty by the original request_id.",
+              {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"],
+               "force": {"type": "boolean", "default": False}},
+              ["request_id", "project_context_witness", "target"]),
     _tool_def("shader_save_as", "Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. A dirty draft is saved as merged. The new asset is selected only after its original-ticket transition acknowledgement.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
@@ -3111,6 +3112,15 @@ SHADER_EXTENSION_TOOLS = [
                    "source_epoch": {"type": "integer", "minimum": 0},
                })},
               ["shader", "project_context_witness", "request_id", "direction", "owner"]),
+]
+
+next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_open_asset")["inputSchema"]["allOf"] = [
+    {"if": {"required": ["shader"]},
+     "then": {"required": ["studio_surface_id"]},
+     "else": {"not": {"required": ["studio_surface_id"]}}},
+    {"if": {"required": ["studio_surface_id"]},
+     "then": {"required": ["shader"]},
+     "else": {"not": {"required": ["shader"]}}},
 ]
 
 next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_preview")["inputSchema"]["allOf"] = [

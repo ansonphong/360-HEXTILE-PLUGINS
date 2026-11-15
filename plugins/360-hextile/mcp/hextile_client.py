@@ -4649,7 +4649,6 @@ class Client:
             args = {key: args[key] for key in args if key != "seen"}
         common = {"shader", "project_context_witness", "studio_surface_id", "request_id"}
         extras = ({"action", "seed", "capture_defaults"} if operation == "shader_set_capture" else
-                  {"target"} if operation == "shader_open_asset" else
                   {"title"} if operation == "shader_save_as" else
                   {"direction", "owner"})
         if not isinstance(args, Mapping) or not common <= set(args) or set(args) - common - extras - {"expected_edit_sequence"}:
@@ -4677,14 +4676,6 @@ class Client:
                          and type(args["capture_defaults"]) is dict
                          and set(args["capture_defaults"]) == {"frame", "time", "time_delta", "frame_rate",
                                                                 "pointer", "seed", "ray_origin"})
-        elif operation == "shader_open_asset":
-            target = args.get("target")
-            valid = (keys == common | {"target"} and type(target) is dict
-                     and set(target) == {"origin", "shaderId"}
-                     and target["origin"] in {"builtin", "user", "project"}
-                     and type(target["shaderId"]) is str
-                     and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", target["shaderId"]) is not None
-                     and target != ref)
         elif operation == "shader_save_as":
             valid = (keys in (common, common | {"title"})
                      and ("title" not in args or type(args["title"]) is str
@@ -4781,8 +4772,61 @@ class Client:
     def step_shader_frame(self, args: Mapping[str, Any]) -> dict:
         return self._shader_playback(args, "shader_step_frame")
 
+    def _shader_ref_ok(self, value: Any) -> bool:
+        return (type(value) is dict and set(value) == {"origin", "shaderId"}
+                and value["origin"] in {"builtin", "user", "project"}
+                and type(value["shaderId"]) is str
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value["shaderId"]) is not None)
+
+    def _request_shader_open(self, args: Mapping[str, Any]) -> dict:
+        """Ask to open a Shader. The mounted pair is optional; the same target is allowed."""
+        required = {"request_id", "project_context_witness", "target"}
+        optional = {"shader", "studio_surface_id", "force", "expected_edit_sequence"}
+        if not isinstance(args, Mapping) or not required <= set(args) or set(args) - required - optional:
+            raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
+        if ("shader" in args) != ("studio_surface_id" in args):
+            raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
+        try:
+            valid_id = (str(uuid.UUID(args["request_id"])) == args["request_id"]
+                        and uuid.UUID(args["request_id"]).version == 4)
+        except (ValueError, AttributeError, TypeError):
+            valid_id = False
+        witness = args.get("project_context_witness")
+        surface = args.get("studio_surface_id")
+        sequence = args.get("expected_edit_sequence")
+        if (not valid_id or type(witness) is not str or not 1 <= len(witness) <= 256
+                or not self._shader_ref_ok(args.get("target"))
+                or ("shader" in args and not self._shader_ref_ok(args.get("shader")))
+                or ("studio_surface_id" in args and (type(surface) is not str or not 1 <= len(surface) <= 256))
+                or ("force" in args and type(args["force"]) is not bool)
+                or ("expected_edit_sequence" in args
+                    and (type(sequence) is not int or not 0 <= sequence <= 2**53 - 1))):
+            raise HextileClientError("Invalid mounted Shader owner", kind="other", status_code=422)
+        try:
+            bounded = len(json.dumps(dict(args), allow_nan=False).encode("utf-8")) <= 4096
+        except (TypeError, ValueError, UnicodeError):
+            bounded = False
+        if not bounded:
+            raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
+        try:
+            receipt = self.request_json("POST", "/api/shaders/agent-operations/open", dict(args))
+        except HextileClientError as exc:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+                raise HextileClientError(
+                    "Mounted Shader outcome unknown; read shader_get_operation with the original request_id.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
+            raise
+        if (type(receipt) is not dict or receipt.get("request_id") != args["request_id"]
+                or receipt.get("operation") != "shader_open_asset"
+                or receipt.get("state") not in {"pending", "applied", "refused", "unknown", "expired",
+                                                 "requested", "dismissed", "superseded"}):
+            raise HextileClientError("Mounted Shader acknowledgement unknown; read shader_get_operation.",
+                                     kind="shader_operation_outcome_unknown",
+                                     receipt={"request_id": args["request_id"]})
+        return receipt
+
     def open_shader_asset(self, args: Mapping[str, Any]) -> dict:
-        return self._mounted_shader_action(args, "shader_open_asset", "/api/shaders/agent-operations/open")
+        return self._request_shader_open(args)
 
     def save_shader_as(self, args: Mapping[str, Any]) -> dict:
         return self._mounted_shader_action(args, "shader_save_as", "/api/shaders/agent-operations/save-as")
