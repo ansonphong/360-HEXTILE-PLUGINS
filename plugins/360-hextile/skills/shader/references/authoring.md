@@ -110,25 +110,23 @@ Open that Shader by its own id. Do not use the working Shader's lease to read or
 
 `get_capabilities.native_render.shader_preview.profile` must be
 `shader-export-preview/2` for the full-quality inspector. `shader_request_preview`
-requires a caller-known UUID, the clean saved mounted owner, `mode`, `width`,
+requires a caller-known UUID, the mounted saved-base owner, `mode`, `width`,
 `height` and projection/framing `output` with optional selected `supersampling`
-1.00–2.00. Still freezes the completed native sample. Sequence additionally
+1.00–2.00. Still uses the exact saved revision and its saved capture defaults. Sequence additionally
 requires `sequence_sample:{start_time,end_time,frame_rate,frame_count,index}`;
 times are reduced rational strings, FPS is an exact integer rational, index is
 zero-based, and End is exclusive. Native export limits also govern history,
 replay, resources and supported combinations. A refusal never lowers quality.
 
-Recover a lost capture acknowledgement with `shader_get_operation` using the
-original UUID, then poll `shader_get_preview` with that UUID and original Shader/
-Project witness. Native admission is retained before its reply: unknown remains
+After a lost acknowledgement, retry the same `shader_request_preview` UUID or
+poll `shader_get_preview` with that UUID and original Shader/Project witness. Native admission is retained before its reply: unknown remains
 unknown until the same request resolves; never mint another ID to retry it.
 Metadata reports actual delivered dimensions, supersampling/internal dimensions,
 projection, exact sample/time/FPS, format, source/pixel hashes and native progress.
 Poll while inspecting to keep the short native lease alive. `shader_release_preview`
 cancels/releases only this owned request, including original-request cleanup after
 disconnect or selection change. It does not stop an accepted export Sequence.
-Cancellation also retires a queued/claimed mounted preview ticket. During a
-resource freeze it may return `released:false,status:"cancel_pending"`; keep
+During a resource freeze cancellation may return `released:false,status:"cancel_pending"`; keep
 polling/controlling that original ID until cleanup is confirmed. A pending
 cancellation is not a successful release and never justifies a replacement ID.
 
@@ -148,10 +146,9 @@ identity fields. Explicit deferred masters and later copy/conversion remain
 separate supported operations.
 
 For a new playable Shader sequence, call `shader_capture_sequence_input` with
-the discovered clean saved base and mounted surface. Recover its
-original ticket using `shader_get_operation(scope="asset")`; once applied, pass
-that same request ID as `input_capture_id` to preflight and render. The capture
-expires after five minutes before admission. It freezes the completed camera
+the discovered saved base and mounted surface. If its reply is uncertain, retry
+only the same request ID; once applied, pass that ID as `input_capture_id` to
+preflight and render within five minutes. It freezes the saved neutral camera
 pose and persistent toggles, neutralizes movement/held/delta channels and keeps
 time animation running. Private samples never enter MCP requests or replies.
 Unsupported mouse/history modulation still refuses. Do not recapture or change
@@ -172,7 +169,7 @@ Use observed `run_id` for Stop and current attempt ID/revision for publication
 controls. Stop settles only after its owner drains. A stale409 needs fresh status;
 timeout/404 is unknown, never proof a job did not start or permission for a new key.
 
-Still flow: use the real mounted Shader writer/completed-frame producer with
+Still flow: use the mounted Shader owner and exact saved revision with
 `shader_preflight_still_export` → `shader_export_still`, then original-request
 `shader_get_output_job` / `shader_stop_output_job`. New `shader-raster-still/1`
 chooses `output.encoding:"png"|"jpg"` and exact absolute `output_path` on the APP
@@ -187,11 +184,11 @@ equirectangular EXR and frozen-default-path compatibility remain. `png-master/1`
 keeps its existing managed Import/Render and supported supersampling/sizes; its
 completion is distinct from later destination publication. Optional native
 `allow_unpreviewed_revision` confirmation never forges a preview or bypasses the
-mounted capture producer's currentness/readiness. Callers never supply private
+saved-base and native route currentness/readiness. Callers never supply private
 snapshot pixels, leases or capture packets to these tools.
 
 After a lost still reply, keep original request/preflight UUID/profile and read
-that exact job. Do not capture a replacement frame or choose another filename to
+that exact job. Do not choose another filename to
 hide the unknown outcome. Source/native capability checks and create-only
 publication remain authoritative.
 
