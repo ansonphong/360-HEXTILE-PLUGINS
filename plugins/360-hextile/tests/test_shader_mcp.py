@@ -1154,6 +1154,136 @@ def test_open_shader_asset_asks_without_requiring_the_mounted_pair(monkeypatch) 
         jsonschema.validate({**bare, "shader": ref}, tool["inputSchema"])
 
 
+def test_shader_refusals_keep_code_message_and_next_step(monkeypatch) -> None:
+    """A {code, message, next_step} body is the refusal. Other HTTP text stays raw."""
+    from hextile_client import error_payload
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    digest = "sha256:" + "a" * 64
+    shader = {"origin": "user", "shaderId": "aurora"}
+    base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
+    open_args = {"request_id": request_id, "project_context_witness": "wit",
+                 "target": {"origin": "builtin", "shaderId": "hx_starter"}}
+    cases = (
+        ("open", open_args, 403, {
+            "code": "open_blocked",
+            "message": "The user does not allow agents to open Shaders.",
+            "next_step": "Ask the user in chat, or keep working on the open Shader.",
+        }),
+        ("open", open_args, 403, {
+            "code": "open_blocked_session",
+            "message": "The user blocked agent opens for this session.",
+            "next_step": "Ask the user in chat; they can unblock in the MCP panel.",
+        }),
+        ("delete", {"request_id": request_id, "shader": shader, "project_context_witness": "wit",
+                    "base": base, "expected_working_digest": digest, "library_intent": "saved",
+                    "confirmation_scope": {"operation": "delete", "shader": shader}}, 409, {
+            "code": "request_conflict",
+            "message": "This request id already has a different delete.",
+            "next_step": "Replay the original delete or choose a new request id.",
+        }),
+        ("duplicate", {"request_id": request_id, "project_context_witness": "wit",
+                       "shader": shader, "base": base}, 409, {
+            "code": "shader_refused",
+            "message": "Duplicate source base changed.",
+            "next_step": "Reread shader_get_asset_state.",
+        }),
+    )
+
+    def refuse(detail: dict, status: int):
+        def fail(method, path, body=None, **kwargs):
+            raw = json.dumps({"detail": detail})
+            raise HextileClientError(
+                f"HTTP {status} {method} {path}: {raw}",
+                status_code=status, body=raw, kind="http")
+        return fail
+
+    for kind, args, status, detail in cases:
+        monkeypatch.setattr(client, "request_json", refuse(detail, status))
+        call = {"open": client.open_shader_asset, "delete": client.delete_shader_asset,
+                "duplicate": client.duplicate_shader_asset}[kind]
+        with pytest.raises(HextileClientError) as refused:
+            call(args)
+        assert refused.value.status_code == status
+        assert str(refused.value) == detail["message"]
+        assert refused.value.receipt == detail
+        payload = error_payload(refused.value)
+        assert payload["code"] == detail["code"]
+        assert payload["message"] == detail["message"]
+        assert payload["next_step"] == detail["next_step"]
+        assert payload["error"] == detail["message"]
+        assert "HTTP " not in payload["error"]
+
+    raw = json.dumps({"detail": {"code": "stale_snapshot", "message": "Mounted Shader changed"}})
+
+    def plain(method, path, body=None, **kwargs):
+        raise HextileClientError(f"HTTP 409 {method} {path}: {raw}", status_code=409, body=raw, kind="http")
+
+    monkeypatch.setattr(client, "request_json", plain)
+    with pytest.raises(HextileClientError) as unchanged:
+        client.open_shader_asset(open_args)
+    assert unchanged.value.receipt is None
+    assert str(unchanged.value).startswith("HTTP 409 POST /api/shaders/agent-operations/open:")
+
+    def down(method, path, body=None, **kwargs):
+        structured = json.dumps({"detail": cases[0][3]})
+        raise HextileClientError(f"HTTP 503 {method} {path}: {structured}",
+                                 status_code=503, body=structured, kind="http")
+
+    monkeypatch.setattr(client, "request_json", down)
+    with pytest.raises(HextileClientError) as unknown:
+        client.open_shader_asset(open_args)
+    assert unknown.value.kind == "shader_operation_outcome_unknown"
+
+    session = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    parameters = {"code": "parameters_unavailable",
+                  "message": "Open a Shader in the Workshop, then read its parameters.",
+                  "next_step": "Open a Shader in the Workshop, then read its parameters."}
+    monkeypatch.setattr(client, "request_json", refuse(parameters, 409))
+    with pytest.raises(HextileClientError) as read:
+        client.get_shader_parameters(session_id=session)
+    assert read.value.receipt == parameters
+    assert error_payload(read.value)["error"] == parameters["message"]
+
+
+def test_delete_asset_uses_document_hash_when_the_digest_is_omitted(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    digest = "sha256:" + "a" * 64
+    other = "sha256:" + "c" * 64
+    shader = {"origin": "user", "shaderId": "aurora"}
+    base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
+    body = {"request_id": request_id, "shader": shader, "project_context_witness": "wit",
+            "base": base, "library_intent": "saved",
+            "confirmation_scope": {"operation": "delete", "shader": shader}}
+    sent = []
+
+    def reply(method, path, payload=None, **kwargs):
+        sent.append(payload)
+        return {"stack": "v2", "deleted": True, "shader_id": shader["shaderId"], "origin": "user"}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.delete_shader_asset(body)["deleted"] is True
+    assert "expected_working_digest" not in body
+    assert sent[-1]["expected_working_digest"] == digest
+    explicit = {**body, "expected_working_digest": other}
+    assert client.delete_shader_asset(explicit)["deleted"] is True
+    assert sent[-1]["expected_working_digest"] == other
+
+    tool = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_delete_asset")
+    phrase = "base.document_hash from shader_get_asset_state/shader_list_assets"
+    assert phrase in tool["description"]
+    assert tool["inputSchema"]["properties"]["expected_working_digest"]["description"] == (
+        "Use base.document_hash from shader_get_asset_state/shader_list_assets.")
+    assert "expected_working_digest" not in tool["inputSchema"]["required"]
+    jsonschema.validate(body, tool["inputSchema"])
+    jsonschema.validate(explicit, tool["inputSchema"])
+
+
 def test_rename_and_delete_receipts_match_route_bodies(monkeypatch) -> None:
     """The route body is the receipt. A request id, an extra operation, or the wrong target is not success."""
     client = Client("http://127.0.0.1:9")

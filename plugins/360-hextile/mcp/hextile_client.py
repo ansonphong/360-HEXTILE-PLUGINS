@@ -3169,6 +3169,15 @@ class Client:
         except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as exc:
             raise HextileClientError(APP_DOWN_MSG, status_code=None, body=str(exc), kind="app_down") from exc
 
+    def _shader_request(self, method: str, path: str, body: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Any:
+        """Shader agent HTTP. A 4xx {code, message, next_step} body replaces the raw HTTP text."""
+        try:
+            return self.request_json(method, path, body, **kwargs)
+        except HextileClientError as exc:
+            if exc.kind == "http" and exc.status_code is not None and exc.status_code < 500:
+                _raise_plain_refusal(exc)
+            raise
+
     def request_shader_preview_image(self, request_id: str, params: Mapping[str, Any]) -> bytes | dict:
         """Explicit pixel opt-in; bytes never enter a JSON result."""
         path = "/api/shaders/agent-operations/output/preview/" + request_id
@@ -3970,8 +3979,13 @@ class Client:
 
     def get_shader_parameters(self, *, session_id: str) -> Any:
         """Read only the mounted Shader's source-free exposed controls."""
-        return self.get_json("/api/agent/shader-parameters",
-                             headers=self._shader_parameter_headers(session_id))
+        try:
+            return self.get_json("/api/agent/shader-parameters",
+                                 headers=self._shader_parameter_headers(session_id))
+        except HextileClientError as exc:
+            if exc.kind == "http" and exc.status_code is not None and exc.status_code < 500:
+                _raise_plain_refusal(exc)
+            raise
 
     @staticmethod
     def _shader_sequence_error(exc: HextileClientError, *, uncertain: bool = False) -> HextileClientError:
@@ -4396,7 +4410,7 @@ class Client:
 
     def get_shader_asset_state(self, args: Mapping[str, Any]) -> Any:
         _native_shader_args("state", args)
-        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/asset-state", params={
+        return _native_read_result(self._shader_request("GET", "/api/shaders/agent-operations/asset-state", params={
             "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
             "project_context_witness": args["project_context_witness"]}), kind="state")
 
@@ -4405,7 +4419,7 @@ class Client:
             "project_context_witness", "shelf", "search", "cursor", "limit", "refresh"})
         params = {key: args[key] for key in (
             "project_context_witness", "shelf", "search", "cursor", "limit", "refresh") if key in args}
-        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/assets",
+        return _native_read_result(self._shader_request("GET", "/api/shaders/agent-operations/assets",
                                                      params=params), kind="assets", entries=50)
 
     def get_shader_history(self, args: Mapping[str, Any]) -> dict:
@@ -4422,7 +4436,7 @@ class Client:
 
     def get_shader_looks(self, args: Mapping[str, Any]) -> dict:
         _native_read_args(args, {"shader", "project_context_witness"})
-        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/looks", params={
+        return _native_read_result(self._shader_request("GET", "/api/shaders/agent-operations/looks", params={
             "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
             "project_context_witness": args["project_context_witness"]}), kind="looks", entries=128)
 
@@ -4436,7 +4450,7 @@ class Client:
                 raise HextileClientError("Invalid retention action", status_code=422, kind="other")
         _native_history_args(operation, checked)
         try:
-            receipt = self.request_json("POST", path, dict(args))
+            receipt = self._shader_request("POST", path, dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Shader history outcome unknown; read shader_get_operation by original request_id. Do not submit again.",
@@ -4487,7 +4501,7 @@ class Client:
                 raise HextileClientError("Unsupported history preview operation", status_code=422, kind="other")
             checked = {key: value for key, value in args.items() if key != "action"}
             _native_history_args("shader_history_preview", checked)
-            result = self.request_json("POST", "/api/shaders/agent-operations/history-retention", dict(args))
+            result = self._shader_request("POST", "/api/shaders/agent-operations/history-retention", dict(args))
             if (not isinstance(result, dict) or not isinstance(result.get("preview_token"), str)
                     or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 32768):
                 raise HextileClientError("Invalid Shader history preview", kind="other")
@@ -4529,7 +4543,7 @@ class Client:
             raise HextileClientError("Invalid complete sequence range", status_code=422, kind="other")
         if args.get("resolution", "full") not in {"full", "4k", "8k", "12k", "16k"} or type(args.get("reduced_copy", False)) is not bool:
             raise HextileClientError("Invalid resource resolution", status_code=422, kind="other")
-        result = self.request_json("POST", "/api/shaders/agent-operations/resources/stage", dict(args))
+        result = self._shader_request("POST", "/api/shaders/agent-operations/resources/stage", dict(args))
         if (type(result) is not dict or result.get("schema") != 1
                 or type(result.get("frames")) is not list or not 1 <= len(result["frames"]) <= 1024
                 or result.get("frame_count") != len(result["frames"])
@@ -4555,7 +4569,7 @@ class Client:
                           if "shader" in required else {"project_context_witness": args["project_context_witness"]},
                           {"shader", "project_context_witness"} if "shader" in required else {"project_context_witness"})
         try:
-            receipt = self.request_json("POST", path, dict(args))
+            receipt = self._shader_request("POST", path, dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Shader operation outcome unknown; retry only the original request ID.",
@@ -4587,7 +4601,7 @@ class Client:
         _native_read_args(args, required, optional)
         if args["origin"] not in {"project", "user"} or ("folder_id" in args and "revision" not in args):
             raise HextileClientError("Invalid organization scope", status_code=422, kind="other")
-        result = self.request_json("GET", "/api/shaders/agent-operations/library/organization", params=dict(args))
+        result = self._shader_request("GET", "/api/shaders/agent-operations/library/organization", params=dict(args))
         if (type(result) is not dict or set(result) != {"schema", "project_context_witness", "origin", "status",
                 "revision", "folders", "assigned_shader_ids", "next_cursor"}
                 or result["schema"] != 1 or result["origin"] != args["origin"]
@@ -4631,7 +4645,7 @@ class Client:
         _native_shader_args("rename", args)
         request_id = args["request_id"]
         try:
-            receipt = self.request_json("POST", "/api/shaders/agent-operations/rename", dict(args))
+            receipt = self._shader_request("POST", "/api/shaders/agent-operations/rename", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError(
@@ -4645,10 +4659,15 @@ class Client:
         return receipt
 
     def delete_shader_asset(self, args: Mapping[str, Any]) -> Any:
+        if isinstance(args, Mapping) and "expected_working_digest" not in args:
+            base = args.get("base")
+            digest = base.get("document_hash") if isinstance(base, Mapping) else None
+            if type(digest) is str:
+                args = {**args, "expected_working_digest": digest}
         _native_shader_args("delete", args)
         request_id = args["request_id"]
         try:
-            receipt = self.request_json("POST", "/api/shaders/agent-operations/delete", dict(args))
+            receipt = self._shader_request("POST", "/api/shaders/agent-operations/delete", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Shader delete outcome unknown; read shader_get_operation by request_id.",
@@ -4713,7 +4732,7 @@ class Client:
         if not valid or not bounded:
             raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
         try:
-            receipt = self.request_json("POST", path, dict(submitted))
+            receipt = self._shader_request("POST", path, dict(submitted))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError(
@@ -4827,7 +4846,7 @@ class Client:
         if not bounded:
             raise HextileClientError("Invalid mounted Shader action", kind="other", status_code=422)
         try:
-            receipt = self.request_json("POST", "/api/shaders/agent-operations/open", dict(args))
+            receipt = self._shader_request("POST", "/api/shaders/agent-operations/open", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError(
@@ -4906,7 +4925,7 @@ class Client:
                                              kind="other", status_code=422)
             raise HextileClientError("Invalid Shader creation", kind="other", status_code=422)
         try:
-            result = self.request_json("POST", "/api/shaders/agent-operations/create", dict(args))
+            result = self._shader_request("POST", "/api/shaders/agent-operations/create", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Shader creation outcome unknown; read shader_get_operation by original request ID.",
@@ -4981,7 +5000,7 @@ class Client:
             named = ", ".join(problems) if problems else "arguments"
             raise HextileClientError(f"Invalid Shader duplicate: invalid {named}", kind="other", status_code=422)
         try:
-            result = self.request_json("POST", "/api/shaders/agent-operations/duplicate", dict(args))
+            result = self._shader_request("POST", "/api/shaders/agent-operations/duplicate", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError(
@@ -5012,7 +5031,7 @@ class Client:
         if not valid_id:
             raise HextileClientError("Expected canonical request_id", kind="other", status_code=422)
         try:
-            result = self.request_json("POST", "/api/shaders/agent-operations/import-bundle", dict(args))
+            result = self._shader_request("POST", "/api/shaders/agent-operations/import-bundle", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Shader Bundle import outcome unknown; read shader_get_operation by original request ID.",
@@ -5044,7 +5063,7 @@ class Client:
                 valid = False
             if not valid or type(args["project_context_witness"]) is not str or not args["project_context_witness"]:
                 raise HextileClientError("Invalid Shader operation scope", status_code=422, kind="other")
-        result = self.request_json("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",
+        result = self._shader_request("GET", f"/api/shaders/agent-operations/operations/{args['request_id']}",
             params={**({"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"]}
                        if "shader" in args else {}), "scope": scope,
                     "project_context_witness": args["project_context_witness"]})
@@ -5098,7 +5117,7 @@ class Client:
         params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
                   "project_context_witness": args["project_context_witness"]}
         params.update({key: args[key] for key in ("section", "cursor", "limit", "text_ref", "offset_utf8") if key in args})
-        result = self.request_json("GET", "/api/shaders/agent-operations/credits", params=params)
+        result = self._shader_request("GET", "/api/shaders/agent-operations/credits", params=params)
         allowed = {"schema", "target", "provenance_hash", "author", "attribution", "license",
                    "automatic_credit", "section", "cursor", "total", "next_cursor",
                    "protected_distribution_present", "has_opaque_fields", "truncated_fields",
@@ -5154,7 +5173,7 @@ class Client:
             raise HextileClientError("Invalid Shader credits proposal", status_code=422, kind="other")
         request_id = args["request_id"]
         try:
-            result = self.request_json("POST", "/api/shaders/agent-operations/credits/proposals", dict(args))
+            result = self._shader_request("POST", "/api/shaders/agent-operations/credits/proposals", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError("Credits proposal outcome unknown; read shader_get_operation by request_id.",
@@ -5180,7 +5199,7 @@ class Client:
                 or type(links) is not list or len(links) > 4
                 or any(type(link) is not str or len(link.encode("utf-8")) > 2048 for link in links)):
             raise HextileClientError("Invalid source research URLs", status_code=422, kind="other")
-        result = self.request_json("POST", "/api/shaders/agent-operations/research-sources", dict(args))
+        result = self._shader_request("POST", "/api/shaders/agent-operations/research-sources", dict(args))
         if (type(result) is not dict or set(result) - {"schema", "pages", "omitted_links", "omitted_bytes", "limits"}
                 or result.get("schema") != 1 or type(result.get("pages")) is not list
                 or len(result["pages"]) > 5 or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 60 * 1024
@@ -7026,7 +7045,7 @@ class Client:
                 raster_policy="raster_policy" in args.get("output", {}),
                 render_route=route)
         try:
-            result = self.request_json("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
+            result = self._shader_request("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
                 raise HextileClientError(
@@ -7061,18 +7080,18 @@ class Client:
         if args.get("image") is True:
             return self.request_shader_preview_image(args["request_id"], params)
         return _shader_output_receipt("get_preview", args,
-            self.request_json("GET", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
+            self._shader_request("GET", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
                               params=params))
 
     def release_shader_preview(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("release_preview", args)
         return _shader_output_receipt("release_preview", args,
-            self.request_json("DELETE", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
+            self._shader_request("DELETE", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
                               {key: args[key] for key in ("shader", "project_context_witness")}), mutation=True)
 
     def get_shader_output_job(self, args: Mapping[str, Any]) -> dict:
         _shader_output_args("get_job", args)
-        return _shader_output_receipt("get_job", args, self.request_json("GET", "/api/shaders/agent-operations/output/jobs/" + args["request_id"],
+        return _shader_output_receipt("get_job", args, self._shader_request("GET", "/api/shaders/agent-operations/output/jobs/" + args["request_id"],
             params={"profile": args["profile"], "origin": args["shader"]["origin"],
                     "shader_id": args["shader"]["shaderId"],
                     "project_context_witness": args["project_context_witness"]}))
@@ -7081,7 +7100,7 @@ class Client:
         _shader_output_args("stop_job", args)
         try:
             return _shader_output_receipt("stop_job", args,
-                self.request_json("POST", "/api/shaders/agent-operations/output/jobs/" + args["request_id"] + "/stop",
+                self._shader_request("POST", "/api/shaders/agent-operations/output/jobs/" + args["request_id"] + "/stop",
                     {key: args[key] for key in ("shader", "project_context_witness", "profile")}), mutation=True)
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
