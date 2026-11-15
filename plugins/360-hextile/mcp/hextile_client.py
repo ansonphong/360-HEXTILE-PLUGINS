@@ -2252,7 +2252,8 @@ def _project_discovery_public(value: Any) -> Any:
 def _valid_shader_connection(result: Any) -> bool:
     """The v2 live Shader description. Unknown shapes never become compact success."""
     required = {"view", "stack", "connected", "shader", "lease", "commit", "revision", "mcp_enabled"}
-    optional = {"title", "writable", "project_context_witness", "studio_surface_id", "agent_open"}
+    optional = {"title", "writable", "project_context_witness", "studio_surface_id", "agent_open",
+                "saved_base"}
     if (type(result) is not dict or not required <= set(result) <= required | optional
             or result["view"] != "shader" or result["stack"] not in {"v1", "v2"}
             or type(result["connected"]) is not bool or type(result["mcp_enabled"]) is not bool):
@@ -2270,6 +2271,17 @@ def _valid_shader_connection(result: Any) -> bool:
                 or policy["policy"] not in {"ask", "always_allow", "never"}
                 or type(policy["allow_force_open"]) is not bool
                 or type(policy["blocked_for_session"]) is not bool):
+            return False
+    if "saved_base" in result and result["saved_base"] is not None:
+        saved = result["saved_base"]
+        if (type(saved) is not dict
+                or set(saved) != {"kind", "working_revision", "document_hash", "source_hash"}
+                or saved["kind"] != "saved" or type(saved["working_revision"]) is not int
+                or saved["working_revision"] < 1
+                or type(saved["document_hash"]) is not str
+                or _WORKSPACE_DIGEST.fullmatch(saved["document_hash"]) is None
+                or type(saved["source_hash"]) is not str
+                or _WORKSPACE_DIGEST.fullmatch(saved["source_hash"]) is None):
             return False
     for key in ("project_context_witness", "studio_surface_id"):
         if key in result and result[key] is not None and (
@@ -4996,7 +5008,7 @@ class Client:
         if not isinstance(args, Mapping):
             raise HextileClientError("Invalid Shader duplicate: arguments must be an object", kind="other", status_code=422)
         required = {"request_id", "project_context_witness", "shader", "base"}
-        _closed_argument_error("Invalid Shader duplicate", args, required, {"destination_origin"})
+        _closed_argument_error("Invalid Shader duplicate", args, required, {"destination_origin", "title"})
         shader, base = args.get("shader"), args.get("base")
         origin = shader.get("origin") if type(shader) is dict else None
         destination = args.get("destination_origin")
@@ -5017,6 +5029,9 @@ class Client:
                  and type(base.get("source_hash")) is str and _WORKSPACE_DIGEST.fullmatch(base["source_hash"]) is not None)
         if "destination_origin" in args:
             valid = valid and type(destination) is str and destination in {"user", "project"}
+        title_ok = "title" not in args or (type(args["title"]) is str and bool(args["title"].strip())
+                                          and len(args["title"]) <= 256)
+        valid = valid and title_ok
         if not valid:
             problems = []
             if not valid_id:
@@ -5037,6 +5052,8 @@ class Client:
                 problems.append("base")
             if "destination_origin" in args and (type(destination) is not str or destination not in {"user", "project"}):
                 problems.append("destination_origin")
+            if not title_ok:
+                problems.append("title")
             named = ", ".join(problems) if problems else "arguments"
             raise HextileClientError(f"Invalid Shader duplicate: invalid {named}", kind="other", status_code=422)
         try:

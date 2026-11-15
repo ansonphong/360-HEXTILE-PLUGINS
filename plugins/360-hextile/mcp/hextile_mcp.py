@@ -609,7 +609,7 @@ _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
 _WORKSPACE_GUIDANCE = (
     "For Shader source editing, read the installed shader skill's references/authoring.md "
     "or get_guide(name=\"workflow-schema\") before editing. "
-    "Open takes shader_id and request_id only. Do not send workspace_schema. It returns the lease. "
+    "Open takes shader_id and request_id only. Send no other fields. It returns the lease. "
     "Register saves the digest with the lease and seen. "
     "Register saves. Read merge to see what was kept. Unchanged rows are kept_count. "
     "Source bodies are path, sha256 and bytes. Watch compile; if it fails, fix and register again. "
@@ -2525,7 +2525,7 @@ TOOLS: list[dict[str, Any]] = [
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
     _tool_def("open_shader_workspace",
-        "Open one Shader workspace. Send shader_id and request_id only. Do not send workspace_schema. "
+        "Open one Shader workspace. Send shader_id and request_id only. Send no other fields. "
         "Returns the lease, commit and revision, plus workspace_path or workspace_paths when the reply has them. "
         "A workspace with no snapshot also returns not_adopted. "
         "Nothing human-side refuses open. The same request_id returns the recorded result.",
@@ -3088,10 +3088,11 @@ SHADER_EXTENSION_TOOLS = [
                "action": {"const": "fork"}, "expected_document_hash": _SHADER_DIGEST,
                "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 128}},
               ["request_id", "project_context_witness", "action", "shader", "expected_document_hash"]),
-    _tool_def("shader_duplicate_asset", "Duplicate one exact saved Shader into My Library or the active Project. Same-shelf copies sit beside the source; a different shelf places the copy at the top. Result reports placement placed or unavailable and does not open or select the copy. Replay and status use the original request ID and do not create a second copy.",
+    _tool_def("shader_duplicate_asset", "Duplicate one exact saved Shader into My Library or the active Project. Optional title names the copy. Same-shelf copies sit beside the source; a different shelf places the copy at the top. Result reports placement placed or unavailable and does not open or select the copy. Replay and status use the original request ID and do not create a second copy.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE,
-               "destination_origin": {"enum": ["user", "project"]}},
+               "destination_origin": {"enum": ["user", "project"]},
+               "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["request_id", "project_context_witness", "shader", "base"]),
     _tool_def("shader_import_bundle", "Import an absolute .hexshader file through the native importer. Optional bundle_sha256 is an expected digest. Explicit fork intent creates a new asset without a mounted source Shader; recover uncertainty by original request ID.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,

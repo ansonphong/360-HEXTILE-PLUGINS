@@ -1755,6 +1755,18 @@ def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkey
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: bad_policy)
     with pytest.raises(HextileClientError):
         client.get_live_context(view="shader")
+    with_base = {**compact, "saved_base": {"kind": "saved", "working_revision": 3,
+                                           "document_hash": "sha256:" + "a" * 64,
+                                           "source_hash": "sha256:" + "b" * 64}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: with_base)
+    assert client.get_live_context(view="shader") == with_base
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: {**compact, "saved_base": None})
+    assert client.get_live_context(view="shader")["saved_base"] is None
+    bad_base = {**compact, "saved_base": {"kind": "saved", "working_revision": 0,
+                                          "document_hash": "x", "source_hash": "y"}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: bad_base)
+    with pytest.raises(HextileClientError):
+        client.get_live_context(view="shader")
     mismatched = {**compact, "shader": {"origin": "user", "shader_id": "aurora", "shaderId": "other"}}
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: mismatched)
     with pytest.raises(HextileClientError):
@@ -2488,7 +2500,7 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
 
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     described = {tool["name"]: tool["description"] for tool in TOOLS + SHADER_EXTENSION_TOOLS}
-    assert "workspace_schema" in described["open_shader_workspace"]
+    assert "Send no other fields" in described["open_shader_workspace"]
     assert "render_observation.run_id" in described["control_shader_sequence"]
     assert "shader_checkpoint_save" in described["shader_checkpoint"]
     assert "operation rename" in described["shader_rename_asset"]

@@ -29,8 +29,8 @@ change another Shader without switching the view, edit it by id with
 `project_context_witness` from that context. The list returns that witness.
 APP down: “Launch 360 Hextile, then retry.” MCP disabled: enable MCP in APP Settings.
 
-`open_shader_workspace` takes `shader_id` and `request_id` only. Do not send
-`workspace_schema`. The package digest layout is in
+`open_shader_workspace` takes `shader_id` and `request_id` only; send no other
+fields. The package digest layout is in
 [the authoring procedure](references/authoring.md). `shader_capture_sequence_input`
 is optional for a Shader with no sequence input.
 
