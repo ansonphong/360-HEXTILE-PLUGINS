@@ -844,7 +844,9 @@ def test_register_forwards_digest_lease_and_seen(monkeypatch) -> None:
         return saved
 
     monkeypatch.setattr(client, "request_json", request_json)
-    assert client.register_shader_update(args)["merge"][0]["outcome"] == "kept"
+    registered = client.register_shader_update(args)
+    assert registered["merge"] == []
+    assert registered["kept_count"] == 1
     assert sent == {"method": "POST", "path": "/api/shaders/aurora/register",
                     "body": {"request_id": "req-register", "digest": digest,
                              "lease": args["lease"], "seen": seen}}
@@ -1793,3 +1795,121 @@ def test_malformed_open_result_does_not_echo_paths(monkeypatch) -> None:
     assert caught.value.kind == "other"
     assert "Malformed Shader open result" in str(caught.value)
     assert "D:/project" not in str(caught.value)
+
+
+def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
+    monkeypatch.setattr("hextile_client.Path", PurePosixPath)
+    digest = "sha256:" + "b" * 64
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    ref = {"origin": "user", "shaderId": "aurora"}
+    client = Client("http://127.0.0.1:9")
+    imported = {"schema": 1, "request_id": request_id, "operation": "shader_import_bundle",
+                "scope": "creation", "state": "saved", "project_context_witness": "wit",
+                "receipt": {"stack": "v2", "shader": {"origin": "user", "shaderId": "imported"},
+                            "working_revision": 3, "document_hash": digest, "bundle_sha256": digest}}
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: imported)
+    args = {"request_id": request_id, "project_context_witness": "wit",
+            "input_path": "D:/task/input.hexshader", "collision_intent": "fork", "bundle_sha256": digest}
+    assert client.import_shader_bundle(args)["receipt"]["stack"] == "v2"
+    assert client.get_shader_operation({"request_id": request_id, "scope": "creation",
+                                        "project_context_witness": "wit"})["state"] == "saved"
+
+    base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
+    rename = {"request_id": request_id, "shader": ref, "project_context_witness": "wit", "base": base,
+              "expected_working_digest": digest, "title": "Renamed",
+              "confirmation_scope": {"operation": "rename", "shader": ref}, "library_intent": "saved"}
+    renamed = {"stack": "v2", "shader_id": "aurora", "title": "Renamed", "tags": ["e2e"],
+               "revision": 9, "commit": 9, "digest": digest, "lease": {"holder": "agent", "generation": 0},
+               "operation": "shader_library_commit"}
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: renamed)
+    assert client.rename_shader_asset(rename)["operation"] == "shader_library_commit"
+    deleted = {"stack": "v2", "deleted": True, "shader_id": "aurora", "origin": "user"}
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: deleted)
+    removal = {key: value for key, value in rename.items() if key != "title"}
+    removal["confirmation_scope"] = {"operation": "delete", "shader": ref}
+    assert client.delete_shader_asset(removal)["deleted"] is True
+
+    glsl = "void hxMain() {\n  gl_FragColor = vec4(1.0);\n}\n" * 8
+    pending = _saved_body(compile={"revision": 4, "profiles": [
+        {"profile": "webgl2", "status": "pending", "program_identity": None, "ok": None},
+        {"profile": "dome", "status": "not_observed", "program_identity": None, "ok": None}]})
+    pending["merge"] = [
+        {"op": "set", "address": ["code"], "outcome": "lost_to_human", "human": 1,
+         "value": {"source.glsl": glsl}},
+        _merge_row()]
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: pending)
+    saved = client.get_shader_update(_package_args())
+    assert saved["compile_note"] == "compile pending; poll get_shader_update"
+    assert saved["kept_count"] == 1 and saved["merge"][0]["outcome"] == "lost_to_human"
+    assert saved["merge"][0]["value"]["files"][0]["path"] == "source.glsl"
+    assert glsl not in json.dumps(saved)
+    quiet = _saved_body(compile={"revision": 4, "profiles": [
+        {"profile": "dome", "status": "not_observed", "program_identity": None, "ok": None}]})
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: quiet)
+    assert "compile_note" not in client.get_shader_update(_package_args())
+
+    page = {"schema": 1, "target": ref, "section": "sources", "sources": [],
+            "provenance_hash": digest, "author": None, "attribution": None, "license": "MIT",
+            "automatic_credit": True, "cursor": 0, "total": 0, "next_cursor": None,
+            "protected_distribution_present": True, "has_opaque_fields": False,
+            "original": "originals/" + "ab" * 32 + ".glsl",
+            "distribution": {"rights": "declared", "code": digest, "original": None, "licenses_total": 1},
+            "attribution_schema": 2,
+            "host_profile": {"source": "none", "state": "missing", "automatic_credit": False,
+                             "profile": None, "frozen": None},
+            "base": base, "working_digest": None}
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: page)
+    assert client.get_shader_credits({"shader": ref, "project_context_witness": "wit"})["distribution"]["code"] == digest
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: {**page, "distribution": {**page["distribution"], "raw_licenses": []}})
+    with pytest.raises(HextileClientError):
+        client.get_shader_credits({"shader": ref, "project_context_witness": "wit"})
+
+    opened = _open_body(workspace_path="D:/shaders/aurora/workspace")
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: opened)
+    assert client.open_shader_workspace(_package_args())["workspace_path"].endswith("workspace")
+
+    with pytest.raises(HextileClientError) as titled:
+        client.create_shader_asset({"request_id": request_id, "project_context_witness": "wit",
+                                    "action": "new", "template_id": "hx_starter", "title": "Nope"})
+    assert "title is not accepted for action new" in str(titled.value)
+    with pytest.raises(HextileClientError) as limited:
+        client.list_shader_assets({"project_context_witness": "wit", "shelf": "user", "limit": 999})
+    assert "limit must be an integer from 1 to 50" in str(limited.value)
+    with pytest.raises(HextileClientError) as duplicated:
+        client.duplicate_shader_asset({"request_id": "not-a-uuid", "project_context_witness": "wit",
+                                       "shader": ref, "base": {}})
+    assert "invalid request_id" in str(duplicated.value) and "base" in str(duplicated.value)
+    with pytest.raises(HextileClientError) as slotted:
+        client.set_shader_resource({"shader": ref, "project_context_witness": "wit", "request_id": request_id,
+                                    "base": base, "expected_working_digest": digest, "action": "remove"})
+    assert "missing slot_id" in str(slotted.value)
+
+    look = {"request_id": request_id, "shader": ref, "project_context_witness": "wit", "base": base,
+            "expected_working_digest": digest, "library_intent": "saved", "look_id": "look_1",
+            "expected_look_envelope_hash": digest,
+            "confirmation_scope": {"operation": "shader_apply_look", "shader": ref}}
+    fat = {"schema": 1, "request_id": request_id, "operation": "shader_apply_look", "state": "saved",
+           "shader": ref, "receipt": {"results": [
+               _merge_row(),
+               {"op": "set", "address": ["code"], "outcome": "rewritten", "value": {"source.glsl": glsl}}]}}
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: fat)
+    applied = client.apply_shader_look(look)
+    assert applied["receipt"]["kept_count"] == 1
+    assert applied["receipt"]["results"][0]["value"]["files"][0]["bytes"] == len(glsl.encode("utf-8"))
+    assert "void hxMain" not in json.dumps(applied)
+
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    described = {tool["name"]: tool["description"] for tool in TOOLS + SHADER_EXTENSION_TOOLS}
+    assert "workspace_schema" in described["open_shader_workspace"]
+    assert "render_observation.run_id" in described["control_shader_sequence"]
+    assert "shader_checkpoint_save" in described["shader_checkpoint"]
+    assert "operation rename" in described["shader_rename_asset"]
+    assert "operation delete" in described["shader_delete_asset"]
+    assert "slot_id is required" in described["shader_set_resource"]
+    assert "title is accepted only for action paste" in described["shader_create_asset"]
+    skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
+    authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
+    assert "current_surface" in skill and "shader_capture_sequence_input" in skill
+    assert "hexshader-package-1" in authoring and "def package_digest" in authoring
+    assert "render_observation.run_id" in authoring
+    assert "sequence_input_unsupported" in authoring

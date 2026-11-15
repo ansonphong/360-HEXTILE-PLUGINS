@@ -905,6 +905,74 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
         raise invalid() from exc
 
 
+def _creation_shader_ref(shader: Any) -> bool:
+    return (type(shader) is dict and set(shader) == {"origin", "shaderId"}
+            and shader["origin"] in {"user", "project"}
+            and type(shader["shaderId"]) is str
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", shader["shaderId"]) is not None)
+
+
+def _creation_digest(value: Any) -> bool:
+    return type(value) is str and _WORKSPACE_DIGEST.fullmatch(value) is not None
+
+
+def _valid_creation_receipt(receipt: Any, operation: str) -> bool:
+    """Closed legacy receipt, or the v2 library receipt (stack, no source/manifest hash)."""
+    if type(receipt) is not dict or not _creation_shader_ref(receipt.get("shader")):
+        return False
+    revision = receipt.get("working_revision")
+    if type(revision) is not int or revision < 1 or not _creation_digest(receipt.get("document_hash")):
+        return False
+    keys = set(receipt)
+    legacy = {"shader", "working_revision", "document_hash", "source_hash", "manifest_hash"}
+    if operation == "shader_import_bundle":
+        legacy = legacy | {"bundle_sha256"}
+    if keys == legacy:
+        manifest = receipt["manifest_hash"]
+        return (revision == 1 and _creation_digest(receipt["source_hash"])
+                and (manifest is None or _creation_digest(manifest))
+                and (operation != "shader_import_bundle" or _creation_digest(receipt["bundle_sha256"])))
+    live = {"stack", "shader", "working_revision", "document_hash"}
+    if operation == "shader_import_bundle":
+        live = live | {"bundle_sha256"}
+    return (keys == live and receipt.get("stack") == "v2"
+            and (operation != "shader_import_bundle" or _creation_digest(receipt["bundle_sha256"])))
+
+
+def _accepted_rename_receipt(receipt: Any, args: Mapping[str, Any]) -> bool:
+    """A request-id envelope, or the v2 rename body (no request_id; operation may be shader_library_commit)."""
+    if type(receipt) is not dict:
+        return False
+    if receipt.get("request_id") == args["request_id"]:
+        return True
+    ref = args["shader"]
+    tags = receipt.get("tags")
+    operation = receipt.get("operation", "shader_library_commit")
+    return (receipt.get("stack") == "v2" and receipt.get("shader_id") == ref.get("shaderId")
+            and type(receipt.get("title")) is str and type(tags) is list and len(tags) <= 64
+            and all(type(tag) is str and len(tag) <= 256 for tag in tags)
+            and type(receipt.get("revision")) is int and receipt["revision"] >= 1
+            and type(receipt.get("commit")) is int and receipt["commit"] >= 1
+            and _creation_digest(receipt.get("digest")) and _shader_lease(receipt.get("lease"))
+            and operation in {"shader_library_commit", "shader_rename_asset", "rename"}
+            and set(receipt) <= {"stack", "shader_id", "title", "tags", "revision", "commit",
+                                 "digest", "lease", "operation"})
+
+
+def _accepted_delete_receipt(receipt: Any, args: Mapping[str, Any]) -> bool:
+    """A request-id envelope, or the v2 delete body."""
+    if type(receipt) is not dict:
+        return False
+    if receipt.get("request_id") == args["request_id"]:
+        return True
+    operation = receipt.get("operation", "shader_library_commit")
+    return (receipt.get("stack") == "v2" and receipt.get("deleted") is True
+            and receipt.get("shader_id") == args["shader"].get("shaderId")
+            and receipt.get("origin") in {"user", "project"}
+            and operation in {"shader_library_commit", "shader_delete_asset", "delete"}
+            and set(receipt) <= {"stack", "deleted", "shader_id", "origin", "operation"})
+
+
 def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, complete: bool) -> bool:
     if type(result) is not dict:
         return False
@@ -925,21 +993,7 @@ def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, compl
         if result["state"] != "saved":
             return "receipt" not in result
         receipt = result.get("receipt")
-        return (type(receipt) is dict and set(receipt) == ({"shader", "working_revision",
-                "document_hash", "source_hash", "manifest_hash"} | ({"bundle_sha256"} if result["operation"] == "shader_import_bundle" else set()))
-                and (result["operation"] != "shader_import_bundle" or type(receipt["bundle_sha256"]) is str
-                     and _WORKSPACE_DIGEST.fullmatch(receipt["bundle_sha256"]) is not None)
-                and type(receipt["shader"]) is dict
-                and set(receipt["shader"]) == {"origin", "shaderId"}
-                and receipt["shader"]["origin"] in {"user", "project"}
-                and type(receipt["shader"]["shaderId"]) is str
-                and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", receipt["shader"]["shaderId"]) is not None
-                and type(receipt["working_revision"]) is int and receipt["working_revision"] == 1
-                and all(type(receipt[key]) is str and _WORKSPACE_DIGEST.fullmatch(receipt[key])
-                        for key in ("document_hash", "source_hash"))
-                and (receipt["manifest_hash"] is None or
-                     type(receipt["manifest_hash"]) is str and
-                     _WORKSPACE_DIGEST.fullmatch(receipt["manifest_hash"]) is not None))
+        return _valid_creation_receipt(receipt, result["operation"])
     except (KeyError, TypeError, ValueError, OverflowError):
         return False
 
@@ -1138,17 +1192,33 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Invalid native Shader rename", status_code=422, kind="other")
 
 
+def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[str], optional: set[str]) -> None:
+    """Name the missing and unknown fields on a closed argument object."""
+    if not isinstance(args, Mapping):
+        raise HextileClientError(f"{label}: arguments must be an object", status_code=422, kind="other")
+    missing = sorted(required - set(args))
+    unknown = sorted(set(args) - required - optional)
+    if missing or unknown:
+        parts = []
+        if missing:
+            parts.append("missing " + ", ".join(missing))
+        if unknown:
+            parts.append("unknown " + ", ".join(unknown))
+        raise HextileClientError(label + ": " + "; ".join(parts), status_code=422, kind="other")
+
+
 def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set[str] = frozenset()) -> None:
-    if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
-        raise HextileClientError("Expected closed Shader read arguments", status_code=422, kind="other")
+    _closed_argument_error("Expected closed Shader read arguments", args, required, set(optional))
     witness = args.get("project_context_witness")
     if type(witness) is not str or not 1 <= len(witness) <= 256:
         raise HextileClientError("Invalid Project witness", status_code=422, kind="other")
     if "shader" in required:
         _native_shader_args("state", {"shader": args["shader"], "project_context_witness": witness})
-    if "limit" in args and (type(args["limit"]) is not int or not 1 <= args["limit"] <=
-                            (50 if "shelf" in optional else 20)):
-        raise HextileClientError("Invalid page limit", status_code=422, kind="other")
+    if "limit" in args:
+        cap = 50 if "shelf" in optional else 20
+        if type(args["limit"]) is not int or not 1 <= args["limit"] <= cap:
+            raise HextileClientError(f"Invalid page limit: limit must be an integer from 1 to {cap}",
+                                     status_code=422, kind="other")
     if "cursor" in args and (type(args["cursor"]) is not str or len(args["cursor"]) > 8192):
         raise HextileClientError("Invalid page cursor", status_code=422, kind="other")
     if "search" in args and (type(args["search"]) is not str or len(args["search"]) > 128):
@@ -1324,6 +1394,51 @@ def _credit_changes(value: Any) -> bool:
     return type(value) is dict and bool(value) and set(value) <= _PACKAGE_CREDIT_KEYS
 
 
+def _valid_credit_distribution(distribution: Any) -> bool:
+    """Legacy schema-1 summary, an opaque marker, or the live rights/code/original summary."""
+    if type(distribution) is not dict:
+        return False
+    keys = set(distribution)
+    legacy = {"schema", "rights", "source_hash", "original_sha256", "licenses_total"}
+    if legacy <= keys:
+        return (keys <= legacy | {"has_opaque_fields"} and distribution["schema"] == 1
+                and distribution["rights"] in {"declared", "unresolved"}
+                and _creation_digest(distribution["source_hash"])
+                and (distribution["original_sha256"] is None or _creation_digest(distribution["original_sha256"]))
+                and type(distribution["licenses_total"]) is int
+                and 0 <= distribution["licenses_total"] <= 100000
+                and ("has_opaque_fields" not in distribution or distribution["has_opaque_fields"] is True))
+    if distribution == {"has_opaque_fields": True}:
+        return True
+    if keys == {"schema", "has_opaque_fields"}:
+        return (type(distribution["schema"]) is int and distribution["schema"] > 0
+                and distribution["has_opaque_fields"] is True)
+    live = {"rights", "code", "original", "licenses_total"}
+    if live <= keys <= live | {"has_opaque_fields"}:
+        original = distribution["original"]
+        return (distribution["rights"] in {"declared", "unresolved"}
+                and _creation_digest(distribution["code"])
+                and (original is None or _creation_digest(original))
+                and type(distribution["licenses_total"]) is int
+                and 0 <= distribution["licenses_total"] <= 100000
+                and ("has_opaque_fields" not in distribution or distribution["has_opaque_fields"] is True))
+    return False
+
+
+def _valid_host_profile(value: Any) -> bool:
+    if (type(value) is not dict or set(value) - {"source", "state", "automatic_credit", "profile", "frozen"}
+            or value.get("source") not in {"local", "gallery", "none"}
+            or value.get("state") not in {"available", "missing"}
+            or type(value.get("automatic_credit")) is not bool):
+        return False
+    profile = value.get("profile")
+    if profile is not None and (type(profile) is not dict
+            or set(profile) - {"version", "name", "links", "bio", "avatar"}
+            or profile.get("version") not in {1, 2}):
+        return False
+    return value.get("frozen") is None or type(value.get("frozen")) is dict
+
+
 def validate_shader_doctor(operation: str, args: Mapping[str, Any]) -> None:
     """Validate the exact request identity before contacting the mounted Studio."""
     required = ({"request_id", "origin", "shader_id", "project_context_witness", "studio_surface_id"}
@@ -1388,7 +1503,14 @@ def validate_shader_workspace(operation: str, args: Mapping[str, Any]) -> None:
         refuse("Expected a request_id")
     if operation in {"open", "get"}:
         if set(args) != {"shader_id", "request_id"}:
-            refuse("Open and get take only shader_id and request_id")
+            missing = sorted({"shader_id", "request_id"} - set(args))
+            unknown = sorted(set(args) - {"shader_id", "request_id"})
+            parts = []
+            if missing:
+                parts.append("missing " + ", ".join(missing))
+            if unknown:
+                parts.append("unknown " + ", ".join(unknown))
+            refuse("Open and get take only shader_id and request_id: " + "; ".join(parts))
         return
     if operation == "register":
         if (set(args) - {"shader_id", "request_id", "digest", "lease", "seen"}
@@ -2593,6 +2715,76 @@ def _json_value(value: Any) -> bool:
     return False
 
 
+def _source_text(value: Any) -> bool:
+    if type(value) is not str or len(value) < 32:
+        return False
+    if "\n" not in value and len(value) < 512:
+        return False
+    if any(mark in value for mark in ("void ", "#version", "hxMain", "gl_Frag", "precision ")):
+        return True
+    return len(value) > 512 and ";" in value and "{" in value
+
+
+def _digest_blob(text: str) -> dict:
+    raw = text.encode("utf-8")
+    return {"sha256": "sha256:" + hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+
+def _slim_source_value(value: Any, address: Any) -> Any:
+    """Replace GLSL bodies with path, sha256 and byte length. Leave scalars."""
+    if _source_text(value):
+        slim = _digest_blob(value)
+        if type(address) is list and address and type(address[-1]) is str and "." in address[-1]:
+            slim = {"path": address[-1], **slim}
+        return slim
+    code = address == ["code"]
+    if (type(value) is dict and value and all(type(key) is str and type(item) is str for key, item in value.items())
+            and (code or any(key == "source.glsl" or key.endswith(".glsl") or key.startswith("modules/")
+                             for key in value))):
+        return {"files": [{"path": path, **_digest_blob(value[path])} for path in sorted(value)]}
+    return value
+
+
+def _slim_merge_row(row: dict) -> dict:
+    address = row.get("address")
+    slim = dict(row)
+    for key in ("before", "value"):
+        if key in slim:
+            slim[key] = _slim_source_value(slim[key], address)
+    return slim
+
+
+def _shape_merge_container(parent: Any) -> None:
+    """Omit unchanged kept rows and drop source bodies from the rows that remain."""
+    if type(parent) is not dict:
+        return
+    for key in ("merge", "results"):
+        rows = parent.get(key)
+        if type(rows) is not list:
+            continue
+        kept = 0
+        shaped = []
+        for row in rows:
+            if type(row) is dict and row.get("outcome") == "kept":
+                kept += 1
+                continue
+            shaped.append(_slim_merge_row(row) if type(row) is dict else row)
+        parent[key] = shaped
+        if kept:
+            parent["kept_count"] = kept
+    receipt = parent.get("receipt")
+    if type(receipt) is dict:
+        _shape_merge_container(receipt)
+
+
+def _compile_pending_note(compile: Any) -> bool:
+    profiles = compile.get("profiles") if type(compile) is dict else None
+    if type(profiles) is not list:
+        return False
+    return any(type(row) is dict and row.get("status") == "pending" and "ok" in row and row.get("ok") is None
+               for row in profiles)
+
+
 def _merge_rows(value: Any) -> list:
     """R4 rows: op, address, outcome, and the value fields a read actually returned."""
     if type(value) is not list or len(value) > _MERGE_MAX_ENTRIES:
@@ -2637,18 +2829,30 @@ def _compile_view(value: Any) -> dict:
                 or type(row["profile"]) is not str or not row["profile"] or len(row["profile"]) > 64
                 or row["status"] not in _COMPILE_STATUS
                 or not (row["program_identity"] is None or type(row["program_identity"]) is str)
-                or ("ok" in row and type(row["ok"]) is not bool)
+                or ("ok" in row and row["ok"] is not None and type(row["ok"]) is not bool)
                 or ("diagnostics" in row and type(row["diagnostics"]) is not list)):
             _malformed("Malformed compile report")
     return value
 
 
+def _workspace_path_text(value: Any) -> bool:
+    return type(value) is str and 1 <= len(value) <= 1024 and not any(ord(ch) < 32 for ch in value)
+
+
 def _open_result(value: Any) -> dict:
     if (type(value) is not dict or not {"lease", "commit", "revision"} <= set(value)
-            or set(value) - {"lease", "commit", "revision", "not_adopted"}
+            or set(value) - {"lease", "commit", "revision", "not_adopted",
+                             "workspace", "workspace_path", "workspace_paths"}
             or not _shader_lease(value["lease"])
             or type(value["commit"]) is not int or value["commit"] < 0
             or type(value["revision"]) is not int or value["revision"] < 0):
+        _malformed("Malformed Shader open result")
+    for key in ("workspace", "workspace_path"):
+        if key in value and not _workspace_path_text(value[key]):
+            _malformed("Malformed Shader open result")
+    paths = value.get("workspace_paths")
+    if "workspace_paths" in value and (type(paths) is not list or len(paths) > 8
+                                       or any(not _workspace_path_text(path) for path in paths)):
         _malformed("Malformed Shader open result")
     if "not_adopted" in value:
         _not_adopted_rows(value["not_adopted"])
@@ -2672,6 +2876,9 @@ def _saved_result(value: Any) -> dict:
         _not_adopted_rows(value["not_adopted"])
     if "compile" in value:
         _compile_view(value["compile"])
+        if _compile_pending_note(value["compile"]):
+            value["compile_note"] = "compile pending; poll get_shader_update"
+    _shape_merge_container(value)
     return value
 
 
@@ -2682,6 +2889,7 @@ def _edit_result(value: Any) -> dict:
             or type(value.get("revision")) is not int or value["revision"] < 0):
         _malformed("Malformed Shader edit result")
     _merge_rows(value["results"])
+    _shape_merge_container(value)
     return value
 
 class Client:
@@ -4106,6 +4314,8 @@ class Client:
                 raise HextileClientError("Shader history outcome unknown; read shader_get_operation by original request_id. Do not submit again.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]}) from exc
             raise
+        if isinstance(receipt, dict):
+            _shape_merge_container(receipt)
         if (not isinstance(receipt, dict) or receipt.get("request_id") != checked["request_id"]
                 or receipt.get("operation") != operation
                 or receipt.get("state") not in {"pending", "applied", "saved", "refused", "failed", "unknown", "expired"}):
@@ -4200,8 +4410,7 @@ class Client:
 
     def _shader_scoped_write(self, args: Mapping[str, Any], operation: str, path: str,
                              required: set[str], optional: set[str] = frozenset()) -> dict:
-        if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
-            raise HextileClientError("Invalid closed Shader operation", status_code=422, kind="other")
+        _closed_argument_error("Invalid closed Shader operation", args, required, set(optional))
         if "seen" in args and not _shader_seen(args["seen"]):
             raise HextileClientError("Malformed seen evidence", status_code=422, kind="other")
         try:
@@ -4220,6 +4429,8 @@ class Client:
                 raise HextileClientError("Shader operation outcome unknown; retry only the original request ID.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
             raise
+        if type(receipt) is dict:
+            _shape_merge_container(receipt)
         if (type(receipt) is not dict or receipt.get("schema") != 1
                 or receipt.get("request_id") != args["request_id"] or receipt.get("operation") != operation
                 or receipt.get("state") not in {"pending", "applied", "saved", "refused", "failed", "unknown", "expired"}
@@ -4295,7 +4506,7 @@ class Client:
                     "Shader rename outcome unknown; read shader_get_operation by request_id. Do not submit again.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
             raise
-        if not isinstance(receipt, dict) or receipt.get("request_id") != request_id:
+        if not _accepted_rename_receipt(receipt, args):
             raise HextileClientError(
                 "Shader rename acknowledgement unknown; read shader_get_operation by request_id.",
                 kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
@@ -4311,7 +4522,7 @@ class Client:
                 raise HextileClientError("Shader delete outcome unknown; read shader_get_operation by request_id.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
             raise
-        if not isinstance(receipt, dict) or receipt.get("request_id") != request_id:
+        if not _accepted_delete_receipt(receipt, args):
             raise HextileClientError("Shader delete acknowledgement unknown; read shader_get_operation by request_id.",
                 kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
         return receipt
@@ -4490,6 +4701,20 @@ class Client:
                 valid = valid and type(args["checkpoint_id"]) is str and bool(
                     re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args["checkpoint_id"]))
         if not valid:
+            if isinstance(args, Mapping) and action == "new" and "title" in args:
+                raise HextileClientError("Invalid Shader creation: title is not accepted for action new",
+                                         kind="other", status_code=422)
+            if isinstance(args, Mapping):
+                missing = sorted(expected - set(args))
+                unknown = sorted(set(args) - expected - optional)
+                if missing or unknown:
+                    parts = []
+                    if missing:
+                        parts.append("missing " + ", ".join(missing))
+                    if unknown:
+                        parts.append("unknown " + ", ".join(unknown))
+                    raise HextileClientError("Invalid Shader creation: " + "; ".join(parts),
+                                             kind="other", status_code=422)
             raise HextileClientError("Invalid Shader creation", kind="other", status_code=422)
         try:
             result = self.request_json("POST", "/api/shaders/agent-operations/create", dict(args))
@@ -4521,10 +4746,9 @@ class Client:
     def duplicate_shader_asset(self, args: Mapping[str, Any]) -> dict:
         """Saved-ref Library Duplicate. A lost reply is recovered by the original request, not a second POST."""
         if not isinstance(args, Mapping):
-            raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
+            raise HextileClientError("Invalid Shader duplicate: arguments must be an object", kind="other", status_code=422)
         required = {"request_id", "project_context_witness", "shader", "base"}
-        if required - set(args) or set(args) - required - {"destination_origin"}:
-            raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
+        _closed_argument_error("Invalid Shader duplicate", args, required, {"destination_origin"})
         shader, base = args.get("shader"), args.get("base")
         origin = shader.get("origin") if type(shader) is dict else None
         destination = args.get("destination_origin")
@@ -4546,7 +4770,27 @@ class Client:
         if "destination_origin" in args:
             valid = valid and type(destination) is str and destination in {"user", "project"}
         if not valid:
-            raise HextileClientError("Invalid Shader duplicate", kind="other", status_code=422)
+            problems = []
+            if not valid_id:
+                problems.append("request_id")
+            if type(args.get("project_context_witness")) is not str or not args.get("project_context_witness"):
+                problems.append("project_context_witness")
+            if not (type(shader) is dict and set(shader) == {"origin", "shaderId"}
+                    and type(origin) is str and origin in {"builtin", "user", "project"}
+                    and type(shader.get("shaderId")) is str and bool(shader.get("shaderId"))):
+                problems.append("shader")
+            if not (type(base) is dict and set(base) == {"kind", "working_revision", "document_hash", "source_hash"}
+                    and base.get("kind") == "saved" and type(base.get("working_revision")) is int
+                    and base.get("working_revision", 0) >= 1
+                    and type(base.get("document_hash")) is str
+                    and _WORKSPACE_DIGEST.fullmatch(base.get("document_hash") or "") is not None
+                    and type(base.get("source_hash")) is str
+                    and _WORKSPACE_DIGEST.fullmatch(base.get("source_hash") or "") is not None):
+                problems.append("base")
+            if "destination_origin" in args and (type(destination) is not str or destination not in {"user", "project"}):
+                problems.append("destination_origin")
+            named = ", ".join(problems) if problems else "arguments"
+            raise HextileClientError(f"Invalid Shader duplicate: invalid {named}", kind="other", status_code=422)
         try:
             result = self.request_json("POST", "/api/shaders/agent-operations/duplicate", dict(args))
         except HextileClientError as exc:
@@ -4671,30 +4915,19 @@ class Client:
                    "oversized_row", "sources", "contributors", "current_roles", "history",
                    "retained_credits", "notices", "base", "working_digest", "text_fields",
                    "text_ref", "offset_utf8", "text", "total_bytes", "next_offset_utf8",
-                   "original_source_hash", "distribution"}
+                   "original_source_hash", "distribution", "original",
+                   "attribution_schema", "host_profile"}
         distribution = result.get("distribution") if type(result) is dict else None
-        valid_distribution = True
-        if distribution is not None:
-            valid_distribution = type(distribution) is dict
-            if valid_distribution and set(distribution) >= {"schema", "rights", "source_hash",
-                    "original_sha256", "licenses_total"}:
-                valid_distribution = (set(distribution) <= {"schema", "rights", "source_hash",
-                    "original_sha256", "licenses_total", "has_opaque_fields"}
-                    and distribution["schema"] == 1
-                    and distribution["rights"] in {"declared", "unresolved"}
-                    and type(distribution["source_hash"]) is str
-                    and _WORKSPACE_DIGEST.fullmatch(distribution["source_hash"]) is not None
-                    and (distribution["original_sha256"] is None or
-                         type(distribution["original_sha256"]) is str and
-                         _WORKSPACE_DIGEST.fullmatch(distribution["original_sha256"]) is not None)
-                    and type(distribution["licenses_total"]) is int and 0 <= distribution["licenses_total"] <= 100000
-                    and ("has_opaque_fields" not in distribution or distribution["has_opaque_fields"] is True))
-            elif valid_distribution:
-                valid_distribution = (distribution == {"has_opaque_fields": True}
-                    or set(distribution) == {"schema", "has_opaque_fields"}
-                    and type(distribution["schema"]) is int and distribution["schema"] > 0
-                    and distribution["has_opaque_fields"] is True)
+        valid_distribution = distribution is None or _valid_credit_distribution(distribution)
+        original = result.get("original") if type(result) is dict else None
+        valid_original = (type(result) is not dict or "original" not in result or type(original) is str
+                          and re.fullmatch(r"originals/[0-9a-f]{64}\.glsl", original) is not None)
+        host_profile = result.get("host_profile") if type(result) is dict else None
+        valid_host = type(result) is not dict or "host_profile" not in result or _valid_host_profile(host_profile)
+        schema_ok = (type(result) is not dict or "attribution_schema" not in result
+                     or result.get("attribution_schema") in {1, 2})
         if (type(result) is not dict or set(result) - allowed or result.get("schema") != 1
+                or not valid_original or not valid_host or not schema_ok
                 or result.get("target") != args["shader"]
                 or result.get("section") != args.get("section", "sources")
                 or (result["section"] == "text" and (result.get("text_ref") != args.get("text_ref")

@@ -606,9 +606,10 @@ _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
 _WORKSPACE_GUIDANCE = (
     "For Shader source editing, read the installed shader skill's references/authoring.md "
     "or get_guide(name=\"workflow-schema\") before editing. "
-    "Open takes the Shader id and a request id and returns the lease. "
+    "Open takes shader_id and request_id only. Do not send workspace_schema. It returns the lease. "
     "Register saves the digest with the lease and seen. "
-    "Register saves. Read merge to see what was kept. Watch compile; if it fails, fix and register again. "
+    "Register saves. Read merge to see what was kept. Unchanged rows are kept_count. "
+    "Source bodies are path, sha256 and bytes. Watch compile; if it fails, fix and register again. "
     "A field the human has edited carries a human number wherever you read it. To change such a field, send that pair in seen with your edit. "
     "If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Resend that unit with shader_edit and the new seen pair only if you still mean it. "
     "Only the human moves the lease."
@@ -2496,7 +2497,7 @@ TOOLS: list[dict[str, Any]] = [
         {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}},
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
-     "description": "Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request and fingerprint. "
+     "description": "Stop uses render_observation.run_id from get_shader_sequence. Resume an admitted native job, or Continue the exact inspected request and fingerprint. "
                     "Start_over requires confirmed:true after showing the destination and owned output; it archives owned direct output recoverably and returns a new sequence_id. Recover a lost Start-over reply by the identical original POST/body/key/fingerprint. Pending replacement references support recover_start_over with the observed new_sequence_id, same destination, current witness and confirmed:true. Publication controls require the observed attempt_id. A stale Stop needs a fresh GET, never an unscoped retry.",
      "inputSchema": _SHADER_SEQUENCE_CONTROL,
      "annotations": _annotations("control_shader_sequence")},
@@ -2515,14 +2516,16 @@ TOOLS: list[dict[str, Any]] = [
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
     _tool_def("open_shader_workspace",
-        "Open one Shader workspace. Send shader_id and request_id only. "
-        "Returns the lease, commit and revision. A workspace with no snapshot also returns not_adopted. "
+        "Open one Shader workspace. Send shader_id and request_id only. Do not send workspace_schema. "
+        "Returns the lease, commit and revision, plus workspace_path or workspace_paths when the reply has them. "
+        "A workspace with no snapshot also returns not_adopted. "
         "Nothing human-side refuses open. The same request_id returns the recorded result.",
         {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST},
         ["shader_id", "request_id"]),
     _tool_def("register_shader_update",
         "Register saves the captured package. Send shader_id, request_id, the sha256 digest, the lease, "
-        "and seen for units a human has edited. Read merge to see what was kept. Watch compile. "
+        "and seen for units a human has edited. Read merge to see what was kept. "
+        "Unchanged rows are kept_count and omitted. Source bodies are path, sha256 and bytes. Watch compile. "
         "A lost_to_human row kept the human value and returns the new number. Resend that unit with shader_edit and the new seen pair if you still mean it. "
         "stale_lease means the lease moved. Only the human moves the lease. "
         "Prepare failure returns prepare failed and diagnostics. The same request_id returns the recorded result.",
@@ -2883,33 +2886,33 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness"]),
     _tool_def("shader_get_looks", "Read bounded saved Look identities without source or pixel data.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_save_look", "Save the exact durable Shader values and authored state as a named Look; optional replacement binds the old Look envelope.",
+    _tool_def("shader_save_look", "Save the exact durable Shader values and authored state as a named Look; optional replacement binds the old Look envelope. Saved library: library_intent saved and confirmation_scope operation shader_save_look, with no studio surface. Mounted: studio_surface_id and no library_intent.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "include_overrides": {"type": "boolean"}, "look_id": _NATIVE_HISTORY_CHECKPOINT,
                "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id", "title"]),
-    _tool_def("shader_apply_look", "Apply one exact compatible saved Look through the native writer; source formula changes require their separate policy.",
+    _tool_def("shader_apply_look", "Apply one exact compatible saved Look through the native writer; source formula changes require their separate policy. Saved library confirmation_scope operation is shader_apply_look. Mounted history sends studio_surface_id and omits library_intent.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "look_id", "expected_look_envelope_hash"]),
-    _tool_def("shader_rename_look", "Rename one saved Look with its exact envelope hash.",
+    _tool_def("shader_rename_look", "Rename one saved Look with its exact envelope hash. Saved library confirmation_scope operation is shader_rename_look.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "look_id", "expected_look_envelope_hash", "title"]),
-    _tool_def("shader_delete_look", "Remove one exact saved Look while retaining historical revision pins.",
+    _tool_def("shader_delete_look", "Remove one exact saved Look while retaining historical revision pins. Saved library confirmation_scope operation is shader_delete_look.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "look_id", "expected_look_envelope_hash"]),
-    _tool_def("shader_checkpoint", "Save, rename or remove one exact checkpoint name through the bound native history action.",
+    _tool_def("shader_checkpoint", "Save, rename or remove one exact checkpoint name through the bound native history action. Saved library: library_intent saved and confirmation_scope operation shader_checkpoint_save, shader_checkpoint_rename, or shader_checkpoint_remove. Mounted: studio_surface_id and no library_intent.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["save", "rename", "remove"]},
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -2917,18 +2920,18 @@ SHADER_EXTENSION_TOOLS = [
                "expected_name": {"type": "string", "minLength": 1, "maxLength": 256},
                "target": _NATIVE_HISTORY_TARGET},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id", "action"]),
-    _tool_def("shader_restore_revision", "Restore one exact retained revision or checkpoint as the next revision; an uncertain result requires original request ID recovery.",
+    _tool_def("shader_restore_revision", "Restore one exact retained revision or checkpoint as the next revision; an uncertain result requires original request ID recovery. Saved library confirmation_scope operation is shader_restore_revision.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id"]),
-    _tool_def("shader_copy_revision", "Save an independent copy of one exact retained revision or checkpoint, preserving credits, Looks and resources.",
+    _tool_def("shader_copy_revision", "Save an independent copy of one exact retained revision or checkpoint, preserving credits, Looks and resources. Saved library confirmation_scope operation is shader_copy_revision.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT,
                "destination_origin": {"enum": ["user", "project"]},
                "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "destination_origin"]),
-    _tool_def("shader_history_retention", "Preview or compact recoverable history. Permanent purge is human only.",
+    _tool_def("shader_history_retention", "Preview or compact recoverable history. Permanent purge is human only. Saved library confirmation_scope operation is shader_history_retention.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["preview", "compact"]},
                "mode": {"enum": ["current", "checkpoints"]}, "preview_token": _SHADER_DIGEST,
@@ -2953,7 +2956,7 @@ SHADER_EXTENSION_TOOLS = [
                "projection": {"enum": ["equirectangular", "flat"]}, "filter": {"enum": ["linear", "nearest", "mipmap"]},
                "edge_u": {"enum": ["clamp", "repeat"]}, "edge_v": {"enum": ["clamp", "repeat"]}},
               ["shader", "project_context_witness", "base", "expected_working_digest", "source"]),
-    _tool_def("shader_set_resource", "Attach, replace, locate, remove, or change typed settings of one exact Shader input through the native CAS writer. Stage tokens are required for attach/replace/locate; an uncertain write must be recovered by its original request ID.",
+    _tool_def("shader_set_resource", "Attach, replace, locate, remove, or change typed settings of one exact Shader input through the native CAS writer. slot_id is required. Stage tokens are required for attach/replace/locate; an uncertain write must be recovered by its original request ID.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["attach", "replace", "locate", "remove", "settings"]},
                "slot_id": {"type": "string", "pattern": "^input[1-9][0-9]*$"},
@@ -2999,7 +3002,7 @@ SHADER_EXTENSION_TOOLS = [
                "default_profile_id": {"oneOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
                "seen": _SEEN},
               ["request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"]),
-    _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. An uncertain write must be checked by shader_get_operation.",
+    _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. Saved library: library_intent saved and confirmation_scope operation rename for that shader. Do not send a studio surface. An uncertain write must be checked by shader_get_operation.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -3009,7 +3012,7 @@ SHADER_EXTENSION_TOOLS = [
                                       "shader": _NATIVE_SHADER_TARGET["shader"]},
                                       "required": ["operation", "shader"], "additionalProperties": False}},
               ["request_id", "shader", "project_context_witness", "base", "expected_working_digest", "title", "confirmation_scope"]),
-    _tool_def("shader_delete_asset", "Delete one exact saved Shader. Explicit confirmation scope is required; recover uncertain outcome by request ID.",
+    _tool_def("shader_delete_asset", "Delete one exact saved Shader. Saved library: library_intent saved and confirmation_scope operation delete for that shader. Do not send a studio surface. Recover an uncertain outcome by request ID.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": _SHADER_DIGEST,
                "expected_owner_generation": {"type": "string", "minLength": 1},
@@ -3049,7 +3052,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_save_as", "Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. A dirty draft is saved as merged. The new asset is selected only after its original-ticket transition acknowledgement.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
-    _tool_def("shader_create_asset", "Create a saved Shader from hx_starter or paste exact supplied UTF-8 source as an inert original while MCP is connected. Paste preserves the original with unknown licence and never reads local source. It is not selected until Open. Recover Paste by request ID with creation scope.",
+    _tool_def("shader_create_asset", "Create a saved Shader from hx_starter or paste exact supplied UTF-8 source as an inert original while MCP is connected. title is accepted only for action paste; action new rejects title. Paste preserves the original with unknown licence and never reads local source. It is not selected until Open. Recover Paste by request ID with creation scope.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID,
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
                "action": {"enum": ["new", "paste"]}, "template_id": {"const": "hx_starter"},
