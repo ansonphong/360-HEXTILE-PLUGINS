@@ -2461,7 +2461,7 @@ TOOLS: list[dict[str, Any]] = [
         required=["render_id", "node_id"],
     ),
     _tool_def("get_shader_parameters",
-        "Read mounted Shader parameter IDs, current values, optional human revisions, and document commit/revision. "
+        "Read mounted Shader parameter IDs, current values, label, type, range (min/max/step), help, optional human revisions, and document commit/revision. "
         "No GLSL, formula or help source is returned. "
         "MCP must be enabled.",
         {}),
@@ -2470,6 +2470,7 @@ TOOLS: list[dict[str, Any]] = [
         "An address is a list of strings naming one unit. Do not replace a parent object. "
         "shader_edit cannot write provenance.json. "
         "A parameter is [\"values\", \"<parameter id>\"]; source is [\"code\"] with value {\"source.glsl\": \"...\", \"<module path>\": \"...\"} (all files). "
+        "A [\"code\"] edit is checked before saving: on failure nothing is saved and the reply is refused prepare_failed with diagnostics (file:line:col); fix the code and edit again. "
         "Send seen for every unit a human has edited: the address and the human number from a read. "
         "A lost_to_human row kept their value and returns the new number. "
         "Send lease when the edit touches a leased unit. "
@@ -2542,7 +2543,7 @@ TOOLS: list[dict[str, Any]] = [
          "digest": _WORKSPACE_DIGEST, "lease": _LEASE, "seen": _SEEN},
         ["shader_id", "request_id", "digest", "lease"]),
     _tool_def("get_shader_update",
-        "Read the recorded save for one request_id. Only compile may still change. "
+        "Read the recorded save for one shader_edit or register request_id. Only compile may still change. "
         "Returns merge, lease, commit, revision and compile.",
         {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST},
         ["shader_id", "request_id"]),
@@ -2942,7 +2943,7 @@ SHADER_EXTENSION_TOOLS = [
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT},
               ["shader", "project_context_witness", "base", "request_id"]),
-    _tool_def("shader_copy_revision", "Save an independent copy of one exact retained revision or checkpoint, preserving credits, Looks and resources. Saved library confirmation_scope operation is shader_copy_revision. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_copy_revision", "Save an independent copy of one exact retained revision or checkpoint, preserving credits, Looks and resources. Recover with shader_get_operation scope asset and the source Shader. Saved library confirmation_scope operation is shader_copy_revision. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT,
                "destination_origin": {"enum": ["user", "project"]},
@@ -3056,7 +3057,7 @@ SHADER_EXTENSION_TOOLS = [
                "cursor": {"type": "integer", "minimum": 0},
                "limit": {"type": "integer", "minimum": 1, "maximum": 32}},
               ["shader", "project_context_witness"]),
-    _tool_def("shader_propose_credits", "Freeze a credits-only pending review intent; recover uncertain outcomes by request ID. Before third-party adaptation, inspect source headers, actual licence and notice text and upstream links. Keep original, intermediate and utility authors, current human contributors and AI assistance distinct. Mark evidence observed, user_declared or inferred; retain prior credits and notices. Inaccessible, absent or conflicting licences remain unknown or conflicting, never implied permission.",
+    _tool_def("shader_propose_credits", "Freeze a credits-only pending review intent; recover by replaying the same request_id, or shader_get_operation scope asset with the Shader. Before third-party adaptation, inspect source headers, actual licence and notice text and upstream links. Keep original, intermediate and utility authors, current human contributors and AI assistance distinct. Mark evidence observed, user_declared or inferred; retain prior credits and notices. Inaccessible, absent or conflicting licences remain unknown or conflicting, never implied permission.",
               {**_NATIVE_SHADER_TARGET,
                "request_id": _NATIVE_SHADER_REQUEST_ID, "base": _NATIVE_SHADER_BASE,
                "working_digest": _CREDIT_HASH, "expected_provenance_hash": _CREDIT_HASH,

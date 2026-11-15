@@ -2621,3 +2621,20 @@ def test_writer_required_refusal_gets_a_next_step() -> None:
     with pytest.raises(HextileClientError) as caught:
         _raise_plain_refusal(exc)
     assert "shader_open_asset" in error_payload(caught.value)["next_step"]
+
+
+def test_refusal_keeps_bounded_diagnostics_and_edit_result_accepts_compile() -> None:
+    from hextile_client import _edit_result, workspace_refusal
+    rows = [{"code": "invalid", "key": "k", "path": "$.p", "message": f"bad {i}", "file": "source.glsl",
+             "line": i + 1, "column": 2} for i in range(30)]
+    rows.insert(0, {"message": "C:\\Users\\x\\a.glsl", "line": "no"})
+    projected = workspace_refusal({"code": "prepare_failed", "message": "Prepare refused.",
+                                   "diagnostics": rows + ["junk"]})
+    assert len(projected["diagnostics"]) == 20
+    assert all("C:" not in json.dumps(row) for row in projected["diagnostics"])
+    assert projected["diagnostics"][0]["line"] == 1
+    saved = {"save": "saved", "results": [], "commit": 2, "revision": 2,
+             "compile": {"revision": 2, "profiles": []}}
+    assert _edit_result(dict(saved))["compile"]["revision"] == 2
+    with pytest.raises(HextileClientError):
+        _edit_result({**saved, "compile": {"revision": 2}})

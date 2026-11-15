@@ -81,6 +81,9 @@ open a Shader. Load only the guides the procedure names.
 
 `shader_edit` addresses: a parameter is `["values","<parameter id>"]`, source is
 `["code"]` with value `{"source.glsl":"...","<module path>":"..."}` (all files).
+A `["code"]` edit is checked before saving: on failure nothing is saved and the reply is
+refused `prepare_failed` with diagnostics (file:line:col); fix the code and edit again.
+`get_shader_update` also reads a `shader_edit` request id.
 Personal tags for `shader_set_tags` are user-owned and no tool lists them; ask the
 user. Write tools take `expected_working_digest` = `base.document_hash` (from
 `shader_get_asset_state`); it defaults to that when omitted. A Sequence render

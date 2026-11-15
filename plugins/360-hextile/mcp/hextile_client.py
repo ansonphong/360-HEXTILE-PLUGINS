@@ -2754,7 +2754,34 @@ def workspace_refusal(detail: Any) -> Optional[dict]:
     category = _refusal_text(detail.get("category"), 64)
     if category and _REFUSAL_CODE.fullmatch(category):
         projected["category"] = category
+    rows = _refusal_diagnostics(detail.get("diagnostics"))
+    if rows:
+        projected["diagnostics"] = rows
     return projected
+
+
+def _refusal_diagnostics(value: Any) -> list[dict]:
+    """At most 20 located rows, in the shape register returns. Bad rows are dropped."""
+    if type(value) is not list:
+        return []
+    rows: list[dict] = []
+    for item in value:
+        if len(rows) >= 20:
+            break
+        if type(item) is not dict:
+            continue
+        row: dict[str, Any] = {}
+        for key, limit in (("code", 64), ("key", 128), ("path", 256), ("message", 300), ("file", 256), ("budget", 64)):
+            if type(item.get(key)) is str:
+                text = _refusal_text(item[key], limit)
+                if text:
+                    row[key] = text
+        for key in ("line", "column"):
+            if type(item.get(key)) is int and 0 <= item[key] <= 10_000_000:
+                row[key] = item[key]
+        if row:
+            rows.append(row)
+    return rows
 
 
 def _safe_detail(body: Optional[str]) -> Optional[str]:
@@ -3015,11 +3042,16 @@ def _saved_result(value: Any) -> dict:
 
 def _edit_result(value: Any) -> dict:
     if (type(value) is not dict or value.get("save") != "saved"
-            or set(value) != {"save", "results", "commit", "revision"}
+            or not {"save", "results", "commit", "revision"} <= set(value)
+            or set(value) - {"save", "results", "commit", "revision", "compile"}
             or type(value.get("commit")) is not int or value["commit"] < 0
             or type(value.get("revision")) is not int or value["revision"] < 0):
         _malformed("Malformed Shader edit result")
     _merge_rows(value["results"])
+    if "compile" in value:
+        _compile_view(value["compile"])
+        if _compile_pending_note(value["compile"]):
+            value["compile_note"] = "compile pending; poll get_shader_update"
     _shape_merge_container(value)
     return value
 
