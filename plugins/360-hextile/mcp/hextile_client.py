@@ -2746,7 +2746,15 @@ def _slim_source_value(value: Any, address: Any) -> Any:
     return value
 
 
+_MERGE_APPLIED = frozenset({
+    "kept", "clamped", "fell_back", "disabled", "removed", "rewritten",
+})
+
+
 def _slim_merge_row(row: dict) -> dict:
+    """Drop GLSL on applied rows. Skipped and lost_to_human rows keep source within the merge cap."""
+    if row.get("outcome") not in _MERGE_APPLIED:
+        return dict(row)
     address = row.get("address")
     slim = dict(row)
     for key in ("before", "value"):

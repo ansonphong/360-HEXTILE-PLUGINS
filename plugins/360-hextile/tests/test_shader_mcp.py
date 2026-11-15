@@ -898,6 +898,35 @@ def test_changed_kept_rows_stay_and_unchanged_kept_rows_are_omitted(monkeypatch)
     assert saved["merge"][0]["human"] == 3
 
 
+def test_conflict_and_skipped_rows_keep_bounded_source(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    glsl = "void hxMain() {\n  gl_FragColor = vec4(1.0);\n}\n" * 8
+    skipped = {"op": "set", "address": ["code"], "outcome": "skipped",
+               "value": {"source.glsl": glsl}}
+    conflict = {"op": "set", "address": ["code"], "outcome": "lost_to_human", "human": 4,
+                "before": {"source.glsl": glsl}, "value": {"source.glsl": glsl + "\n"}}
+    rewritten = {"op": "set", "address": ["code"], "outcome": "rewritten",
+                 "value": {"source.glsl": glsl}}
+    body = _saved_body()
+    body["merge"] = [skipped, conflict, rewritten]
+    monkeypatch.setattr(client, "request_json", lambda *args, **kwargs: body)
+    saved = client.get_shader_update(_package_args())
+    assert saved["merge"][0]["value"]["source.glsl"] == glsl
+    assert saved["merge"][1]["before"]["source.glsl"] == glsl
+    assert saved["merge"][1]["value"]["source.glsl"] == glsl + "\n"
+    assert saved["merge"][1]["human"] == 4
+    digest = saved["merge"][2]["value"]["files"][0]
+    assert digest["path"] == "source.glsl" and digest["bytes"] == len(glsl.encode("utf-8"))
+    assert glsl not in json.dumps(saved["merge"][2])
+    huge = "void hxMain() {\n" + ("x" * 70000)
+    body["merge"] = [{"op": "set", "address": ["code"], "outcome": "skipped",
+                      "value": {"source.glsl": huge}}]
+    with pytest.raises(HextileClientError) as caught:
+        client.get_shader_update(_package_args())
+    assert "Malformed Shader merge report" in str(caught.value)
+    assert "xxx" not in str(caught.value)
+
+
 def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
 
@@ -1957,8 +1986,7 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
     assert saved["compile_note"] == "compile pending; poll get_shader_update"
     assert "kept_count" not in saved
     assert [row["outcome"] for row in saved["merge"]] == ["lost_to_human", "kept"]
-    assert saved["merge"][0]["value"]["files"][0]["path"] == "source.glsl"
-    assert glsl not in json.dumps(saved)
+    assert saved["merge"][0]["value"]["source.glsl"] == glsl
     quiet = _saved_body(compile={"revision": 4, "profiles": [
         {"profile": "dome", "status": "not_observed", "program_identity": None, "ok": None}]})
     monkeypatch.setattr(client, "request_json", lambda *a, **k: quiet)
