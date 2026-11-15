@@ -4399,6 +4399,8 @@ class Client:
     def _shader_playback(self, args: Mapping[str, Any], operation: str) -> dict:
         step = operation == "shader_step_frame"
         required = {"shader", "project_context_witness", "request_id", "direction" if step else "action"}
+        if step:
+            required = required | {"owner"}
         allowed = required | (set() if step else {"time"})
         if not isinstance(args, Mapping) or not required <= set(args) or set(args) - allowed:
             raise HextileClientError("Invalid Shader playback action", kind="other", status_code=422)
@@ -4410,8 +4412,14 @@ class Client:
         except (ValueError, TypeError, AttributeError):
             valid_id = False
         action = "step" if step else args["action"]
+        owner = args.get("owner") if step else None
         if (not valid_id or action not in {"play", "pause", "seek", "step"}
-                or (step and (type(args["direction"]) is not int or args["direction"] not in {-1, 1}))
+                or (step and (type(args["direction"]) is not int or args["direction"] not in {-1, 1}
+                    or type(owner) is not dict
+                    or set(owner) != {"owner_id", "owner_generation", "viewer_generation", "source_epoch"}
+                    or type(owner["owner_id"]) is not str or not 1 <= len(owner["owner_id"]) <= 128
+                    or any(type(owner[key]) is not int or owner[key] < 0
+                           for key in ("owner_generation", "viewer_generation", "source_epoch"))))
                 or (not step and ((action == "seek") != ("time" in args)
                     or "time" in args and (type(args["time"]) not in {int, float}
                                                or not math.isfinite(args["time"]) or args["time"] < 0)))):

@@ -3083,8 +3083,14 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness", "request_id", "action"]),
     _tool_def("shader_step_frame", "Deliver one forward or backward frame step to the mounted v2 Shader Workshop. Delivery is session transport, not a saved edit; inspect the Workshop if a reply is lost.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
-               "direction": {"enum": [-1, 1]}},
-              ["shader", "project_context_witness", "request_id", "direction"]),
+               "direction": {"enum": [-1, 1]},
+               "owner": _shader_closed({
+                   "owner_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                   "owner_generation": {"type": "integer", "minimum": 0},
+                   "viewer_generation": {"type": "integer", "minimum": 0},
+                   "source_epoch": {"type": "integer", "minimum": 0},
+               })},
+              ["shader", "project_context_witness", "request_id", "direction", "owner"]),
 ]
 
 next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_request_preview")["inputSchema"]["allOf"] = [

@@ -705,12 +705,18 @@ def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> No
                            {"origin": "user", "action": "play", "request_id": target["request_id"]}, {})
     assert client.control_shader_clock({**playback, "action": "seek", "time": 2.5})["state"] == "applied"
     assert calls[-1][2]["time"] == 2.5
-    assert client.step_shader_frame({**playback, "direction": 1})["state"] == "applied"
-    assert calls[-1][2]["action"] == "step" and calls[-1][2]["direction"] == 1
+    owner = {"owner_id": "owner", "owner_generation": 1, "viewer_generation": 2, "source_epoch": 3}
+    step_schema = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_step_frame")["inputSchema"]
+    assert "owner" in step_schema["required"] and step_schema["additionalProperties"] is False
+    assert client.step_shader_frame({**playback, "direction": 1, "owner": owner})["state"] == "applied"
+    assert calls[-1][2] == {"origin": "user", "action": "step", "request_id": target["request_id"], "direction": 1}
+    assert "owner" not in calls[-1][2]
     with pytest.raises(HextileClientError):
         client.control_shader_clock({**playback, "action": "reanchor", "bpm": 120})
     with pytest.raises(HextileClientError):
-        client.step_shader_frame({**playback, "direction": 0})
+        client.step_shader_frame({**playback, "direction": 1})
+    with pytest.raises(HextileClientError):
+        client.step_shader_frame({**playback, "direction": 0, "owner": owner})
     with pytest.raises(HextileClientError):
         client.set_shader_capture({**target, "action": "live_seed", "seed": 7, "actor": "human"})
 
