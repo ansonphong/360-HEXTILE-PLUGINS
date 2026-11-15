@@ -240,7 +240,7 @@ Use the existing status, cancellation and original-request recovery tools.
 
 ## Shader package
 
-Mounted Shader parameter controls are live session values, not Workflow fields and not proof of a saved package. `get_shader_parameters` returns the current source-free descriptor, exact witness and native `writable` state. Structural edits use `shader_edit`.
+Mounted Shader parameter controls are live session values, not Workflow fields and not proof of a saved package. `get_shader_parameters` returns current IDs, values, optional human revisions, commit and revision without source. Structural edits use `shader_edit`.
 
 `shader.json` is not a `.hextile.json` Workflow. It holds the authored data. `source.glsl` and `modules/**/*.glsl` hold the code. No GLSL bodies belong in durable JSON. Include unused helpers. `shader.json` is at most 2 MiB. GLSL is at most 64 KiB in total, with at most 31 modules plus the entry, include depth at most 16, and a path of at most 256 bytes. Register saves. Read merge. Watch compile. See the installed `shader` skill and https://360hextile.com/docs/create/shader.
 

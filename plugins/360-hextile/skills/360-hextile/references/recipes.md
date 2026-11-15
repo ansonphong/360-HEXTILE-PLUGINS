@@ -27,7 +27,7 @@ Enabling MCP fully trusts the connected agent. APP automatically binds its actua
 
 ## Shader scalar expression and mounted timeline
 
-For a simple exposed control such as Cell Count, read `get_shader_parameters` first and find its exact ID, type, current value and current bounds. `writable:true` means the current Shader can be authored; preserve its exact witness. Change that value with `shader_edit`. A value change needs a connected actual writer, not source disclosure. Structural edits use the same native ownership, Prepare and saved-receipt checks.
+For a simple exposed control such as Cell Count, read `get_shader_parameters` first for its exact ID, current value and optional human revision. Read the package schema for its type and bounds, then change it with `shader_edit`. A value change needs a connected actual writer, not source disclosure. Structural edits use the same native ownership, Prepare and saved-receipt checks.
 
 Read `get_live_context(view="shader")` for the mounted Shader, then `shader_edit` or `register_shader_update` to change its saved package. For a parameter value, use the exact address and type returned by the live parameter read. For a clock or timeline setting, edit its named unit in `shader.json`; every accepted edit commits immediately. Read the new revision and compile result before rendering. Use `shader_propose_credits` only for Credits & Sources review.
 
@@ -45,7 +45,7 @@ This example is24FPS over[0,2),48frames, final2048×1024, JPG90 and1.25spatial
 supersampling. Use the byte-identical intent for preflight and submit.
 
 For playable camera controls, first use `shader_capture_sequence_input` with the
-discovered saved base, mounted surface and edit sequence. Wait for its original
+discovered saved base and mounted surface. Wait for its original
 `shader_get_operation(scope="asset")` ticket to apply, then include that request
 ID as `input_capture_id` in both requests below. Captures expire after five
 minutes before admission. The native recipe retains camera pose and persistent
