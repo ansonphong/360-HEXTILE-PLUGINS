@@ -1089,7 +1089,8 @@ def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> N
     base = {"kind": "saved", "working_revision": 1, "document_hash": "sha256:" + "a" * 64,
             "source_hash": "sha256:" + "b" * 64}
     body = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
-            "base": base, "expected_working_digest": "sha256:" + "c" * 64, "title": "Renamed"}
+            "base": base, "expected_working_digest": "sha256:" + "c" * 64, "title": "Renamed",
+            "confirmation_scope": {"operation": "rename", "shader": ref}}
     assert client.rename_shader_asset(body) == {"request_id": request_id, "state": "applied"}
     assert calls[0][1].endswith("/asset-state")
     assert calls[1][1].endswith("/rename")

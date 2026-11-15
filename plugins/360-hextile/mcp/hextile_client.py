@@ -1103,9 +1103,9 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness"}
     expected = (common if operation == "state" else
                 common | {"request_id"} if operation == "status" else
-                common | {"request_id", "base", "expected_working_digest"} |
+                common | {"request_id", "base", "expected_working_digest", "confirmation_scope"} |
                 ({"title"} if operation == "rename" else set()))
-    optional = {"expected_owner_generation", "library_intent", "confirmation_scope"} if operation in {"rename", "delete"} else set()
+    optional = {"expected_owner_generation", "library_intent"} if operation in {"rename", "delete"} else set()
     if not isinstance(args, Mapping) or expected - args.keys() or set(args) - expected - optional:
         raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
     ref = args["shader"]
@@ -1132,9 +1132,7 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
                 or not _WORKSPACE_DIGEST.fullmatch(args["expected_working_digest"])
                 or (operation == "rename" and (type(args["title"]) is not str or not args["title"] or len(args["title"]) > 256))
                 or args.get("library_intent") not in {None, "saved"}
-                or ("confirmation_scope" in args and args["confirmation_scope"] !=
-                    {"operation": operation, "shader": dict(ref)})
-                or (args.get("library_intent") == "saved" and "confirmation_scope" not in args)
+                or args.get("confirmation_scope") != {"operation": operation, "shader": dict(ref)}
                 or ("expected_owner_generation" in args and
                     (type(args["expected_owner_generation"]) is not str or not args["expected_owner_generation"]))):
             raise HextileClientError("Invalid native Shader rename", status_code=422, kind="other")
