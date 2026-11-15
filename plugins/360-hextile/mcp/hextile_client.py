@@ -1261,7 +1261,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                   "bundle_state", "human_only"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
-                    "inventory_generation", "entries", "next_cursor"},
+                    "inventory_generation", "entries", "next_cursor", "total"},
         "looks": {"schema", "shader", "project_context_witness", "provenance", "entries"},
         "conventions": {"schema", "project_context_witness", "digest", "writable",
                         "default_profile_id", "profiles", "reason"},
@@ -1310,6 +1310,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                                       len(data["entries"]) > entries or
                                       any(type(row) is not dict or set(row) - entry_allowed
                                           for row in data["entries"]))) or
+            (kind == "history" and "total" in data and (type(data["total"]) is not int or data["total"] < 0)) or
             (kind == "conventions" and (type(data.get("profiles")) is not list or
                                          len(data["profiles"]) > 8)) or
             ("next_cursor" in data and data["next_cursor"] is not None and
@@ -4224,10 +4225,10 @@ class Client:
                                                      params=dict(args)), kind="assets", entries=50)
 
     def get_shader_history(self, args: Mapping[str, Any]) -> dict:
-        _native_read_args(args, {"shader", "project_context_witness"}, {"kind", "cursor", "limit"})
+        _native_read_args(args, {"shader", "project_context_witness"}, {"kind", "cursor", "limit", "newest"})
         params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
                   "project_context_witness": args["project_context_witness"]}
-        params.update({key: args[key] for key in ("kind", "cursor", "limit") if key in args})
+        params.update({key: args[key] for key in ("kind", "cursor", "limit", "newest") if key in args})
         return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/history",
                                                      params=params), kind="history", entries=20)
 
