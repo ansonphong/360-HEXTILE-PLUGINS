@@ -3052,7 +3052,7 @@ SHADER_EXTENSION_TOOLS = [
                "source_url": {"type": "string", "minLength": 1, "maxLength": 2048},
                "links": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 2048}}},
               ["shader", "project_context_witness", "source_url"]),
-    _tool_def("shader_open_asset", "Open one saved Shader only while the current mounted draft is clean and settled. No implicit Save or Discard. Recover uncertainty by the original request ID.",
+    _tool_def("shader_open_asset", "Work on the Shader the user already has open. Edit another Shader by id with shader_edit or open_shader_workspace; those do not switch the user's view. Call shader_open_asset only when the user asks to open a Shader, because it changes what the user sees. Refused (open_refused) while the user is typing. Opens one saved Shader only while the mounted draft is clean and settled. No implicit Save or Discard. Recover uncertainty by the original request ID.",
               {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"]},
               _MOUNTED_SHADER_REQUIRED + ["target"]),
     _tool_def("shader_save_as", "Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. A dirty draft is saved as merged. The new asset is selected only after its original-ticket transition acknowledgement.",
