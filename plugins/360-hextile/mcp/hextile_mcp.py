@@ -597,64 +597,9 @@ _PACKAGE_EDIT["allOf"] = [{
     "then": {"required": ["value"]},
 }]
 _CREDIT_HASH = {"anyOf": [_WORKSPACE_DIGEST, {"type": "null"}]}
-_CREDIT_PROFILE = {"oneOf": [
-    _shader_closed({"id": _WORKSPACE_DIGEST}),
-    _shader_closed({"snapshot": _shader_closed({"version": {"const": 1},
-        "name": {"type": "string", "minLength": 1, "maxLength": 128},
-        "links": {"type": "array", "maxItems": 12, "items": _shader_closed({
-            "label": {"type": "string", "maxLength": 64},
-            "url": {"type": "string", "maxLength": 4096}})}}, ("links",))}),
-]}
-_CREDIT_SOURCE_FIELDS = {
-    **{key: {"type": "string", "maxLength": 4096} for key in
-       ("author", "title", "url", "contribution", "license", "ai_assistance", "source_revision")},
-    "relationship": {"enum": ["original", "adaptation", "inspiration"]},
-    "license_status": {"enum": ["unknown", "recorded", "user_declared", "conflicting"]},
-    "contributors": {"type": "array", "maxItems": 128, "items": _CREDIT_PROFILE},
-    "evidence": _shader_closed({"basis": {"enum": ["observed", "user_declared", "inferred"]},
-        "note": {"type": "string", "minLength": 1, "maxLength": 512},
-        "url": {"type": "string", "maxLength": 4096}}, ("url",)),
-    "source_digest": _shader_closed({"kind": {"type": "string", "maxLength": 128},
-                                     "digest": {"type": "string", "maxLength": 256}}),
-}
-_CREDIT_SOURCE = _layer_object(_CREDIT_SOURCE_FIELDS)
-_CREDIT_SOURCE_APPEND = _shader_closed({"kind": {"const": "append"}, "row": _CREDIT_SOURCE})
-_CREDIT_SOURCE_CHANGE = _shader_closed({"kind": {"const": "change"},
-    "index": {"type": "integer", "minimum": 0, "maximum": 127}, "set": _CREDIT_SOURCE})
-_SOURCE_PROPOSAL = _shader_closed({"schema": {"const": 1},
-    "expected_provenance_hash": _CREDIT_HASH,
-    "sources": {"type": "array", "maxItems": 128,
-                "items": {"oneOf": [_CREDIT_SOURCE_APPEND, _CREDIT_SOURCE_CHANGE]}}})
-_CREDIT_CURRENT_TARGET = _shader_closed({"index": {"type": "integer", "minimum": 0, "maximum": 127},
-    "contributor": _WORKSPACE_DIGEST, "role": {"enum": ["shader-author", "shader-editor"]}})
-_CREDIT_CURRENT = {"type": "array", "maxItems": 128, "items": {"oneOf": [
-    _shader_closed({"kind": {"const": "add"}, "contributor": _CREDIT_PROFILE,
-        "role": {"enum": ["shader-author", "shader-editor"]},
-        "summary": {"type": "string", "maxLength": 1024}}, ("summary",)),
-    _shader_closed({"kind": {"const": "change"}, "target": _CREDIT_CURRENT_TARGET,
-        "set": _layer_object({"contributor": _CREDIT_PROFILE,
-            "role": {"enum": ["shader-author", "shader-editor"]},
-            "summary": {"anyOf": [{"type": "string", "maxLength": 1024}, {"type": "null"}]}})}),
-    _shader_closed({"kind": {"const": "remove"}, "target": _CREDIT_CURRENT_TARGET}),
-]}}
-_CREDIT_RECORD = _shader_closed({"kind": {"enum": ["contribution", "correction"]},
-    "contributor": _CREDIT_PROFILE, "summary": {"type": "string", "maxLength": 1024},
-    "content": _shader_closed({"kind": {"const": "hextile-shader-source-v1"}, "digest": _WORKSPACE_DIGEST}),
-    "previous": {"anyOf": [_WORKSPACE_DIGEST, {"type": "null"}]}, "corrects": _WORKSPACE_DIGEST,
-    "replacement": {"anyOf": [{"type": "null"}, _shader_closed({"contributor": _CREDIT_PROFILE,
-        "summary": {"type": "string", "maxLength": 1024}})]},
-    "recorded_at": {"type": "string", "maxLength": 40}},
-    ("previous", "corrects", "replacement", "recorded_at"))
-_CREDIT_CHANGES = _layer_object({
-    **{key: {"type": "string", "maxLength": 4096} for key in ("author", "attribution", "license")},
-    "sources": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"oneOf": [
-        _CREDIT_SOURCE_APPEND, _CREDIT_SOURCE_CHANGE,
-        _shader_closed({"kind": {"const": "remove"}, "index": {"type": "integer", "minimum": 0,
-                                                         "maximum": 127}}),
-        _shader_closed({"kind": {"const": "reorder"}, "order": {"type": "array", "maxItems": 128,
-            "items": {"type": "integer", "minimum": 0, "maximum": 127}}}),
-    ]}}, "current": _CREDIT_CURRENT, "record": _CREDIT_RECORD,
-    "automatic_credit": {"type": "boolean"}})
+_CREDIT_KEYS = ("licenses_append", "contributor", "contribution", "record", "retained", "lineage", "text")
+_CREDIT_CHANGES = _layer_object({key: {} for key in _CREDIT_KEYS})
+_CREDIT_CHANGES["minProperties"] = 1
 _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
                      "pattern": r"^[A-Za-z0-9_-]{1,64}:[1-9][0-9]{0,15}$",
                      "description": "<handle>:<expected_generation+1>; suffix <= 9007199254740991, no leading zeros. Replay the original ID, generation and digest only."}

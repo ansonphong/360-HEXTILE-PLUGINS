@@ -738,14 +738,39 @@ def test_credits_metadata_and_research_transport_are_closed(monkeypatch) -> None
     proposal = {**target, "request_id": str(uuid4()), "base": {"kind": "saved", "working_revision": 1,
         "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64},
         "working_digest": "sha256:" + "c" * 64, "expected_provenance_hash": None,
-        "changes": {"author": "Artist"}}
+        "changes": {"text": {"author": "Artist"}}}
     jsonschema.validate(proposal, next(tool for tool in SHADER_EXTENSION_TOOLS
                                        if tool["name"] == "shader_propose_credits")["inputSchema"])
     assert client.propose_shader_credits(proposal)["state"] == "pending"
     assert calls[-1][2] == proposal
     assert client.research_shader_sources({**target, "source_url": "https://example.com"})["pages"] == []
     with pytest.raises(HextileClientError):
+        client.propose_shader_credits({**proposal, "changes": {"author": "Artist"}})
+    with pytest.raises(HextileClientError):
         client.propose_shader_credits({**proposal, "changes": {"distribution": {}}})
+
+
+def test_credit_changes_match_package_keys() -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    schema = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_propose_credits")["inputSchema"]
+    changes = schema["properties"]["changes"]
+    assert set(changes["properties"]) == {
+        "licenses_append", "contributor", "contribution", "record", "retained", "lineage", "text"}
+    assert changes["minProperties"] == 1 and changes["additionalProperties"] is False
+    ref = {"origin": "user", "shaderId": "aurora"}
+    proposal = {"shader": ref, "project_context_witness": "wit",
+        "request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e",
+        "base": {"kind": "saved", "working_revision": 1, "document_hash": "sha256:" + "a" * 64,
+                 "source_hash": "sha256:" + "b" * 64},
+        "working_digest": None, "expected_provenance_hash": None,
+        "changes": {"text": {"author": "Artist"}}}
+    jsonschema.validate(proposal, schema)
+    client = Client("http://127.0.0.1:9")
+    for rejected in ({"author": "Artist"}, {"distribution": {}}, {}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**proposal, "changes": rejected}, schema)
+        with pytest.raises(HextileClientError):
+            client.propose_shader_credits({**proposal, "changes": rejected})
 
 
 def test_credits_text_chunk_transport_is_closed_and_forwards_utf8_offset(monkeypatch) -> None:
