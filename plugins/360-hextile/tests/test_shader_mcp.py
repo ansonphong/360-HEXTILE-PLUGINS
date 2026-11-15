@@ -2004,9 +2004,8 @@ def test_raster_policy_schema_peer_gate_and_strict_effective_receipts(monkeypatc
     result = {'request_id': key, 'profile': args['profile'], 'job': job,
               'state': 'completed', 'output_name': 'policy.png', 'output_path': output['output_path']}
     assert _shader_output_receipt('get_job', args, result) == result
-    with pytest.raises(HextileClientError):
-        _shader_output_receipt('get_job', args, {**result, 'job': {**job,
-            'output': {**job['output'], 'raster_execution': None}}})
+    completed_cpu = {**result, 'job': {**job, 'output': {**job['output'], 'raster_execution': None}}}
+    assert _shader_output_receipt('get_job', args, completed_cpu)['job']['output']['raster_execution'] is None
     pending = {key: ready[key] for key in ('request_id', 'state', 'status', 'progress', 'error', 'raster_policy')}
     pending.update(state='pending', status='running', raster_execution=None)
     assert _shader_output_receipt('get_preview', {'request_id': key}, pending) == pending

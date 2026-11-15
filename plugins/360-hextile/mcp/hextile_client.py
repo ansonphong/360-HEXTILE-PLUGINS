@@ -531,7 +531,8 @@ def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
     if raster:
         suffixes = {".png"} if output.get("encoding", "png") == "png" else {".jpg", ".jpeg"}
         return _safe_output_leaf(file, suffixes)
-    return (type(file) is str and re.fullmatch(r"domes/[A-Za-z0-9_-]{1,64}\.png", file) is not None)
+    return (type(file) is str and (re.fullmatch(r"domes/[A-Za-z0-9_-]{1,64}\.png", file) is not None
+            or _safe_output_leaf(file, {".png"})))
 
 
 def _valid_preview_sample(sample: Any) -> bool:
@@ -794,8 +795,14 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                 raise invalid()
         elif operation in {"still", "get_job", "stop_job"}:
             allowed = {"request_id", "profile", "job", "publication", "state", "output_name", "output_path", "reason",
-                       "route", "producer_state", "published_cursor"}
+                       "route", "producer_state", "published_cursor", "error"}
             if (not {"request_id", "profile", "job"} <= keys or keys - allowed
+                    or "error" in result and (type(result["error"]) is not dict
+                        or set(result["error"]) != {"code", "message", "next_step"}
+                        or type(result["error"]["code"]) is not str
+                        or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", result["error"]["code"]) is None
+                        or type(result["error"]["message"]) is not str or not result["error"]["message"].strip()
+                        or type(result["error"]["next_step"]) is not str or not result["error"]["next_step"].strip())
                     or operation == "still" and "state" not in result
                     or result["profile"] != args["profile"]
                     or result["profile"] not in _OUTPUT_PROFILES
@@ -864,9 +871,6 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                             width=diameter or size.get('width'), height=diameter or size.get('height')):
                         raise invalid()
                 if output is not None and not _valid_dome_job_output(output, raster=profile == "shader-raster-still/1"):
-                    raise invalid()
-                if (job.get("state") == "completed" and type(output) is dict
-                        and "raster_policy" in output and output.get("raster_execution") is None):
                     raise invalid()
                 job_id = job["job_id"]
             if (type(job_id) is not str or re.fullmatch(r"[0-9a-f]{32}", job_id) is None
@@ -3921,6 +3925,7 @@ class Client:
     @staticmethod
     def _shader_sequence_error(exc: HextileClientError, *, uncertain: bool = False) -> HextileClientError:
         code = None
+        detail = None
         try:
             detail = json.loads(exc.body or "").get("detail")
             if isinstance(detail, Mapping) and type(detail.get("code")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", detail["code"]):
@@ -3938,8 +3943,22 @@ class Client:
             "shader_source_format_retired": "Frozen from the retired Shader format. Start a new render.",
             "shader_source_unavailable": "Frozen Shader source is unavailable. Start a new render.",
         }
-        return HextileClientError(source_messages.get(code, "Shader sequence refused or unavailable"), status_code=exc.status_code,
-                                  kind=exc.kind, receipt={"code": code or "shader_sequence_refused"})
+        message = None
+        next_step = None
+        if isinstance(detail, Mapping):
+            if type(detail.get("message")) is str and detail["message"].strip() and "\n" not in detail["message"]:
+                message = detail["message"]
+            if type(detail.get("next_step")) is str and detail["next_step"].strip() and "\n" not in detail["next_step"]:
+                next_step = detail["next_step"]
+        receipt = {"code": code or "shader_sequence_refused"}
+        if message:
+            receipt["message"] = message
+        if next_step:
+            receipt["next_step"] = next_step
+        text = message or source_messages.get(code, "Shader sequence refused or unavailable")
+        if next_step:
+            text = text + " " + next_step
+        return HextileClientError(text, status_code=exc.status_code, kind=exc.kind, receipt=receipt)
 
     @staticmethod
     def _shader_sequence_receipt(data: Any, *, preflight: bool) -> dict[str, Any]:
