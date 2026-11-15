@@ -1142,16 +1142,35 @@ def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monke
                                    "working_revision": 1, "document_hash": digest, "source_hash": digest,
                                    "manifest_hash": digest}, "placement": "unavailable"}
     unknown = {key: value for key, value in unknown_created.items() if key not in {"created", "placement"}}
+    created_shader = {"origin": "user", "shaderId": "shader_copy"}
+    creation_saved = {"schema": 1, "request_id": request_id, "operation": "shader_duplicate_asset",
+                      "scope": "creation", "state": "saved", "project_context_witness": "wit",
+                      "receipt": {"stack": "v2", "shader": created_shader, "working_revision": 1,
+                                  "document_hash": digest, "origin": "user", "shaderId": "shader_copy",
+                                  "title": "Source Copy"}}
+    creation_refused = {"schema": 1, "request_id": request_id, "operation": "shader_duplicate_asset",
+                        "scope": "creation", "state": "refused", "project_context_witness": "wit",
+                        "error": {"code": "shader_refused", "message": "Source Shader is not saved.",
+                                  "next_step": "Reread shader_get_asset_state."}}
+    creation_unknown = {"schema": 1, "request_id": request_id, "operation": "shader_duplicate_asset",
+                        "scope": "creation", "state": "unknown", "project_context_witness": "wit"}
     mode = {"kind": "saved"}
+    asset_replies = {"saved": saved, "refused": refused, "created": unknown_created, "unknown": unknown,
+                     "thin": {"request_id": request_id, "operation": "shader_duplicate_asset"},
+                     "schema_bool": {**saved, "schema": True}, "schema_float": {**saved, "schema": 1.0}}
+    creation_replies = {"saved": creation_saved, "refused": creation_refused, "created": creation_unknown,
+                        "unknown": creation_unknown,
+                        "thin": {"request_id": request_id, "operation": "shader_duplicate_asset"},
+                        "schema_bool": {**creation_saved, "schema": True},
+                        "schema_float": {**creation_saved, "schema": 1.0}}
 
     def reply(method, path, payload=None, **kwargs):
         sent.append((method, path, payload))
         if path.endswith("/duplicate") and mode["kind"] == "lost":
             raise HextileClientError("lost", kind="app_down", status_code=503)
-        return {"saved": saved, "refused": refused, "created": unknown_created, "unknown": unknown,
-                "thin": {"request_id": request_id, "operation": "shader_duplicate_asset"},
-                "schema_bool": {**saved, "schema": True},
-                "schema_float": {**saved, "schema": 1.0}}[mode["kind"]]
+        params = kwargs.get("params") or {}
+        table = creation_replies if path.endswith("/duplicate") or params.get("scope") == "creation" else asset_replies
+        return table[mode["kind"]]
 
     monkeypatch.setattr(client, "request_json", reply)
     mode["kind"] = "lost"
@@ -1159,11 +1178,13 @@ def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monke
         client.duplicate_shader_asset(body)
     mode["kind"] = "saved"
     assert lost.value.kind == "shader_operation_outcome_unknown"
-    assert lost.value.receipt == {"request_id": request_id, "shader": shader}
+    assert lost.value.receipt == {"request_id": request_id, "scope": "creation"}
     assert sent == [("POST", "/api/shaders/agent-operations/duplicate", body)]
     assert client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit",
                                         "shader": shader})["receipt"]["placement"] == "placed"
-    assert client.duplicate_shader_asset(body)["receipt"]["shader"]["shaderId"] == "shader_copy"
+    assert client.duplicate_shader_asset(body)["receipt"]["shaderId"] == "shader_copy"
+    assert client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit",
+                                        "scope": "creation"})["receipt"]["title"] == "Source Copy"
     assert [item[1] for item in sent].count("/api/shaders/agent-operations/duplicate") == 2
     with pytest.raises(HextileClientError):
         client.duplicate_shader_asset({**body, "destination_origin": "builtin"})

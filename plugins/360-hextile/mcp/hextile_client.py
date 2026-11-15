@@ -935,8 +935,19 @@ def _valid_creation_receipt(receipt: Any, operation: str) -> bool:
     live = {"stack", "shader", "working_revision", "document_hash"}
     if operation == "shader_import_bundle":
         live = live | {"bundle_sha256"}
-    return (keys == live and receipt.get("stack") == "v2"
-            and (operation != "shader_import_bundle" or _creation_digest(receipt["bundle_sha256"])))
+    if operation == "shader_duplicate_asset":
+        live = live | {"origin", "shaderId", "title"}
+    if keys != live or receipt.get("stack") != "v2":
+        return False
+    if operation == "shader_import_bundle" and not _creation_digest(receipt["bundle_sha256"]):
+        return False
+    if operation == "shader_duplicate_asset":
+        title = receipt.get("title")
+        return (receipt.get("origin") == receipt["shader"]["origin"]
+                and receipt.get("shaderId") == receipt["shader"]["shaderId"]
+                and type(title) is str and bool(title.strip()) and len(title) <= 256
+                and "\n" not in title and "\\" not in title)
+    return True
 
 
 _RENAME_RECEIPT_FIELDS = {"stack", "shader_id", "title", "tags", "revision", "commit", "digest", "lease"}
@@ -980,8 +991,8 @@ def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, compl
     common = {"schema", "request_id", "operation", "scope", "state", "project_context_witness"}
     try:
         if (not common <= set(result) or set(result) - common - {"receipt", "error"}
-                or result["schema"] != 1 or result["request_id"] != args["request_id"]
-                or result["operation"] not in {"shader_create_asset", "shader_import_bundle"} or result["scope"] != "creation"
+                or type(result["schema"]) is not int or result["schema"] != 1 or result["request_id"] != args["request_id"]
+                or result["operation"] not in {"shader_create_asset", "shader_import_bundle", "shader_duplicate_asset"} or result["scope"] != "creation"
                 or result["project_context_witness"] != args["project_context_witness"]
                 or type(result["state"]) is not str
                 or result["state"] not in {"pending", "unknown", "refused", "expired", "saved"}
@@ -989,7 +1000,9 @@ def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, compl
                 or len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 32768):
             return False
         if "error" in result and (result["state"] != "refused" or type(result["error"]) is not dict
-                or set(result["error"]) - {"message", "code"}):
+                or set(result["error"]) - {"message", "code", "next_step"}
+                or ("next_step" in result["error"] and (type(result["error"]["next_step"]) is not str
+                    or not result["error"]["next_step"].strip()))):
             return False
         if result["state"] != "saved":
             return "receipt" not in result
@@ -4852,13 +4865,13 @@ class Client:
                 raise HextileClientError(
                     "Shader duplicate outcome unknown; read shader_get_operation by original request ID.",
                     kind="shader_operation_outcome_unknown",
-                    receipt={"request_id": args["request_id"], "shader": shader}) from exc
+                    receipt={"request_id": args["request_id"], "scope": "creation"}) from exc
             raise
-        if not _valid_shader_duplicate_status(result, args):
+        if not _valid_shader_creation_status(result, args, complete=False):
             raise HextileClientError(
                 "Shader duplicate acknowledgement unknown; read shader_get_operation.",
                 kind="shader_operation_outcome_unknown",
-                receipt={"request_id": args["request_id"], "shader": shader})
+                receipt={"request_id": args["request_id"], "scope": "creation"})
         return result
 
     def import_shader_bundle(self, args: Mapping[str, Any]) -> dict:
@@ -4937,7 +4950,8 @@ class Client:
             if "receipt" in result:
                 _shader_output_receipt("bundle" if result["operation"] == "shader_export_bundle"
                                        else "project", args, result["receipt"])
-        if type(result) is dict and result.get("operation") == "shader_duplicate_asset":
+        if (scope != "creation" and type(result) is dict
+                and result.get("operation") == "shader_duplicate_asset"):
             if not _valid_shader_duplicate_status(result, args):
                 raise HextileClientError("Invalid Shader duplicate status", kind="other")
         return result
