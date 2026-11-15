@@ -461,13 +461,13 @@ def _valid_raster_still_output(output: Mapping[str, Any]) -> bool:
         return False
     if output["projection"] == "equirectangular":
         return (set(output) == {"projection", "encoding", "output_path", "width", "height"}
-                and type(output["width"]) is int and 2 <= output["width"] <= 16384
-                and type(output["height"]) is int and 1 <= output["height"] <= 8192 and output["height"] * 2 == output["width"])
+                and type(output["width"]) is int and output["width"] >= 2
+                and type(output["height"]) is int and output["height"] >= 1 and output["height"] * 2 == output["width"])
     return (output["projection"] in {"fulldome", "fulldome_angular"}
             and set(output) <= {"projection", "encoding", "output_path", "diameter",
                                 "fov_deg", "pan", "tilt", "roll", "preserve_360", "preserve_360_profile"}
             and type(output.get("diameter")) is int
-            and 2 <= output["diameter"] <= 8192
+            and output["diameter"] >= 2
             and _native_pose(output) and _valid_preservation(output))
 
 
@@ -482,14 +482,14 @@ def _valid_linear_exr_output(output: Mapping[str, Any]) -> bool:
         return False
     projection = output.get("projection", "equirectangular")
     if projection == "equirectangular":
-        # Window presets, raster stills, and the still schema share 16384x8192.
-        return (2 <= output["width"] <= 16384
-                and 1 <= output["height"] <= 8192
+        # Size admission belongs to the APP. This check keeps the equirect shape.
+        return (output["width"] >= 2
+                and output["height"] >= 1
                 and output["width"] == output["height"] * 2
                 and not {"fov_deg", "pan", "tilt", "roll", "preserve_360", "preserve_360_profile"} & set(output))
     return (projection in {"fulldome", "fulldome_angular"}
             and output["width"] == output["height"]
-            and 2 <= output["width"] <= 8192
+            and output["width"] >= 2
             and _safe_task_output_path(output.get("output_path"), {".exr"})
             and _native_pose(output) and _valid_preservation(output))
 
@@ -512,16 +512,16 @@ def _valid_dome_job_output(output: Any, *, raster: bool) -> bool:
         if output["projection"] == "equirectangular":
             if (not {"width", "height"} <= set(output)
                     or set(output) - {"projection", "encoding", "width", "height", "file"}
-                    or type(output["width"]) is not int or not 2 <= output["width"] <= 16384
+                    or type(output["width"]) is not int or output["width"] < 2
                     or type(output["height"]) is not int or output["height"] * 2 != output["width"]):
                 return False
         elif (type(output.get("diameter")) is not int
-                or not 2 <= output["diameter"] <= 8192
+                or output["diameter"] < 2
                 or set(output) - {"projection", "encoding", "diameter", "fov_deg", "pan", "tilt", "roll", "file", "preserve_360", "preserve_360_profile"}):
             return False
     else:
         if (output["projection"] == "equirectangular" or type(output.get("diameter")) is not int
-                or not 2 <= output["diameter"] <= 8192
+                or output["diameter"] < 2
                 or "fov_deg" not in output
                 or set(output) - {"projection", "diameter", "fov_deg", "pan", "tilt", "roll", "file", "preserve_360", "preserve_360_profile"}):
             return False
@@ -559,9 +559,9 @@ def _valid_preview_sample(sample: Any) -> bool:
         fps = Fraction(rate["num"], rate["den"])
         count = (points[1] - points[0]) * fps
         expected = -(-count.numerator // count.denominator)
-        return (fps.denominator == rate["den"] and 1 <= fps <= 120 and 0 <= points[0] < points[1] <= 86400
+        return (fps.denominator == rate["den"] and fps >= 1 and 0 <= points[0] < points[1] <= 86400
                 and type(sample["frame_count"]) is int and sample["frame_count"] == expected
-                and 1 <= expected <= 10000 and type(sample["index"]) is int and 0 <= sample["index"] < expected)
+                and expected >= 1 and type(sample["index"]) is int and 0 <= sample["index"] < expected)
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         return False
 
@@ -574,7 +574,7 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
             return False
         output = {key: value for key, value in output.items() if key != "raster_policy"}
     if (type(mode) is not str or mode not in {"still", "sequence"} or type(width) is not int or type(height) is not int
-            or not 2 <= width <= 16384 or not 1 <= height <= 8192 or type(output) is not dict
+            or width < 2 or height < 1 or type(output) is not dict
             or (mode == "sequence") != (sample is not None)
             or sample is not None and not _valid_preview_sample(sample)):
         return False
@@ -592,7 +592,7 @@ def _valid_preview_selection(args: Mapping[str, Any]) -> bool:
     return (type(projection) is str and projection in {"fulldome", "fulldome_angular"}
             and required | {"diameter", "fov_deg"} <= output.keys() and not set(output) - fields
             and width == height == output.get("diameter") and type(output["diameter"]) is int
-            and 2 <= width <= 8192 and _native_pose(output) and _valid_preservation(output))
+            and width >= 2 and _native_pose(output) and _valid_preservation(output))
 
 
 def _valid_render_timing(value: Any) -> bool:
@@ -696,7 +696,7 @@ def _valid_preview_receipt(result: dict) -> bool:
             "output": {**result["output"], "supersampling": result["supersampling"]}})
             or any(type(result[key]) is not int for key in ("stride", "size", "index", "physical_width", "physical_height"))
             or result["stride"] != result["width"] * 3 or result["size"] != result["stride"] * result["height"]
-            or result["size"] > 16384 * 8192 * 3 or not 0 <= result["index"] < 1_000_000
+            or not 0 <= result["index"] < 1_000_000
             or result["format"] != "rgb8-srgb-top-origin" or result["profile"] != "shader-export-preview/2"
             or any(type(result[key]) is not str or _WORKSPACE_DIGEST.fullmatch(result[key]) is None
                    for key in ("sha256", "document_hash", "source_hash"))
@@ -2128,14 +2128,16 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
             or not integer(rate["num"], 1, 1_000_000) or not integer(rate["den"], 1, 1_000_000)):
         refuse()
     fps = Fraction(rate["num"], rate["den"])
-    if fps.denominator != rate["den"] or not 1 <= fps <= 120:
+    if fps.denominator != rate["den"] or fps < 1:
         refuse()
     start, end = rational(body["start_time"]), rational(body["end_time"])
     count = (end - start) * fps
     expected_count = -(-count.numerator // count.denominator)
-    if (not 0 <= start < end <= 86400 or not integer(body["frame_count"], 1, 10000)
+    if (not 0 <= start < end <= 86400
+            or type(body["frame_count"]) is not int or body["frame_count"] < 1
             or body["frame_count"] != expected_count or not integer(body["seed"], 0, 2**32 - 1)
-            or not integer(body["width"], 4, 16384) or not integer(body["height"], 2, 8192)):
+            or type(body["width"]) is not int or body["width"] < 4
+            or type(body["height"]) is not int or body["height"] < 2):
         refuse()
     output = body["output"]
     if type(output) is not dict or "projection" not in output:
@@ -2148,7 +2150,7 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
             refuse()
     elif projection in ("fulldome", "fulldome_angular"):
         if (set(output) - {"preserve_360", "preserve_360_profile"} != {"projection", "diameter", "fov_deg", "pan", "tilt", "roll"}
-                or type(output["diameter"]) is not int or not 2 <= output["diameter"] <= 8192
+                or type(output["diameter"]) is not int or output["diameter"] < 2
                 or not _valid_preservation(output)
                 or body["width"] != output["diameter"] or body["height"] != output["diameter"]):
             refuse()

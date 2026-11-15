@@ -305,13 +305,18 @@ def test_equirect_exr_and_supersampling_follow_the_export_window(monkeypatch) ->
     assert client.preflight_shader_still(raster)["state"] == "pending"
     assert seen[-1][1]["output"]["supersampling"] == 2
     for output in ({"width": 8192, "height": 4095, "output_path": "D:/Temp/frame.exr"},
-                   {"width": 20480, "height": 10240, "output_path": "D:/Temp/frame.exr"},
                    {"width": 8192, "height": 4096, "supersampling": 0.5,
                     "output_path": "D:/Temp/frame.exr"},
                    {"width": 8192, "height": 4096, "fov_deg": 180, "pan": 0, "tilt": 0, "roll": 0,
                     "output_path": "D:/Temp/frame.exr"}):
         with pytest.raises(HextileClientError):
             client.preflight_shader_still({**owner, "profile": "shader-linear-rgba-exr/1", "output": output})
+    wide = {**owner, "profile": "shader-linear-rgba-exr/1",
+            "output": {"width": 20480, "height": 10240, "output_path": "D:/Temp/frame.exr"}}
+    jsonschema.validate(wide, still_schema)
+    assert client.preflight_shader_still(wide)["state"] == "pending"
+    assert seen[-1][1]["output"]["width"] == 20480
+    assert seen[-1][1]["output"]["height"] == 10240
     sequence = {"shader_ref": {"origin": "user", "id": "e2e_fix17"},
                 "project_context_witness": "w", "working_revision": 1,
                 "document_hash": digest, "source_hash": digest, "idempotency_key": "key-1",
