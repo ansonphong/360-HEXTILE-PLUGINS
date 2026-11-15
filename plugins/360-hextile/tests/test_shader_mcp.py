@@ -541,6 +541,43 @@ def test_workspace_refusal_and_unknown_outcome_keep_structured_fields(monkeypatc
     assert refused.value.receipt["fields"] == ["$.provenance.ai"]
 
 
+
+def test_v2_saved_output_owner_and_bundle_receipt_round_trip(monkeypatch) -> None:
+    monkeypatch.setattr("hextile_client.Path", PurePosixPath)
+    digest = "sha256:" + "a" * 64
+    request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"
+    shader = {"origin": "user", "shaderId": "aurora"}
+    owner = {"request_id": request_id, "shader": shader, "project_context_witness": "w",
+             "studio_surface_id": "surface", "base": {"kind": "saved", "working_revision": 1,
+                 "document_hash": digest, "source_hash": digest}}
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    descriptor = lambda name: next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == name)
+    for name, extra in (
+            ("shader_request_preview", {"mode": "still", "width": 4, "height": 2,
+                "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}),
+            ("shader_preflight_still_export", {"profile": "png-master/1",
+                "output": {"width": 4, "height": 2}}),
+            ("shader_export_still", {"profile": "png-master/1", "preflight_request_id": request_id}),
+            ("shader_capture_sequence_input", {}),
+            ("shader_export_bundle", {"expected_looks": [], "expected_provenance_hash": None})):
+        jsonschema.validate({**owner, **extra}, descriptor(name)["inputSchema"])
+    client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
+    destination = "D:/Temp/frame.hexshader"
+    bundle = {**owner, "expected_looks": [], "expected_provenance_hash": None,
+              "output_path": destination}
+    receipt = {"request_id": request_id, "state": "saved", "stack": "v2",
+               "output_name": "frame.hexshader", "output_path": destination,
+               "resource_count": 0, "resource_bytes": 0}
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: receipt)
+    assert client.export_shader_bundle(bundle) == receipt
+    recovery = {"schema": 1, "request_id": request_id, "scope": "output",
+                "operation": "shader_export_bundle", "project_context_witness": "w",
+                "shader": shader, "state": "saved", "receipt": receipt}
+    monkeypatch.setattr(client, "request_json", lambda *a, **k: recovery)
+    assert client.get_shader_operation({"request_id": request_id, "project_context_witness": "w",
+                                        "shader": shader, "scope": "output"}) == recovery
+
+
 def test_shader_output_original_status_refuses_private_result(monkeypatch) -> None:
     client = Client(opener=lambda *_a, **_k: pytest.fail("request_json is injected"))
     request_id = "7e720fa5-192b-47da-a705-ab3b5ddc979e"

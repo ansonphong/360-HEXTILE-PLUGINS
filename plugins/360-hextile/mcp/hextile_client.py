@@ -338,7 +338,7 @@ _PACKAGE_ADDRESS = re.compile(r"^[A-Za-z0-9_.-]{1,128}\Z")
 _OUTPUT_PROFILES = {"png-master/1", "shader-linear-rgba-exr/1", "dome-png/1",
                     "shader-raster-still/1"}
 _OUTPUT_OWNER = {"request_id", "shader", "project_context_witness", "base",
-                 "studio_surface_id", "expected_edit_sequence"}
+                 "studio_surface_id"}
 
 
 def _absolute_task_path(value: Any) -> bool:
@@ -775,7 +775,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                         "from_base", "to_base"} <= set(transition)
                         or set(transition) - {"from_edit_sequence", "to_edit_sequence", "from_base",
                             "to_base", "from_doc_generation", "to_doc_generation"}
-                        or any(type(transition[key]) is not int or transition[key] != args["expected_edit_sequence"]
+                        or any(type(transition[key]) is not int or transition[key] < 0
                                for key in ("from_edit_sequence", "to_edit_sequence"))
                         or any(type(transition[key]) is not dict
                                or any(transition[key].get(field) != value for field, value in base.items())
@@ -882,7 +882,9 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     or "output_path" in result and not _safe_task_output_path(result["output_path"], suffixes)):
                 raise invalid()
         elif operation == "bundle":
-            if (keys != {"request_id", "state", "output_name", "output_path", "resource_count", "resource_bytes"}
+            if (keys not in ({"request_id", "state", "output_name", "output_path", "resource_count", "resource_bytes"},
+                             {"request_id", "state", "stack", "output_name", "output_path", "resource_count", "resource_bytes"})
+                    or ("stack" in result and result["stack"] != "v2")
                     or result["state"] != "saved" or type(result["output_name"]) is not str
                     or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,239}\.hexshader", result["output_name"]) is None
                     or type(result["resource_count"]) is not int or result["resource_count"] < 0
@@ -1018,16 +1020,16 @@ def _valid_shader_duplicate_status(result: Any, args: Mapping[str, Any]) -> bool
 def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "request_id"}
     fields = {
-        "sequence_input": (_OUTPUT_OWNER, set()),
-        "preview": (_OUTPUT_OWNER | {"output", "mode", "width", "height"}, {"sequence_sample", "render_route", "saved_sequence"}),
-        "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision", "render_route"}),
-        "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, {"render_route"}),
+        "sequence_input": (_OUTPUT_OWNER, {"expected_edit_sequence"}),
+        "preview": (_OUTPUT_OWNER | {"output", "mode", "width", "height"}, {"sequence_sample", "render_route", "saved_sequence", "expected_edit_sequence"}),
+        "preflight": (_OUTPUT_OWNER | {"profile", "output"}, {"allow_unpreviewed_revision", "render_route", "expected_edit_sequence"}),
+        "still": (_OUTPUT_OWNER | {"preflight_request_id", "profile"}, {"render_route", "expected_edit_sequence"}),
         "get_preview": (common, {"image"}),
         "release_preview": (common, set()),
         "get_job": (common | {"profile"}, set()),
         "stop_job": (common | {"profile"}, set()),
-        "bundle": (_OUTPUT_OWNER | {"expected_looks", "expected_provenance_hash"}, {"output_path"}),
-        "project": (_OUTPUT_OWNER, {"destination_project"}),
+        "bundle": (_OUTPUT_OWNER | {"expected_looks", "expected_provenance_hash"}, {"output_path", "expected_edit_sequence"}),
+        "project": (_OUTPUT_OWNER, {"destination_project", "expected_edit_sequence"}),
     }
     required, optional = fields[operation]
     if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
@@ -1050,7 +1052,8 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
                 or any(type(base[key]) is not str or not _WORKSPACE_DIGEST.fullmatch(base[key]) for key in
                        ("document_hash", "source_hash"))
                 or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id",))
-                or type(args["expected_edit_sequence"]) is not int or args["expected_edit_sequence"] < 0):
+                or ("expected_edit_sequence" in args and (type(args["expected_edit_sequence"]) is not int
+                    or args["expected_edit_sequence"] < 0))):
             raise HextileClientError("Invalid saved output owner", status_code=422, kind="other")
     if operation in {"preflight", "still", "get_job", "stop_job"} and (
             type(args["profile"]) is not str or args["profile"] not in _OUTPUT_PROFILES):
@@ -1175,8 +1178,7 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
         "shader_copy_revision": ({"destination_origin"}, {"target", "checkpoint_id", "title"}),
         "shader_history_preview": ({"mode"}, {"preview_operation"}),
         "shader_history_compact": ({"mode", "preview_token"}, set()),
-        "shader_history_uncompact": ({"mode", "preview_token"}, set()),
-    }
+            }
     if operation not in fields or not isinstance(args, Mapping):
         raise HextileClientError("Unknown Shader history operation", status_code=422, kind="other")
     required, optional = fields[operation]
@@ -1211,9 +1213,10 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
                 or any(key in args for key in ("studio_surface_id", "lease_id", "expected_edit_sequence"))):
             raise HextileClientError("Invalid saved history confirmation", status_code=422, kind="other")
     elif ("library_intent" in args or "confirmation_scope" in args
-          or not {"studio_surface_id", "expected_edit_sequence"} <= args.keys()
+          or "studio_surface_id" not in args
           or any(type(args[key]) is not str or not args[key] for key in ("studio_surface_id",))
-          or type(args["expected_edit_sequence"]) is not int or args["expected_edit_sequence"] < 0):
+          or ("expected_edit_sequence" in args and (type(args["expected_edit_sequence"]) is not int
+                    or args["expected_edit_sequence"] < 0))):
         raise HextileClientError("Invalid mounted history owner", status_code=422, kind="other")
     for key in ("title", "expected_name"):
         if key in args and (type(args[key]) is not str or not 1 <= len(args[key]) <= 256):
@@ -4286,7 +4289,7 @@ class Client:
 
     def shader_history_retention(self, args: Mapping[str, Any]) -> dict:
         action = args.get("action")
-        if action not in {"preview", "compact", "uncompact"}:
+        if action not in {"preview", "compact"}:
             raise HextileClientError("Permanent history purge is a human action", status_code=403, kind="other")
         if action == "preview":
             checked = {key: value for key, value in args.items() if key != "action"}

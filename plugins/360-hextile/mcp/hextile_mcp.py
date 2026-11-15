@@ -2511,9 +2511,8 @@ TOOLS: list[dict[str, Any]] = [
         required=["render_id", "node_id"],
     ),
     _tool_def("get_shader_parameters",
-        "Read exposed controls on the mounted Shader without including source. Returns bounded IDs, labels, "
-        "types, current/default values, UI bounds and choices, plus an exact witness, authoring writable state, "
-        "and current writer readiness or its block reason. No GLSL, formula or help source is returned. "
+        "Read mounted Shader parameter IDs, current values, optional human revisions, and document commit/revision. "
+        "No GLSL, formula or help source is returned. "
         "MCP must be enabled.",
         {}),
     _tool_def("shader_edit",
@@ -2809,7 +2808,7 @@ _CAPTURE_DEFAULTS = _shader_closed({
 })
 _OUTPUT_OWNER = {**_MOUNTED_SHADER_FIELDS, "base": _NATIVE_SHADER_BASE,
                  "expected_edit_sequence": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}}
-_OUTPUT_OWNER_REQUIRED = [*_MOUNTED_SHADER_REQUIRED, "base", "expected_edit_sequence"]
+_OUTPUT_OWNER_REQUIRED = [*_MOUNTED_SHADER_REQUIRED, "base"]
 _OUTPUT_PROFILE = {"enum": ["png-master/1", "shader-linear-rgba-exr/1", "dome-png/1",
                             "shader-raster-still/1"]}
 _PREVIEW_OUTPUT = {"oneOf": [
@@ -2983,11 +2982,11 @@ SHADER_EXTENSION_TOOLS = [
                "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["shader", "project_context_witness", "base", "expected_working_digest", "request_id",
                "destination_origin"]),
-    _tool_def("shader_history_retention", "Preview, compact or uncompact recoverable history. Permanent purge is human only.",
+    _tool_def("shader_history_retention", "Preview or compact recoverable history. Permanent purge is human only.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
-               "action": {"enum": ["preview", "compact", "uncompact"]},
+               "action": {"enum": ["preview", "compact"]},
                "mode": {"enum": ["current", "checkpoints"]}, "preview_token": _SHADER_DIGEST,
-               "preview_operation": {"enum": ["compact", "uncompact"]}},
+               "preview_operation": {"const": "compact"}},
               ["shader", "project_context_witness", "base", "expected_working_digest", "action", "mode"]),
     _tool_def("shader_get_project_conventions", "Read bounded Project Shader convention profiles and digest.",
               {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),

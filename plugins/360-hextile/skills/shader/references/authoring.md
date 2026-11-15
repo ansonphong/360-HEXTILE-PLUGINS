@@ -148,7 +148,7 @@ identity fields. Explicit deferred masters and later copy/conversion remain
 separate supported operations.
 
 For a new playable Shader sequence, call `shader_capture_sequence_input` with
-the discovered clean saved base, mounted surface and edit sequence. Recover its
+the discovered clean saved base and mounted surface. Recover its
 original ticket using `shader_get_operation(scope="asset")`; once applied, pass
 that same request ID as `input_capture_id` to preflight and render. The capture
 expires after five minutes before admission. It freezes the completed camera
