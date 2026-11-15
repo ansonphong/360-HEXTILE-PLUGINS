@@ -4452,7 +4452,8 @@ class Client:
         try:
             receipt = self._shader_request("POST", path, dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader history outcome unknown; read shader_get_operation by original request_id. Do not submit again.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]}) from exc
             raise
@@ -4571,7 +4572,8 @@ class Client:
         try:
             receipt = self._shader_request("POST", path, dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader operation outcome unknown; retry only the original request ID.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
             raise
@@ -4647,7 +4649,8 @@ class Client:
         try:
             receipt = self._shader_request("POST", "/api/shaders/agent-operations/rename", dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError(
                     "Shader rename outcome unknown; read shader_get_operation by request_id. Do not submit again.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
@@ -4664,12 +4667,21 @@ class Client:
             digest = base.get("document_hash") if isinstance(base, Mapping) else None
             if type(digest) is str:
                 args = {**args, "expected_working_digest": digest}
+        elif isinstance(args, Mapping):
+            base = args.get("base")
+            if isinstance(base, Mapping) and type(base.get("document_hash")) is str \
+                    and args["expected_working_digest"] != base["document_hash"]:
+                message = "expected_working_digest must equal base.document_hash; base is the conflict check."
+                raise HextileClientError(message, kind="other", status_code=422, receipt={
+                    "code": "invalid_arguments", "message": message,
+                    "next_step": "Omit expected_working_digest or set it to base.document_hash."})
         _native_shader_args("delete", args)
         request_id = args["request_id"]
         try:
             receipt = self._shader_request("POST", "/api/shaders/agent-operations/delete", dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader delete outcome unknown; read shader_get_operation by request_id.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
             raise
@@ -4734,7 +4746,8 @@ class Client:
         try:
             receipt = self._shader_request("POST", path, dict(submitted))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError(
                     "Mounted Shader outcome unknown; read shader_get_operation with the original request_id.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
@@ -4848,7 +4861,8 @@ class Client:
         try:
             receipt = self._shader_request("POST", "/api/shaders/agent-operations/open", dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError(
                     "Mounted Shader outcome unknown; read shader_get_operation with the original request_id.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
@@ -4927,7 +4941,8 @@ class Client:
         try:
             result = self._shader_request("POST", "/api/shaders/agent-operations/create", dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader creation outcome unknown; read shader_get_operation by original request ID.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
                     **({"scope": "creation"} if action == "paste" else {"shader": source})}) from exc
@@ -5002,7 +5017,8 @@ class Client:
         try:
             result = self._shader_request("POST", "/api/shaders/agent-operations/duplicate", dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError(
                     "Shader duplicate outcome unknown; read shader_get_operation by original request ID.",
                     kind="shader_operation_outcome_unknown",
@@ -5033,7 +5049,8 @@ class Client:
         try:
             result = self._shader_request("POST", "/api/shaders/agent-operations/import-bundle", dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader Bundle import outcome unknown; read shader_get_operation by original request ID.",
                     kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
             raise
@@ -5175,7 +5192,8 @@ class Client:
         try:
             result = self._shader_request("POST", "/api/shaders/agent-operations/credits/proposals", dict(args))
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Credits proposal outcome unknown; read shader_get_operation by request_id.",
                                          kind="shader_operation_outcome_unknown", receipt={"request_id": request_id}) from exc
             raise
@@ -7047,7 +7065,8 @@ class Client:
         try:
             result = self._shader_request("POST", path, dict(args), timeout=LONG_OPERATION_TIMEOUT_S)
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError(
                     "Shader output outcome unknown; inspect the original request_id without reposting.",
                     kind="shader_output_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
@@ -7103,7 +7122,8 @@ class Client:
                 self._shader_request("POST", "/api/shaders/agent-operations/output/jobs/" + args["request_id"] + "/stop",
                     {key: args[key] for key in ("shader", "project_context_witness", "profile")}), mutation=True)
         except HextileClientError as exc:
-            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500:
+            if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
+                    or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader output stop outcome unknown; read the original job status.",
                     kind="shader_output_outcome_unknown", receipt={"request_id": args["request_id"]}) from exc
             raise

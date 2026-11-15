@@ -1069,7 +1069,7 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     body = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
             "base": {"kind": "saved", "working_revision": 1,
                      "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64},
-            "expected_working_digest": "sha256:" + "c" * 64,
+            "expected_working_digest": "sha256:" + "a" * 64,
             "library_intent": "saved", "confirmation_scope": {"operation": "delete", "shader": ref}}
     sent = []
 
@@ -1249,6 +1249,7 @@ def test_shader_refusals_keep_code_message_and_next_step(monkeypatch) -> None:
 
 
 def test_delete_asset_uses_document_hash_when_the_digest_is_omitted(monkeypatch) -> None:
+    from hextile_client import error_payload
     from hextile_mcp import SHADER_EXTENSION_TOOLS
 
     client = Client("http://127.0.0.1:9")
@@ -1270,9 +1271,18 @@ def test_delete_asset_uses_document_hash_when_the_digest_is_omitted(monkeypatch)
     assert client.delete_shader_asset(body)["deleted"] is True
     assert "expected_working_digest" not in body
     assert sent[-1]["expected_working_digest"] == digest
-    explicit = {**body, "expected_working_digest": other}
+    explicit = {**body, "expected_working_digest": digest}
     assert client.delete_shader_asset(explicit)["deleted"] is True
-    assert sent[-1]["expected_working_digest"] == other
+    assert sent[-1]["expected_working_digest"] == digest
+    count = len(sent)
+    with pytest.raises(HextileClientError) as mismatch:
+        client.delete_shader_asset({**body, "expected_working_digest": other})
+    assert len(sent) == count
+    refusal = error_payload(mismatch.value)
+    assert refusal["code"] == "invalid_arguments" and "expected_working_digest" in refusal["message"]
+    assert refusal["next_step"] == "Omit expected_working_digest or set it to base.document_hash."
+    assert "defaults to base.document_hash" in next(
+        row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_delete_asset")["description"]
 
     tool = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_delete_asset")
     phrase = "base.document_hash from shader_get_asset_state/shader_list_assets"
@@ -1487,6 +1497,31 @@ def test_duplicate_saved_shader_posts_once_and_recovers_the_source_request(monke
             client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit",
                                         "shader": shader})
         assert bad_status.value.kind == "other"
+
+
+def test_malformed_2xx_on_shader_mutations_is_outcome_unknown(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    digest = "sha256:" + "a" * 64
+    shader = {"origin": "user", "shaderId": "aurora"}
+    delete = {"request_id": request_id, "shader": shader, "project_context_witness": "wit",
+              "base": {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest},
+              "library_intent": "saved", "confirmation_scope": {"operation": "delete", "shader": shader}}
+    duplicate = {"request_id": request_id, "shader": shader, "project_context_witness": "wit",
+                 "base": delete["base"], "destination_origin": "project"}
+
+    def malformed(method, path, payload=None, **kwargs):
+        raise HextileClientError("bad body", kind="other", status_code=200)
+
+    monkeypatch.setattr(client, "request_json", malformed)
+    with pytest.raises(HextileClientError) as odd:
+        client.delete_shader_asset(delete)
+    assert odd.value.kind == "shader_operation_outcome_unknown"
+    assert odd.value.receipt == {"request_id": request_id}
+    with pytest.raises(HextileClientError) as odd:
+        client.duplicate_shader_asset(duplicate)
+    assert odd.value.kind == "shader_operation_outcome_unknown"
+    assert odd.value.receipt == {"request_id": request_id, "scope": "creation"}
 
 
 def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) -> None:

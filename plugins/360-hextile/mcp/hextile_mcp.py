@@ -3028,7 +3028,7 @@ SHADER_EXTENSION_TOOLS = [
                                       "shader": _USER_SHADER_REF},
                                       "required": ["operation", "shader"], "additionalProperties": False}},
               ["request_id", "shader", "project_context_witness", "base", "expected_working_digest", "title", "confirmation_scope"]),
-    _tool_def("shader_delete_asset", "Delete one exact saved Shader. Saved library: library_intent saved and confirmation_scope operation delete for that shader. Do not send a studio surface. Use base.document_hash from shader_get_asset_state/shader_list_assets as expected_working_digest. Omit it to send that hash. Recover an uncertain outcome by request ID.",
+    _tool_def("shader_delete_asset", "Delete one exact saved Shader. Saved library: library_intent saved and confirmation_scope operation delete for that shader. Do not send a studio surface. Use base.document_hash from shader_get_asset_state/shader_list_assets as the digest: expected_working_digest defaults to base.document_hash, and base is the conflict check, so omit it (a different value is refused). Recover an uncertain outcome by request ID.",
               {"shader": _USER_SHADER_REF, "project_context_witness": _NATIVE_SHADER_TARGET["project_context_witness"],
                "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE,
