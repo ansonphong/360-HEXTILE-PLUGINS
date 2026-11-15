@@ -72,9 +72,9 @@ The code lease owns the shape. Label, default, min, max, step, clamp, control, o
 
 ## Discover and open
 
-Work on the Shader the user already has open. To change another Shader, edit it by id with `shader_edit` or `open_shader_workspace`; those do not switch the user's view. Call `shader_open_asset` only when the user asks to open a Shader, because it changes what the user sees. It is refused (`open_refused`) while the user is typing.
+Ask politely. Call `shader_open_asset` only when the user wants another Shader on screen. It asks the user; poll the request_id; never retry a dismissed request; ask in chat instead. Use force only when the user asked for an agent-driven session. To change another Shader without switching the view, edit it by id with `shader_edit` or `open_shader_workspace`.
 
-1. `get_live_context(view="shader")` once. The compact reply names `shader.origin`, `shader.shaderId` (the same value as `shader.shader_id`), `title`, `writable`, `project_context_witness`, `studio_surface_id`, `lease`, `commit` and `revision`. `connected: false` or `shader: null` means the Workshop is empty. Call `shader_list_assets` with the `project_context_witness` from that context. The list returns that witness on `project_context_witness`. A builtin is not edited in place; duplicate it into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
+1. `get_live_context(view="shader")` once. The compact reply names `shader.origin`, `shader.shaderId` (the same value as `shader.shader_id`), `title`, `writable`, `project_context_witness`, `studio_surface_id`, `lease`, `commit`, `revision` and `agent_open` (`policy`, `allow_force_open`, `blocked_for_session`). `connected: false` or `shader: null` means the Workshop is empty. Call `shader_list_assets` with the `project_context_witness` from that context. The list returns that witness on `project_context_witness`. A builtin is not edited in place; duplicate it into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
 2. `open_shader_workspace` with that `shader_id` and one new `request_id`. Do not send `workspace_schema`. This does not switch the user's view. Nothing human-side refuses open. The same request id returns the recorded open.
 3. Call `shader_edit` or the typed tools. `shader_edit` returns its own saved commit immediately. To save edits made in the package files, change those files, not `.local/`, recompute the package digest from the member bytes, and register. Register saves those file-workspace changes.
 4. `register_shader_update` saves file-workspace changes. Send the digest, the lease you were given, and `seen`. Then read `merge` and `compile`. A `shader_edit` batch already returned its commit.
@@ -122,7 +122,7 @@ Preserve files on every refusal. Do not install software, change host permission
 
 ## Reading another Shader
 
-Read or edit that Shader by its own id with `open_shader_workspace` or `shader_edit`. Those do not switch the user's view. Do not use the working Shader's lease on another package. Call `shader_open_asset` only when the user asks to open it. It changes what the user sees and is refused (`open_refused`) while the user is typing.
+Read or edit that Shader by its own id with `open_shader_workspace` or `shader_edit`. Those do not switch the user's view. Do not use the working Shader's lease on another package. Ask politely. Call `shader_open_asset` only when the user wants another Shader on screen. It asks the user; poll the request_id; never retry a dismissed request; ask in chat instead. Use force only when the user asked for an agent-driven session.
 
 ## Native rendering and exact destination output
 
