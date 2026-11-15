@@ -2607,9 +2607,12 @@ def test_working_digest_documented_and_defaulted_on_write_tools(monkeypatch) -> 
 def test_stopped_sequence_reads_stopped_without_producer_state() -> None:
     from hextile_client import _native_sequence_fields
 
-    assert _native_sequence_fields({"producer": "shader", "error": "stop_requested"})["stopped_by_user"] is True
     assert _native_sequence_fields({"producer": "shader", "error": "stop_requested",
+                                    "status": "incomplete"})["stopped_by_user"] is True
+    assert _native_sequence_fields({"producer": "shader", "error": "stop_requested", "status": "incomplete",
                                     "producer_state": "stopped"})["stopped_by_user"] is True
+    assert "stopped_by_user" not in _native_sequence_fields({"producer": "shader", "error": "stop_requested",
+                                                             "status": "completed"})
     assert "stopped_by_user" not in _native_sequence_fields({"producer": "shader", "error": "frame_body"})
 
 

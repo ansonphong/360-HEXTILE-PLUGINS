@@ -1179,7 +1179,7 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
 
 
 def _default_working_digest(args: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Fill an omitted expected_working_digest from base.document_hash; the APP checks base too."""
+    """Fill an omitted expected_working_digest from base.document_hash; the _v2_agent routes (looks, apply, rename, delete, restore, resources) check only this digest for freshness, not base."""
     if isinstance(args, Mapping) and "expected_working_digest" not in args:
         base = args.get("base")
         digest = base.get("document_hash") if isinstance(base, Mapping) else None
@@ -1757,7 +1757,9 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
     if type(data.get("error")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", data["error"]):
         out["error"] = data["error"]
         # The APP may omit producer_state on a stopped sequence; the error code is the reliable signal.
-        if data["error"] == "stop_requested" and data.get("producer_state") in (None, "stopped"):
+        # A stop racing the last frame records completed plus stop_requested; that is not a stop.
+        if (data["error"] == "stop_requested" and data.get("status") == "incomplete"
+                and data.get("producer_state") in (None, "stopped")):
             out["stopped_by_user"] = True
     if type(data.get("ownership_live")) is bool:
         out["ownership_live"] = data["ownership_live"]
