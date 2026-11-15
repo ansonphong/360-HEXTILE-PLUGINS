@@ -1178,7 +1178,7 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
         "shader_copy_revision": ({"destination_origin"}, {"target", "checkpoint_id", "title"}),
         "shader_history_preview": ({"mode"}, {"preview_operation"}),
         "shader_history_compact": ({"mode", "preview_token"}, set()),
-            }
+    }
     if operation not in fields or not isinstance(args, Mapping):
         raise HextileClientError("Unknown Shader history operation", status_code=422, kind="other")
     required, optional = fields[operation]
@@ -4292,6 +4292,8 @@ class Client:
         if action not in {"preview", "compact"}:
             raise HextileClientError("Permanent history purge is a human action", status_code=403, kind="other")
         if action == "preview":
+            if args.get("preview_operation", "compact") != "compact":
+                raise HextileClientError("Unsupported history preview operation", status_code=422, kind="other")
             checked = {key: value for key, value in args.items() if key != "action"}
             _native_history_args("shader_history_preview", checked)
             result = self.request_json("POST", "/api/shaders/agent-operations/history-retention", dict(args))
