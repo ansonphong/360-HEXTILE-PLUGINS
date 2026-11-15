@@ -1581,6 +1581,15 @@ def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkey
                "studio_surface_id": "ws-surface-1"}
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: compact)
     assert client.get_live_context(view="shader") == compact
+    with_policy = {**compact, "agent_open": {"policy": "ask", "allow_force_open": True,
+                                            "blocked_for_session": False}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: with_policy)
+    assert client.get_live_context(view="shader") == with_policy
+    bad_policy = {**compact, "agent_open": {"policy": "sometimes", "allow_force_open": True,
+                                           "blocked_for_session": False}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: bad_policy)
+    with pytest.raises(HextileClientError):
+        client.get_live_context(view="shader")
     mismatched = {**compact, "shader": {"origin": "user", "shader_id": "aurora", "shaderId": "other"}}
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: mismatched)
     with pytest.raises(HextileClientError):

@@ -2239,7 +2239,7 @@ def _project_discovery_public(value: Any) -> Any:
 def _valid_shader_connection(result: Any) -> bool:
     """The v2 live Shader description. Unknown shapes never become compact success."""
     required = {"view", "stack", "connected", "shader", "lease", "commit", "revision", "mcp_enabled"}
-    optional = {"title", "writable", "project_context_witness", "studio_surface_id"}
+    optional = {"title", "writable", "project_context_witness", "studio_surface_id", "agent_open"}
     if (type(result) is not dict or not required <= set(result) <= required | optional
             or result["view"] != "shader" or result["stack"] not in {"v1", "v2"}
             or type(result["connected"]) is not bool or type(result["mcp_enabled"]) is not bool):
@@ -2250,6 +2250,14 @@ def _valid_shader_connection(result: Any) -> bool:
         return False
     if "writable" in result and type(result["writable"]) is not bool:
         return False
+    if "agent_open" in result and result["agent_open"] is not None:
+        policy = result["agent_open"]
+        if (type(policy) is not dict
+                or set(policy) != {"policy", "allow_force_open", "blocked_for_session"}
+                or policy["policy"] not in {"ask", "always_allow", "never"}
+                or type(policy["allow_force_open"]) is not bool
+                or type(policy["blocked_for_session"]) is not bool):
+            return False
     for key in ("project_context_witness", "studio_surface_id"):
         if key in result and result[key] is not None and (
                 type(result[key]) is not str or not result[key].strip() or len(result[key]) > 256):
