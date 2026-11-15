@@ -4413,8 +4413,12 @@ class Client:
         params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
                   "project_context_witness": args["project_context_witness"]}
         params.update({key: args[key] for key in ("kind", "cursor", "limit", "newest") if key in args})
-        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/history",
-                                                     params=params), kind="history", entries=20)
+        try:
+            data = self.request_json("GET", "/api/shaders/agent-operations/history", params=params)
+        except HextileClientError as exc:
+            _raise_plain_refusal(exc)
+            raise
+        return _native_read_result(data, kind="history", entries=20)
 
     def get_shader_looks(self, args: Mapping[str, Any]) -> dict:
         _native_read_args(args, {"shader", "project_context_witness"})
@@ -4493,8 +4497,12 @@ class Client:
 
     def get_shader_project_conventions(self, args: Mapping[str, Any]) -> dict:
         _native_read_args(args, {"project_context_witness"})
-        return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/project-conventions",
-                                                     params=dict(args)), kind="conventions")
+        try:
+            data = self.request_json("GET", "/api/shaders/agent-operations/project-conventions", params=dict(args))
+        except HextileClientError as exc:
+            _raise_plain_refusal(exc)
+            raise
+        return _native_read_result(data, kind="conventions")
 
     def stage_shader_resource(self, args: Mapping[str, Any]) -> dict:
         required = {"shader", "project_context_witness", "base", "expected_working_digest", "source"}
@@ -7104,6 +7112,28 @@ class Client:
         return self.base_url + path
 
 
+def _raise_plain_refusal(exc: HextileClientError) -> None:
+    """A {code, message, next_step} body is the refusal. Anything else stays the raw HTTP error."""
+    if exc.kind != "http":
+        raise exc
+    try:
+        parsed = json.loads(exc.body or "")
+    except (ValueError, TypeError):
+        raise exc
+    detail = parsed.get("detail") if isinstance(parsed, dict) else None
+    if not isinstance(detail, dict):
+        raise exc
+    code, message, next_step = detail.get("code"), detail.get("message"), detail.get("next_step")
+    if (type(code) is not str or _REFUSAL_CODE.fullmatch(code) is None
+            or type(message) is not str or not message.strip() or "\n" in message or len(message) > 300
+            or type(next_step) is not str or not next_step.strip() or "\n" in next_step or len(next_step) > 300):
+        raise exc
+    raise HextileClientError(
+        message, status_code=exc.status_code, kind="http",
+        receipt={"code": code, "message": message, "next_step": next_step},
+    ) from exc
+
+
 def error_payload(exc: BaseException) -> dict[str, Any]:
     """Stable tool-result shaped error for MCP content."""
     if isinstance(exc, HextileClientError):
@@ -7117,5 +7147,11 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
             payload["code"] = "batch_unavailable"
         if exc.receipt is not None:
             payload["receipt"] = exc.receipt
+            plain = exc.receipt
+            if set(plain) == {"code", "message", "next_step"}:
+                payload["code"] = plain["code"]
+                payload["message"] = plain["message"]
+                payload["next_step"] = plain["next_step"]
+                payload["error"] = plain["message"]
         return payload
     return {"ok": False, "error": str(exc), "kind": "other"}
