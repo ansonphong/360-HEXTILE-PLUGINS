@@ -79,6 +79,13 @@ the code, or the generation you sent is no longer current.
 A Shader technique question is `get_guide(name="shader-cookbook")` and does not
 open a Shader. Load only the guides the procedure names.
 
+`shader_edit` addresses: a parameter is `["values","<parameter id>"]`, source is
+`["code"]` with value `{"source.glsl":"...","<module path>":"..."}` (all files).
+Personal tags for `shader_set_tags` are user-owned and no tool lists them; ask the
+user. Write tools take `expected_working_digest` = `base.document_hash` (from
+`shader_get_asset_state`); it defaults to that when omitted. A Sequence render
+requires `seed`. Still export needs the Shader mounted; use `shader_open_asset` first.
+
 Playback (`shader_control_clock` and `shader_step_frame`) is not an edit.
 Changing bpm, speed, start, end or loop is an edit.
 

@@ -2561,3 +2561,51 @@ def test_open_reply_states_exact_poll_arguments_and_scope_errors_name_the_field(
     assert bad.value.status_code == 422
     with pytest.raises(HextileClientError, match='scope "asset" requires the shader field'):
         client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit"})
+
+
+def test_working_digest_documented_and_defaulted_on_write_tools(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    names = {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look",
+             "shader_checkpoint", "shader_restore_revision", "shader_copy_revision", "shader_history_retention",
+             "shader_stage_resource", "shader_set_resource", "shader_rename_asset"}
+    for row in SHADER_EXTENSION_TOOLS:
+        if row["name"] in names:
+            assert "base.document_hash" in row["description"], row["name"]
+            assert "expected_working_digest" not in row["inputSchema"]["required"], row["name"]
+    client = Client("http://127.0.0.1:9")
+    digest = "sha256:" + "a" * 64
+    base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
+    shader = {"origin": "user", "shaderId": "aurora"}
+    sent = []
+
+    def reply(method, path, payload=None, **kwargs):
+        sent.append(payload)
+        return {"request_id": payload["request_id"], "operation": "shader_restore_revision", "state": "saved"}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    client.restore_shader_revision({
+        "shader": shader, "project_context_witness": "w", "base": base,
+        "request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea", "library_intent": "saved",
+        "checkpoint_id": "cp1",
+        "confirmation_scope": {"operation": "shader_restore_revision", "shader": shader}})
+    assert sent[-1]["expected_working_digest"] == digest
+
+
+def test_stopped_sequence_reads_stopped_without_producer_state() -> None:
+    from hextile_client import _native_sequence_fields
+
+    assert _native_sequence_fields({"producer": "shader", "error": "stop_requested"})["stopped_by_user"] is True
+    assert _native_sequence_fields({"producer": "shader", "error": "stop_requested",
+                                    "producer_state": "stopped"})["stopped_by_user"] is True
+    assert "stopped_by_user" not in _native_sequence_fields({"producer": "shader", "error": "frame_body"})
+
+
+def test_writer_required_refusal_gets_a_next_step() -> None:
+    from hextile_client import error_payload, _raise_plain_refusal
+
+    exc = HextileClientError("x", status_code=403, kind="http", body=json.dumps(
+        {"detail": {"code": "authority", "message": "Current Shader writer is required"}}))
+    with pytest.raises(HextileClientError) as caught:
+        _raise_plain_refusal(exc)
+    assert "shader_open_asset" in error_payload(caught.value)["next_step"]

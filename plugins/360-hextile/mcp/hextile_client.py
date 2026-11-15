@@ -1178,6 +1178,16 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
         raise HextileClientError("Native unpreviewed revision confirmation must be boolean", status_code=422, kind="other")
 
 
+def _default_working_digest(args: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Fill an omitted expected_working_digest from base.document_hash; the APP checks base too."""
+    if isinstance(args, Mapping) and "expected_working_digest" not in args:
+        base = args.get("base")
+        digest = base.get("document_hash") if isinstance(base, Mapping) else None
+        if type(digest) is str:
+            return {**args, "expected_working_digest": digest}
+    return args
+
+
 def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness"}
     expected = (common if operation == "state" else
@@ -1746,6 +1756,9 @@ def _native_sequence_fields(data: Mapping[str, Any]) -> dict[str, Any]:
             out["source"] = safe_source
     if type(data.get("error")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,127}", data["error"]):
         out["error"] = data["error"]
+        # The APP may omit producer_state on a stopped sequence; the error code is the reliable signal.
+        if data["error"] == "stop_requested" and data.get("producer_state") in (None, "stopped"):
+            out["stopped_by_user"] = True
     if type(data.get("ownership_live")) is bool:
         out["ownership_live"] = data["ownership_live"]
     for key in ("render_files_available", "storage_available"):
@@ -4172,8 +4185,6 @@ class Client:
             result["publication_attempts"] = [attempt(item) for item in data["publication_attempts"][:8]
                                               if isinstance(item, Mapping)]
         result.update(_native_sequence_fields(data))
-        if result.get("producer_state") == "stopped" and result.get("error") == "stop_requested":
-            result["stopped_by_user"] = True
         return result
 
     @staticmethod
@@ -4443,6 +4454,7 @@ class Client:
             "project_context_witness": args["project_context_witness"]}), kind="looks", entries=128)
 
     def _shader_history_write(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
+        args = _default_working_digest(args)
         checked = dict(args)
         if operation.startswith("shader_checkpoint_"):
             if checked.pop("action", None) != operation.removeprefix("shader_checkpoint_"):
@@ -4502,6 +4514,7 @@ class Client:
         if action == "preview":
             if args.get("preview_operation", "compact") != "compact":
                 raise HextileClientError("Unsupported history preview operation", status_code=422, kind="other")
+            args = _default_working_digest(args)
             checked = {key: value for key, value in args.items() if key != "action"}
             _native_history_args("shader_history_preview", checked)
             result = self._shader_request("POST", "/api/shaders/agent-operations/history-retention", dict(args))
@@ -4522,6 +4535,7 @@ class Client:
         return _native_read_result(data, kind="conventions")
 
     def stage_shader_resource(self, args: Mapping[str, Any]) -> dict:
+        args = _default_working_digest(args)
         required = {"shader", "project_context_witness", "base", "expected_working_digest", "source"}
         optional = {"resolution", "reduced_copy", "projection", "filter", "edge_u", "edge_v"}
         _native_read_args(args, required, optional)
@@ -4590,6 +4604,7 @@ class Client:
         return receipt
 
     def set_shader_resource(self, args: Mapping[str, Any]) -> dict:
+        args = _default_working_digest(args)
         required = {"shader", "project_context_witness", "request_id", "base", "expected_working_digest", "action", "slot_id"}
         optional = {"staged_token", "filter", "edge_u", "edge_v", "time_mode", "end_mode", "hold_index",
                     "library_intent", "confirmation_scope", "studio_surface_id", "expected_edit_sequence", "seen"}
@@ -4646,6 +4661,7 @@ class Client:
             "/api/shaders/agent-operations/project-conventions", required, {"seen"})
 
     def rename_shader_asset(self, args: Mapping[str, Any]) -> Any:
+        args = _default_working_digest(args)
         _native_shader_args("rename", args)
         request_id = args["request_id"]
         try:
@@ -7168,6 +7184,12 @@ class Client:
         return self.base_url + path
 
 
+_DEFAULT_NEXT_STEP = {
+    ("authority", "Current Shader writer is required"):
+        "Open it first with shader_open_asset, or render the mounted Shader.",
+}
+
+
 def _raise_plain_refusal(exc: HextileClientError) -> None:
     """A {code, message, next_step} body is the refusal. Anything else stays the raw HTTP error."""
     if exc.kind != "http":
@@ -7180,6 +7202,8 @@ def _raise_plain_refusal(exc: HextileClientError) -> None:
     if not isinstance(detail, dict):
         raise exc
     code, message, next_step = detail.get("code"), detail.get("message"), detail.get("next_step")
+    if next_step is None and type(code) is str:
+        next_step = _DEFAULT_NEXT_STEP.get((code, message))
     if (type(code) is not str or _REFUSAL_CODE.fullmatch(code) is None
             or type(message) is not str or not message.strip() or "\n" in message or len(message) > 300
             or type(next_step) is not str or not next_step.strip() or "\n" in next_step or len(next_step) > 300):
