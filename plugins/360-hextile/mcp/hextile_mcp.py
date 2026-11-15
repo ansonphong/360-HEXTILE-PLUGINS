@@ -2829,15 +2829,15 @@ for _shape in _STILL_OUTPUT["anyOf"][2:4]:
         "else": {"properties": {"raster_policy": _SHADER_RASTER_PROCESSING}}})
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library. "
-              "Unchanged rows come from the APP's listing cache; refresh=all or refresh=id,id rereads those Shaders.",
+              "Unchanged rows come from the APP's listing cache; refresh=all or refresh=id,id rereads those Shaders. "
+              "Omit the witness to discover it; the reply carries the current project_context_witness.",
               {"project_context_witness": _SHADER_TEXT,
                "shelf": {"enum": ["builtin", "user", "project"]},
                "search": {"type": "string", "maxLength": 128},
                "cursor": {"type": "string", "maxLength": 160},
                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                "refresh": {"type": "string", "maxLength": 6449,
-                           "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}},
-              ["project_context_witness"]),
+                           "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}}),
     _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
     _tool_def("shader_request_preview", "Request shader-export-preview/2 at the selected full dimensions and supersampling. Still uses the exact saved revision and its saved capture defaults; Sequence evaluates the exact end-exclusive rational sample and native replay. Requires advertised native limits and the mounted saved-base owner. Sequence saved_sequence previews the owned frozen recipe while preserving authoring; requires shader-sequence-recovery/1. Recover the original operation ID; never repost under a new ID. Absent render_route stays native. A WebGL route is delivered as shader_render_produce to the mounted Workshop; this tool does not produce frames.",

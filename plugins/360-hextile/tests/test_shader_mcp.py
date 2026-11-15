@@ -1299,6 +1299,34 @@ def test_native_shader_discovery_transport_rejects_unbounded_results(monkeypatch
         client.list_shader_assets({"project_context_witness": "wit"})
 
 
+def test_list_shader_assets_omits_an_absent_witness(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    tool = next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == "shader_list_assets")
+    assert "project_context_witness" not in tool["inputSchema"].get("required", [])
+    assert tool["description"].endswith(
+        "Omit the witness to discover it; the reply carries the current project_context_witness.")
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    reply = {"schema": 1, "project_context_witness": "live", "project": {},
+             "entries": [], "next_cursor": None}
+
+    def fake(method, path, body=None, **kwargs):
+        calls.append((method, path, kwargs.get("params")))
+        return reply
+
+    monkeypatch.setattr(client, "request_json", fake)
+    assert client.list_shader_assets({})["project_context_witness"] == "live"
+    assert calls == [("GET", "/api/shaders/agent-operations/assets", {})]
+    assert client.list_shader_assets({"project_context_witness": "wit", "shelf": "user"})["entries"] == []
+    assert calls[1][2] == {"project_context_witness": "wit", "shelf": "user"}
+    with pytest.raises(HextileClientError) as bad:
+        client.list_shader_assets({"project_context_witness": ""})
+    assert bad.value.status_code == 422
+    with pytest.raises(HextileClientError) as missing:
+        client.get_shader_project_conventions({})
+    assert "project_context_witness" in str(missing.value)
+
+
 
 def test_compile_ok_matches_status(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")

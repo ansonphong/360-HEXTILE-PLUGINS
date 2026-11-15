@@ -1210,9 +1210,13 @@ def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[st
 
 def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set[str] = frozenset()) -> None:
     _closed_argument_error("Expected closed Shader read arguments", args, required, set(optional))
-    witness = args.get("project_context_witness")
-    if type(witness) is not str or not 1 <= len(witness) <= 256:
-        raise HextileClientError("Invalid Project witness", status_code=422, kind="other")
+    # Asset discovery may omit the witness; every other read still requires it.
+    if "project_context_witness" in required or "project_context_witness" in args:
+        witness = args.get("project_context_witness")
+        if type(witness) is not str or not 1 <= len(witness) <= 256:
+            raise HextileClientError("Invalid Project witness", status_code=422, kind="other")
+    else:
+        witness = None
     if "shader" in required:
         _native_shader_args("state", {"shader": args["shader"], "project_context_witness": witness})
     if "limit" in args:
@@ -4311,9 +4315,12 @@ class Client:
             "project_context_witness": args["project_context_witness"]}), kind="state")
 
     def list_shader_assets(self, args: Mapping[str, Any]) -> dict:
-        _native_read_args(args, {"project_context_witness"}, {"shelf", "search", "cursor", "limit", "refresh"})
+        _native_read_args(args, set(), {
+            "project_context_witness", "shelf", "search", "cursor", "limit", "refresh"})
+        params = {key: args[key] for key in (
+            "project_context_witness", "shelf", "search", "cursor", "limit", "refresh") if key in args}
         return _native_read_result(self.request_json("GET", "/api/shaders/agent-operations/assets",
-                                                     params=dict(args)), kind="assets", entries=50)
+                                                     params=params), kind="assets", entries=50)
 
     def get_shader_history(self, args: Mapping[str, Any]) -> dict:
         _native_read_args(args, {"shader", "project_context_witness"}, {"kind", "cursor", "limit", "newest"})
