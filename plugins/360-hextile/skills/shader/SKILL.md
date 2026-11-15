@@ -17,8 +17,16 @@ print the whole catalog or inspect DevTools just to discover the Shader.
 The reply is the live Shader: `shader.origin`, `shader.shader_id`, `lease`
 (`holder` and `generation`), `commit`, `revision`, `connected` and
 `mcp_enabled`. Report those. Do not guess a title from an id. A missing Shader
-means none is open. APP down: “Launch 360 Hextile, then retry.” MCP disabled:
+means none is open. If `get_live_context` has no `current_surface`, the
+Workshop is empty. Call `shader_list_assets` with the `project_context_witness`
+from that context. The list returns that witness. Then `shader_open_asset`
+opens one saved Shader. APP down: “Launch 360 Hextile, then retry.” MCP disabled:
 enable MCP in APP Settings.
+
+`open_shader_workspace` takes `shader_id` and `request_id` only. Do not send
+`workspace_schema`. The package digest layout is in
+[the authoring procedure](references/authoring.md). `shader_capture_sequence_input`
+is optional for a Shader with no sequence input.
 
 A successful connection is not a save and not permission to write. Only use
 DevTools when the request needs visual or DOM inspection. Discovery does not

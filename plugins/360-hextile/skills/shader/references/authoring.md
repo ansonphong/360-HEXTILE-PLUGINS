@@ -16,17 +16,31 @@ cover.jpg                 optional browsing picture, not part of identity
 
 A package must contain `shader.json`, `source.glsl` and `provenance.json`. Text files are UTF-8 without a byte-order mark, and writers use LF. The package digest is `sha256:` plus the hex SHA-256 of the member bytes framed as `hexshader-package-1`. Register sends that digest.
 
+The frame does not include the file bytes. It is the ASCII header `hexshader-package-1` plus a newline, then one ASCII record per path sorted by the path's UTF-8 bytes: the path, a newline, the decimal byte length, a newline, the lowercase hex SHA-256 of the raw bytes (no `sha256:` prefix), and a newline. `code_digest` uses the same records with header `hexshader-code-1` and only `source.glsl` plus `modules/**/*.glsl`.
+
+```python
+import hashlib
+
+def package_digest(members: dict[str, bytes]) -> str:
+    parts = [b"hexshader-package-1\n"]
+    for path in sorted(members, key=lambda item: item.encode("utf-8")):
+        raw = members[path]
+        digest = hashlib.sha256(raw).hexdigest()
+        parts.append(f"{path}\n{len(raw)}\n{digest}\n".encode("ascii"))
+    return "sha256:" + hashlib.sha256(b"".join(parts)).hexdigest()
+```
+
 ## Edit
 
 An address is a list of strings, never a dotted path. `["drivers", "tint.r"]` is the driver whose target is `tint.r`. An edit is one of `set`, `create`, `reshape` or `delete`, and it names one unit. Do not replace a parent object.
 
 `shader_edit` posts one batch of those edits and returns its own saved commit immediately. Register saves file-workspace changes. `shader_edit` cannot write `provenance.json`. Typed tools (clock and timeline settings, Looks, tags, resources, capture) are the same engine. Send `seen` for every unit a human has edited: `{address, human}` from a read. A unit no human has edited needs none. The same `request_id` returns that saved commit.
 
-Open takes `shader_id` and `request_id` only and returns the lease, commit and revision. A workspace with no snapshot also returns `not_adopted`. Register takes the package digest, the lease and `seen`, and saves. Read `merge`. Watch `compile`. Prepare failure returns `prepare: failed` and diagnostics; fix the package and register again with a new request id. `get_shader_update` reads the recorded save. Only `compile` may still change.
+Open takes `shader_id` and `request_id` only. Do not send `workspace_schema`. It returns the lease, commit and revision, and `workspace_path` or `workspace_paths` when the reply includes them. A workspace with no snapshot also returns `not_adopted`. Register takes the package digest, the lease and `seen`, and saves. Read `merge`. Watch `compile`. A profile with `ok: null` and status `pending` means compile pending; poll `get_shader_update`. Status `not_observed` means that profile was not compiled. Prepare failure returns `prepare: failed` and diagnostics; fix the package and register again with a new request id. `get_shader_update` reads the recorded save. Only `compile` may still change.
 
 Register saves. Read merge to see what was kept. Watch compile; if it fails, fix and register again. A field the human has edited carries a human number wherever you read it. To change such a field, send that pair in seen with your edit. If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Send your edit again with it only if you still mean it.
 
-A merge row is `{op, address, outcome, before, value, human}`. Outcomes are `kept`, `clamped`, `fell_back`, `disabled`, `removed`, `rewritten`, `skipped` and `lost_to_human`. `before` and `value` are omitted when the unit is absent. `human` is omitted when no human has edited that unit. `not_adopted` is a separate list, not a merge outcome.
+A merge row is `{op, address, outcome, before, value, human}`. Outcomes are `kept`, `clamped`, `fell_back`, `disabled`, `removed`, `rewritten`, `skipped` and `lost_to_human`. Unchanged `kept` rows are omitted; their number is `kept_count`. Source bodies in `before` and `value` are replaced with `path`, `sha256` and `bytes`. `before` and `value` are omitted when the unit is absent. `human` is omitted when no human has edited that unit. `not_adopted` is a separate list, not a merge outcome.
 
 Send `lease` when the edit touches a leased unit: `source.glsl` and the modules together (`[code]`), `space`, `passes`, parameter existence and shape, and input-slot existence and shape. The lease is `{holder, generation}`. `holder` is `human` or `agent`. A new Shader starts with the agent at generation 0. A `stale_lease` result means the lease moved. Only the human moves the lease, with Take control or Hand back. While the human holds the code, register is refused: the human holds the code and can hand it back. Hand the code back, then register again. No MCP tool moves the lease.
 
@@ -56,8 +70,8 @@ The code lease owns the shape. Label, default, min, max, step, clamp, control, o
 
 ## Discover and open
 
-1. `get_live_context(view="shader")` once. The reply names `shader.origin`, `shader.shader_id`, `lease`, `commit` and `revision`. A builtin is not edited in place; duplicate it into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
-2. `open_shader_workspace` with that `shader_id` and one new `request_id`. Nothing human-side refuses open. The same request id returns the recorded open.
+1. `get_live_context(view="shader")` once. The reply names `shader.origin`, `shader.shader_id`, `lease`, `commit` and `revision`. If `get_live_context` has no `current_surface`, the Workshop is empty. Call `shader_list_assets` with the `project_context_witness` from that context. The list returns that witness on `project_context_witness`. Then `shader_open_asset` opens one saved Shader. A builtin is not edited in place; duplicate it into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
+2. `open_shader_workspace` with that `shader_id` and one new `request_id`. Do not send `workspace_schema`. Nothing human-side refuses open. The same request id returns the recorded open.
 3. Call `shader_edit` or the typed tools. `shader_edit` returns its own saved commit immediately. To save edits made in the package files, change those files, not `.local/`, recompute the package digest from the member bytes, and register. Register saves those file-workspace changes.
 4. `register_shader_update` saves file-workspace changes. Send the digest, the lease you were given, and `seen`. Then read `merge` and `compile`. A `shader_edit` batch already returned its commit.
 
@@ -145,7 +159,7 @@ pixels. Keep exact rational interval/FPS/count and all saved source/resource
 identity fields. Explicit deferred masters and later copy/conversion remain
 separate supported operations.
 
-For a new playable Shader sequence, call `shader_capture_sequence_input` with
+`shader_capture_sequence_input` is optional. Skip it for a Shader with no sequence input; that call is `sequence_input_unsupported`, and a sequence without capture still runs. For a new playable Shader sequence that uses sequence input, call `shader_capture_sequence_input` with
 the discovered saved base and mounted surface. If its reply is uncertain, retry
 only the same request ID; once applied, pass that ID as `input_capture_id` to
 preflight and render within five minutes. It freezes the saved neutral camera
@@ -165,7 +179,7 @@ starting a native renderer. Both-complete output starts no work.
 Poll native status about every1–2seconds; back off on unchanged revisions or
 connection errors. Keep saved count separate from contiguous cursor, checking
 totals and replay. Restart counts are last reported until explicit verification.
-Use observed `run_id` for Stop and current attempt ID/revision for publication
+Use `render_observation.run_id` from `get_shader_sequence` for Stop and current attempt ID/revision for publication
 controls. Stop settles only after its owner drains. A stale409 needs fresh status;
 timeout/404 is unknown, never proof a job did not start or permission for a new key.
 
@@ -233,4 +247,4 @@ transaction. The native owner loads the original request locally; its private
 request body never enters MCP results. Never mint a new key or inspect a new body to
 restart an unfinished replacement. The short archive transaction settles
 atomically or remains recoverable, so it has no mid-move cancellation; after new
-render admission, use normal native status and Stop with its observed `run_id`.
+render admission, use normal native status and Stop with `render_observation.run_id` from `get_shader_sequence`.
