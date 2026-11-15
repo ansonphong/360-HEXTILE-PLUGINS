@@ -2832,6 +2832,22 @@ def _not_adopted_rows(value: Any) -> list:
     return value
 
 
+def _compile_status_ok(row: dict) -> bool:
+    """passed requires ok true and failed requires ok false. Null ok is only pending or not_observed."""
+    status = row.get("status")
+    present = "ok" in row
+    ok = row.get("ok")
+    if present and ok is not None and type(ok) is not bool:
+        return False
+    if status == "passed":
+        return ok is True
+    if status == "failed":
+        return ok is False
+    if present and ok is None:
+        return status in {"pending", "not_observed"}
+    return True
+
+
 def _compile_view(value: Any) -> dict:
     profiles = value.get("profiles") if type(value) is dict else None
     if (type(value) is not dict or set(value) != {"revision", "profiles"}
@@ -2844,7 +2860,7 @@ def _compile_view(value: Any) -> dict:
                 or type(row["profile"]) is not str or not row["profile"] or len(row["profile"]) > 64
                 or row["status"] not in _COMPILE_STATUS
                 or not (row["program_identity"] is None or type(row["program_identity"]) is str)
-                or ("ok" in row and row["ok"] is not None and type(row["ok"]) is not bool)
+                or not _compile_status_ok(row)
                 or ("diagnostics" in row and type(row["diagnostics"]) is not list)):
             _malformed("Malformed compile report")
     return value

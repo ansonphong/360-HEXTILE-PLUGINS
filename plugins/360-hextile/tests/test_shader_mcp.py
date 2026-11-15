@@ -1300,6 +1300,34 @@ def test_native_shader_discovery_transport_rejects_unbounded_results(monkeypatch
 
 
 
+def test_compile_ok_matches_status(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+
+    def compile_of(profile: dict[str, Any]) -> dict[str, Any]:
+        fresh = _saved_body(compile={"revision": 4, "profiles": [profile]})
+        monkeypatch.setattr(client, "request_json", lambda *args, fresh=fresh, **kwargs: fresh)
+        return client.get_shader_update(_package_args())
+
+    assert compile_of({"profile": "webgl2", "status": "passed", "program_identity": "prog", "ok": True})["compile"]["profiles"][0]["ok"] is True
+    assert compile_of({"profile": "webgl2", "status": "failed", "program_identity": None, "ok": False})["compile"]["profiles"][0]["ok"] is False
+    pending = compile_of({"profile": "webgl2", "status": "pending", "program_identity": None, "ok": None})
+    assert pending["compile_note"] == "compile pending; poll get_shader_update"
+    quiet = compile_of({"profile": "dome", "status": "not_observed", "program_identity": None, "ok": None})
+    assert "compile_note" not in quiet
+    for bad in (
+        {"profile": "webgl2", "status": "passed", "program_identity": "prog", "ok": None},
+        {"profile": "webgl2", "status": "passed", "program_identity": "prog"},
+        {"profile": "webgl2", "status": "failed", "program_identity": None, "ok": None},
+        {"profile": "webgl2", "status": "failed", "program_identity": None, "ok": True},
+        {"profile": "webgl2", "status": "passed", "program_identity": "prog", "ok": False},
+    ):
+        fresh = _saved_body(compile={"revision": 4, "profiles": [bad]})
+        monkeypatch.setattr(client, "request_json", lambda *args, fresh=fresh, **kwargs: fresh)
+        with pytest.raises(HextileClientError) as caught:
+            client.get_shader_update(_package_args())
+        assert "Malformed compile report" in str(caught.value)
+
+
 def test_register_digest_covers_workspace_text_only() -> None:
     authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
     snippet, after = authoring.split("```python", 1)[1].split("```", 1)
