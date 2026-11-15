@@ -30,6 +30,8 @@ def package_digest(members: dict[str, bytes]) -> str:
     return "sha256:" + hashlib.sha256(b"".join(parts)).hexdigest()
 ```
 
+The register digest covers only `shader.json`, `provenance.json`, `source.glsl`, and `modules`. It does not cover `resources` or `originals`.
+
 ## Edit
 
 An address is a list of strings, never a dotted path. `["drivers", "tint.r"]` is the driver whose target is `tint.r`. An edit is one of `set`, `create`, `reshape` or `delete`, and it names one unit. Do not replace a parent object.

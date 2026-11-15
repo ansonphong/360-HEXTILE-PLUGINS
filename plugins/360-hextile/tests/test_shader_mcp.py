@@ -1300,6 +1300,16 @@ def test_native_shader_discovery_transport_rejects_unbounded_results(monkeypatch
 
 
 
+def test_register_digest_covers_workspace_text_only() -> None:
+    authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
+    snippet, after = authoring.split("```python", 1)[1].split("```", 1)
+    assert "def package_digest" in snippet
+    note = after.strip().split("\n\n", 1)[0]
+    for member in ("shader.json", "provenance.json", "source.glsl", "modules"):
+        assert member in note
+    assert "does not cover" in note and "resources" in note and "originals" in note
+
+
 def test_shader_recheck_update_is_absent() -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS, TOOL_NAMES
     listed = {tool["name"] for tool in TOOLS + SHADER_EXTENSION_TOOLS}
