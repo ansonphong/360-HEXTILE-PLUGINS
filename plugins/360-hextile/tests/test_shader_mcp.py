@@ -2542,3 +2542,22 @@ def test_still_and_get_job_accept_only_an_explicit_failed_start_without_a_job() 
         for operation in ("still", "get_job"):
             with pytest.raises(HextileClientError):
                 _shader_output_receipt(operation, args, broken)
+
+
+def test_open_reply_states_exact_poll_arguments_and_scope_errors_name_the_field(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    mounted = {"origin": "user", "shaderId": "aurora"}
+    target = {"origin": "builtin", "shaderId": "hx_starter"}
+    monkeypatch.setattr(client, "request_json", lambda m, p, b: {
+        "request_id": request_id, "operation": "shader_open_asset", "state": "requested", "next_step": "shader_get_operation"})
+    bare = {"request_id": request_id, "project_context_witness": "wit", "target": target}
+    step = client.open_shader_asset(bare)["next_step"]
+    assert 'scope "asset"' in step and '"shaderId":"hx_starter"' in step and request_id in step
+    step = client.open_shader_asset({**bare, "shader": mounted, "studio_surface_id": "s"})["next_step"]
+    assert '"shaderId":"aurora"' in step and "hx_starter" not in step
+    with pytest.raises(HextileClientError, match="field scope must be one of asset, creation") as bad:
+        client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit", "scope": "bogus"})
+    assert bad.value.status_code == 422
+    with pytest.raises(HextileClientError, match='scope "asset" requires the shader field'):
+        client.get_shader_operation({"request_id": request_id, "project_context_witness": "wit"})

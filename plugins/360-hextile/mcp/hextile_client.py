@@ -4874,6 +4874,13 @@ class Client:
             raise HextileClientError("Mounted Shader acknowledgement unknown; read shader_get_operation.",
                                      kind="shader_operation_outcome_unknown",
                                      receipt={"request_id": args["request_id"]})
+        if receipt["state"] in {"requested", "pending"}:
+            lookup = args.get("shader") or args["target"]
+            receipt = {**receipt, "next_step": (
+                "Poll shader_get_operation with request_id " + args["request_id"]
+                + ", project_context_witness " + json.dumps(witness)
+                + ', scope "asset" and shader ' + json.dumps(lookup, separators=(",", ":"))
+                + " (the mounted Shader you sent, or the target when none was mounted).")}
         return receipt
 
     def open_shader_asset(self, args: Mapping[str, Any]) -> dict:
@@ -5067,9 +5074,17 @@ class Client:
                 or set(args) - {"request_id", "project_context_witness", "shader", "scope"}):
             raise HextileClientError("Expected closed Shader operation lookup", status_code=422, kind="other")
         scope = args.get("scope", "asset")
-        if scope not in {"asset", "creation", "library", "project", "output"} or (
-                "shader" in args) != (scope in {"asset", "output"}):
-            raise HextileClientError("Invalid Shader operation scope", status_code=422, kind="other")
+        allowed_scopes = ("asset", "creation", "library", "project", "output")
+        if scope not in allowed_scopes:
+            raise HextileClientError(
+                f"Invalid Shader operation scope: field scope must be one of {', '.join(allowed_scopes)}"
+                ' (shader_open_asset replies are read with scope "asset").', status_code=422, kind="other")
+        if ("shader" in args) != (scope in {"asset", "output"}):
+            raise HextileClientError(
+                f"Invalid Shader operation scope: scope \"{scope}\" "
+                + ("requires the shader field (for shader_open_asset, the mounted Shader you sent, or the target when none was mounted)."
+                   if scope in {"asset", "output"} else "must not include the shader field."),
+                status_code=422, kind="other")
         if scope in {"asset", "output"}:
             _native_shader_args("status", {key: args[key] for key in
                 ("shader", "project_context_witness", "request_id")})
