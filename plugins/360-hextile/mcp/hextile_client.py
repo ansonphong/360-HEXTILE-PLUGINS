@@ -2755,24 +2755,30 @@ def _slim_merge_row(row: dict) -> dict:
     return slim
 
 
+def _unchanged_kept(row: dict) -> bool:
+    """APP uses kept for a successful edit. Omit it only when before and value match."""
+    return (row.get("outcome") == "kept" and "before" in row and "value" in row
+            and row["before"] == row["value"])
+
+
 def _shape_merge_container(parent: Any) -> None:
-    """Omit unchanged kept rows and drop source bodies from the rows that remain."""
+    """Omit kept rows proven unchanged. A changed row keeps address, outcome and human."""
     if type(parent) is not dict:
         return
     for key in ("merge", "results"):
         rows = parent.get(key)
         if type(rows) is not list:
             continue
-        kept = 0
+        unchanged = 0
         shaped = []
         for row in rows:
-            if type(row) is dict and row.get("outcome") == "kept":
-                kept += 1
+            if type(row) is dict and _unchanged_kept(row):
+                unchanged += 1
                 continue
             shaped.append(_slim_merge_row(row) if type(row) is dict else row)
         parent[key] = shaped
-        if kept:
-            parent["kept_count"] = kept
+        if unchanged:
+            parent["kept_count"] = unchanged
     receipt = parent.get("receipt")
     if type(receipt) is dict:
         _shape_merge_container(receipt)

@@ -870,13 +870,32 @@ def test_register_forwards_digest_lease_and_seen(monkeypatch) -> None:
 
     monkeypatch.setattr(client, "request_json", request_json)
     registered = client.register_shader_update(args)
-    assert registered["merge"] == []
-    assert registered["kept_count"] == 1
+    assert registered["merge"] == [{"op": "set", "address": ["parameters", "fog"],
+                                    "outcome": "kept", "value": 0.2}]
+    assert "kept_count" not in registered
     assert sent == {"method": "POST", "path": "/api/shaders/aurora/register",
                     "body": {"request_id": "req-register", "digest": digest,
                              "lease": args["lease"], "seen": seen}}
     with pytest.raises(HextileClientError):
         client.register_shader_update({**args, "seen": [{"address": "parameters.fog", "human": 1}]})
+
+
+def test_changed_kept_rows_stay_and_unchanged_kept_rows_are_omitted(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    changed = {"op": "set", "address": ["parameters", "fog"], "outcome": "kept",
+               "before": 0.1, "value": 0.4, "human": 3}
+    unchanged = {"op": "set", "address": ["parameters", "gain"], "outcome": "kept",
+                 "before": 1, "value": 1, "human": 2}
+    created = {"op": "create", "address": ["parameters", "haze"], "outcome": "kept", "value": 0.5}
+    body = _saved_body()
+    body["merge"] = [changed, unchanged, created]
+    monkeypatch.setattr(client, "request_json", lambda *args, **kwargs: body)
+    saved = client.get_shader_update(_package_args())
+    assert saved["kept_count"] == 1
+    assert saved["merge"] == [changed, created]
+    assert saved["merge"][0]["address"] == ["parameters", "fog"]
+    assert saved["merge"][0]["outcome"] == "kept"
+    assert saved["merge"][0]["human"] == 3
 
 
 def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
@@ -1936,7 +1955,8 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
     monkeypatch.setattr(client, "request_json", lambda *a, **k: pending)
     saved = client.get_shader_update(_package_args())
     assert saved["compile_note"] == "compile pending; poll get_shader_update"
-    assert saved["kept_count"] == 1 and saved["merge"][0]["outcome"] == "lost_to_human"
+    assert "kept_count" not in saved
+    assert [row["outcome"] for row in saved["merge"]] == ["lost_to_human", "kept"]
     assert saved["merge"][0]["value"]["files"][0]["path"] == "source.glsl"
     assert glsl not in json.dumps(saved)
     quiet = _saved_body(compile={"revision": 4, "profiles": [
@@ -1990,8 +2010,9 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
                {"op": "set", "address": ["code"], "outcome": "rewritten", "value": {"source.glsl": glsl}}]}}
     monkeypatch.setattr(client, "request_json", lambda *a, **k: fat)
     applied = client.apply_shader_look(look)
-    assert applied["receipt"]["kept_count"] == 1
-    assert applied["receipt"]["results"][0]["value"]["files"][0]["bytes"] == len(glsl.encode("utf-8"))
+    assert "kept_count" not in applied["receipt"]
+    assert applied["receipt"]["results"][0]["outcome"] == "kept"
+    assert applied["receipt"]["results"][1]["value"]["files"][0]["bytes"] == len(glsl.encode("utf-8"))
     assert "void hxMain" not in json.dumps(applied)
 
     from hextile_mcp import SHADER_EXTENSION_TOOLS
