@@ -939,38 +939,39 @@ def _valid_creation_receipt(receipt: Any, operation: str) -> bool:
             and (operation != "shader_import_bundle" or _creation_digest(receipt["bundle_sha256"])))
 
 
+_RENAME_RECEIPT_FIELDS = {"stack", "shader_id", "title", "tags", "revision", "commit", "digest", "lease"}
+_DELETE_RECEIPT_FIELDS = {"stack", "deleted", "shader_id", "origin"}
+
+
+def _target_shader(args: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    shader = args.get("shader")
+    return shader if isinstance(shader, Mapping) else None
+
+
 def _accepted_rename_receipt(receipt: Any, args: Mapping[str, Any]) -> bool:
-    """A request-id envelope, or the v2 rename body (no request_id; operation may be shader_library_commit)."""
-    if type(receipt) is not dict:
+    """POST /rename returns rename_shader: title plus shader id. No request-id shortcut."""
+    if type(receipt) is not dict or set(receipt) != _RENAME_RECEIPT_FIELDS:
         return False
-    if receipt.get("request_id") == args["request_id"]:
-        return True
-    ref = args["shader"]
+    shader = _target_shader(args)
     tags = receipt.get("tags")
-    operation = receipt.get("operation", "shader_library_commit")
-    return (receipt.get("stack") == "v2" and receipt.get("shader_id") == ref.get("shaderId")
-            and type(receipt.get("title")) is str and type(tags) is list and len(tags) <= 64
+    return (shader is not None and receipt.get("stack") == "v2"
+            and receipt.get("shader_id") == shader.get("shaderId")
+            and receipt.get("title") == args.get("title")
+            and type(tags) is list and len(tags) <= 64
             and all(type(tag) is str and len(tag) <= 256 for tag in tags)
             and type(receipt.get("revision")) is int and receipt["revision"] >= 1
             and type(receipt.get("commit")) is int and receipt["commit"] >= 1
-            and _creation_digest(receipt.get("digest")) and _shader_lease(receipt.get("lease"))
-            and operation in {"shader_library_commit", "shader_rename_asset", "rename"}
-            and set(receipt) <= {"stack", "shader_id", "title", "tags", "revision", "commit",
-                                 "digest", "lease", "operation"})
+            and _creation_digest(receipt.get("digest")) and _shader_lease(receipt.get("lease")))
 
 
 def _accepted_delete_receipt(receipt: Any, args: Mapping[str, Any]) -> bool:
-    """A request-id envelope, or the v2 delete body."""
-    if type(receipt) is not dict:
+    """POST /delete returns delete_shader. Origin and shader id match the request."""
+    if type(receipt) is not dict or set(receipt) != _DELETE_RECEIPT_FIELDS:
         return False
-    if receipt.get("request_id") == args["request_id"]:
-        return True
-    operation = receipt.get("operation", "shader_library_commit")
-    return (receipt.get("stack") == "v2" and receipt.get("deleted") is True
-            and receipt.get("shader_id") == args["shader"].get("shaderId")
-            and receipt.get("origin") in {"user", "project"}
-            and operation in {"shader_library_commit", "shader_delete_asset", "delete"}
-            and set(receipt) <= {"stack", "deleted", "shader_id", "origin", "operation"})
+    shader = _target_shader(args)
+    return (shader is not None and receipt.get("stack") == "v2" and receipt.get("deleted") is True
+            and receipt.get("shader_id") == shader.get("shaderId")
+            and receipt.get("origin") == shader.get("origin"))
 
 
 def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, complete: bool) -> bool:

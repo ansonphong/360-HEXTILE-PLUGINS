@@ -942,11 +942,17 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
             "expected_working_digest": "sha256:" + "c" * 64,
             "library_intent": "saved", "confirmation_scope": {"operation": "delete", "shader": ref}}
     sent = []
-    monkeypatch.setattr(client, "request_json", lambda method, path, payload:
-                        sent.append((method, path, payload)) or {"request_id": request_id,
-                            "operation": "shader_save_as" if path.endswith("/save-as") else "shader_open_asset",
-                            "state": "applied"})
-    assert client.delete_shader_asset(body)["state"] == "applied"
+
+    def reply(method, path, payload):
+        sent.append((method, path, payload))
+        if path.endswith("/delete"):
+            return {"stack": "v2", "deleted": True, "shader_id": ref["shaderId"], "origin": ref["origin"]}
+        return {"request_id": request_id,
+                "operation": "shader_save_as" if path.endswith("/save-as") else "shader_open_asset",
+                "state": "applied"}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.delete_shader_asset(body)["deleted"] is True
     assert sent == [("POST", "/api/shaders/agent-operations/delete", body)]
     with pytest.raises(HextileClientError):
         client.delete_shader_asset({**body, "confirmation_scope": {"operation": "rename", "shader": ref}})
@@ -963,6 +969,60 @@ def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypa
     assert sent[-1] == ("POST", "/api/shaders/agent-operations/save-as", as_copy)
     with pytest.raises(HextileClientError):
         client.save_shader_as({**as_copy, "title": ""})
+
+
+def test_rename_and_delete_receipts_match_route_bodies(monkeypatch) -> None:
+    """The route body is the receipt. A request id, an extra operation, or the wrong target is not success."""
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    ref = {"origin": "user", "shaderId": "aurora"}
+    project = {"origin": "project", "shaderId": "aurora"}
+    digest = "sha256:" + "a" * 64
+    base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
+    rename = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
+              "base": base, "expected_working_digest": digest, "title": "Renamed",
+              "library_intent": "saved", "confirmation_scope": {"operation": "rename", "shader": ref}}
+    removal = {key: value for key, value in rename.items() if key != "title"}
+    removal["confirmation_scope"] = {"operation": "delete", "shader": ref}
+    lease = {"holder": "agent", "generation": 0}
+    renamed = {"stack": "v2", "shader_id": "aurora", "title": "Renamed", "tags": ["e2e"],
+               "revision": 9, "commit": 9, "digest": digest, "lease": lease}
+    deleted = {"stack": "v2", "deleted": True, "shader_id": "aurora", "origin": "user"}
+    replies = {"rename": renamed, "delete": deleted}
+
+    def reply(method, path, payload=None, **kwargs):
+        if path.endswith("/rename"):
+            return replies["rename"]
+        if path.endswith("/delete"):
+            return replies["delete"]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.rename_shader_asset(rename)["title"] == "Renamed"
+    assert client.delete_shader_asset(removal)["origin"] == "user"
+
+    def reject(kind, body, call):
+        replies[kind] = body
+        with pytest.raises(HextileClientError) as caught:
+            call()
+        assert caught.value.kind == "shader_operation_outcome_unknown"
+
+    reject("rename", {"request_id": request_id, "state": "saved"}, lambda: client.rename_shader_asset(rename))
+    reject("rename", {**renamed, "operation": "shader_library_commit"}, lambda: client.rename_shader_asset(rename))
+    reject("rename", {**renamed, "origin": "user"}, lambda: client.rename_shader_asset(rename))
+    reject("rename", {**renamed, "title": "Other"}, lambda: client.rename_shader_asset(rename))
+    reject("rename", {**renamed, "shader_id": "other"}, lambda: client.rename_shader_asset(rename))
+    replies["rename"] = renamed
+    reject("delete", {"request_id": request_id, "operation": "shader_delete_asset", "state": "saved"},
+           lambda: client.delete_shader_asset(removal))
+    reject("delete", {**deleted, "origin": "project"}, lambda: client.delete_shader_asset(removal))
+    reject("delete", {**deleted, "shader_id": "other"}, lambda: client.delete_shader_asset(removal))
+    reject("delete", {**deleted, "operation": "delete"}, lambda: client.delete_shader_asset(removal))
+    project_delete = {**removal, "shader": project,
+                      "confirmation_scope": {"operation": "delete", "shader": project}}
+    reject("delete", deleted, lambda: client.delete_shader_asset(project_delete))
+    replies["delete"] = {"stack": "v2", "deleted": True, "shader_id": "aurora", "origin": "project"}
+    assert client.delete_shader_asset(project_delete)["origin"] == "project"
 
 
 def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:
@@ -1109,13 +1169,24 @@ def test_import_bundle_uses_only_selected_grant_and_closed_receipt(monkeypatch) 
 def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     calls = []
-    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs:
-                        calls.append((method, path, body, kwargs)) or
-                        ({"request_id": body["request_id"], "state": "applied"} if body else
-                         {"schema": 1, "shader": {"origin": "user", "shaderId": "aurora"},
-                          "project_context_witness": "wit", "status": "saved", "provenance": "saved",
-                          "base": {}, "capability": {}, "writable": False, "save_state": "saved"}
-                         if path.endswith("/asset-state") else {"state": "applied"}))
+    rename_digest = "sha256:" + "d" * 64
+    renamed = {"stack": "v2", "shader_id": "aurora", "title": "Renamed", "tags": ["night"],
+               "revision": 2, "commit": 4, "digest": rename_digest,
+               "lease": {"holder": "agent", "generation": 0}}
+
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if path.endswith("/rename"):
+            return renamed
+        if body:
+            return {"request_id": body["request_id"], "state": "applied"}
+        if path.endswith("/asset-state"):
+            return {"schema": 1, "shader": {"origin": "user", "shaderId": "aurora"},
+                    "project_context_witness": "wit", "status": "saved", "provenance": "saved",
+                    "base": {}, "capability": {}, "writable": False, "save_state": "saved"}
+        return {"state": "applied"}
+
+    monkeypatch.setattr(client, "request_json", reply)
     ref = {"origin": "user", "shaderId": "aurora"}
     assert client.get_shader_asset_state({"shader": ref, "project_context_witness": "wit"})["status"] == "saved"
     request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
@@ -1124,7 +1195,7 @@ def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> N
     body = {"request_id": request_id, "shader": ref, "project_context_witness": "wit",
             "base": base, "expected_working_digest": "sha256:" + "c" * 64, "title": "Renamed",
             "confirmation_scope": {"operation": "rename", "shader": ref}}
-    assert client.rename_shader_asset(body) == {"request_id": request_id, "state": "applied"}
+    assert client.rename_shader_asset(body) == renamed
     assert calls[0][1].endswith("/asset-state")
     assert calls[1][1].endswith("/rename")
     assert calls[1][2] == body
@@ -1844,10 +1915,10 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
               "expected_working_digest": digest, "title": "Renamed",
               "confirmation_scope": {"operation": "rename", "shader": ref}, "library_intent": "saved"}
     renamed = {"stack": "v2", "shader_id": "aurora", "title": "Renamed", "tags": ["e2e"],
-               "revision": 9, "commit": 9, "digest": digest, "lease": {"holder": "agent", "generation": 0},
-               "operation": "shader_library_commit"}
+               "revision": 9, "commit": 9, "digest": digest, "lease": {"holder": "agent", "generation": 0}}
     monkeypatch.setattr(client, "request_json", lambda *a, **k: renamed)
-    assert client.rename_shader_asset(rename)["operation"] == "shader_library_commit"
+    landed = client.rename_shader_asset(rename)
+    assert landed["title"] == "Renamed" and landed["shader_id"] == "aurora" and "operation" not in landed
     deleted = {"stack": "v2", "deleted": True, "shader_id": "aurora", "origin": "user"}
     monkeypatch.setattr(client, "request_json", lambda *a, **k: deleted)
     removal = {key: value for key, value in rename.items() if key != "title"}
