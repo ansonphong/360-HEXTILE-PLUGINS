@@ -2341,7 +2341,7 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
     assert "sequence_input_unsupported" in authoring
 
 
-def test_get_job_accepts_only_an_explicit_failed_start_without_a_job() -> None:
+def test_still_and_get_job_accept_only_an_explicit_failed_start_without_a_job() -> None:
     from uuid import uuid4
 
     from hextile_client import _shader_output_receipt
@@ -2353,16 +2353,18 @@ def test_get_job_accepts_only_an_explicit_failed_start_without_a_job() -> None:
               "publication": "failed", "output_path": "D:/Stills/missing.png",
               "error": {"code": "destination_exists", "message": "Destination exists.",
                         "next_step": "Choose another output path."}}
-    assert _shader_output_receipt("get_job", args, failed) == failed
-    for operation in ("still", "stop_job"):
-        with pytest.raises(HextileClientError):
-            _shader_output_receipt(operation, args, failed)
+    for operation in ("still", "get_job"):
+        assert _shader_output_receipt(operation, args, failed) == failed
+    with pytest.raises(HextileClientError):
+        _shader_output_receipt("stop_job", args, failed)
     for broken in (
         {**failed, "state": "queued"},
         {**failed, "publication": "queued"},
         {key: value for key, value in failed.items() if key != "error"},
         {**failed, "output_path": "relative.png"},
         {**failed, "job": {}},
+        {key: value for key, value in failed.items() if key != "job"},
     ):
-        with pytest.raises(HextileClientError):
-            _shader_output_receipt("get_job", args, broken)
+        for operation in ("still", "get_job"):
+            with pytest.raises(HextileClientError):
+                _shader_output_receipt(operation, args, broken)

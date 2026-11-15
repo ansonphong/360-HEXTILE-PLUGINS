@@ -822,7 +822,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                         or result["published_cursor"] < 0)):
                 raise invalid()
             job = result["job"]
-            if operation == "get_job" and job is None:
+            if operation in {"get_job", "still"} and job is None:
                 if (result.get("state") != "failed" or result.get("publication") != "failed"
                         or "error" not in result or "output_path" not in result):
                     raise invalid()
