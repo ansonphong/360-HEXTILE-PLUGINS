@@ -1038,7 +1038,10 @@ def test_rename_and_delete_receipts_match_route_bodies(monkeypatch) -> None:
     deleted = {"stack": "v2", "deleted": True, "shader_id": "aurora", "origin": "user"}
     replies = {"rename": renamed, "delete": deleted}
 
+    sent = []
+
     def reply(method, path, payload=None, **kwargs):
+        sent.append(path)
         if path.endswith("/rename"):
             return replies["rename"]
         if path.endswith("/delete"):
@@ -1066,11 +1069,33 @@ def test_rename_and_delete_receipts_match_route_bodies(monkeypatch) -> None:
     reject("delete", {**deleted, "origin": "project"}, lambda: client.delete_shader_asset(removal))
     reject("delete", {**deleted, "shader_id": "other"}, lambda: client.delete_shader_asset(removal))
     reject("delete", {**deleted, "operation": "delete"}, lambda: client.delete_shader_asset(removal))
+    def refuse_other_shelf(call):
+        before = len(sent)
+        with pytest.raises(HextileClientError) as caught:
+            call()
+        assert caught.value.status_code == 422, caught.value
+        assert caught.value.kind == "other"
+        assert "user" in str(caught.value)
+        assert len(sent) == before
+
+    project_rename = {**rename, "shader": project,
+                      "confirmation_scope": {"operation": "rename", "shader": project}}
+    replies["rename"] = renamed
+    refuse_other_shelf(lambda: client.rename_shader_asset(project_rename))
     project_delete = {**removal, "shader": project,
                       "confirmation_scope": {"operation": "delete", "shader": project}}
-    reject("delete", deleted, lambda: client.delete_shader_asset(project_delete))
+    replies["delete"] = deleted
+    refuse_other_shelf(lambda: client.delete_shader_asset(project_delete))
     replies["delete"] = {"stack": "v2", "deleted": True, "shader_id": "aurora", "origin": "project"}
-    assert client.delete_shader_asset(project_delete)["origin"] == "project"
+    refuse_other_shelf(lambda: client.delete_shader_asset(project_delete))
+    builtin = {"origin": "builtin", "shaderId": "aurora"}
+    builtin_rename = {**rename, "shader": builtin,
+                      "confirmation_scope": {"operation": "rename", "shader": builtin}}
+    replies["rename"] = renamed
+    refuse_other_shelf(lambda: client.rename_shader_asset(builtin_rename))
+    builtin_delete = {**removal, "shader": builtin,
+                      "confirmation_scope": {"operation": "delete", "shader": builtin}}
+    refuse_other_shelf(lambda: client.delete_shader_asset(builtin_delete))
 
 
 def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:

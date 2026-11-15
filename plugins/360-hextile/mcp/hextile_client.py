@@ -954,7 +954,7 @@ def _accepted_rename_receipt(receipt: Any, args: Mapping[str, Any]) -> bool:
         return False
     shader = _target_shader(args)
     tags = receipt.get("tags")
-    return (shader is not None and receipt.get("stack") == "v2"
+    return (shader is not None and shader.get("origin") == "user" and receipt.get("stack") == "v2"
             and receipt.get("shader_id") == shader.get("shaderId")
             and receipt.get("title") == args.get("title")
             and type(tags) is list and len(tags) <= 64
@@ -1169,6 +1169,9 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             or type(ref["shaderId"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", ref["shaderId"])
             or type(args["project_context_witness"]) is not str or not args["project_context_witness"]):
         raise HextileClientError("Invalid native Shader target", status_code=422, kind="other")
+    if operation in {"rename", "delete"} and ref.get("origin") != "user":
+        raise HextileClientError("Shader rename and delete write only a user Shader.",
+                                  status_code=422, kind="other")
     if operation in {"status", "rename", "delete"}:
         try:
             valid = (type(args["request_id"]) is str and str(uuid.UUID(args["request_id"])) == args["request_id"]
