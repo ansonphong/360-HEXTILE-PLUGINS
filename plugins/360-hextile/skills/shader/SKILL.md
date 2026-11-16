@@ -32,7 +32,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 14. Render a still → `shader_preflight_still_export` then `shader_export_still` — on screen (below).
 15. Render a sequence → `preflight_shader_sequence` then `render_shader_sequence` (below).
 16. Edit a Built-in → `shader_edit` by its id when `writable` is true (dev mode); a `read_only` reply means duplicate it and edit the copy.
-17. New Shader from pasted GLSL → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"paste","title":"..","source":"<glsl>"}`; from the starter → `"action":"new"` (W also comes from `shader_list_assets`).
+17. New Shader from pasted GLSL → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"paste","title":"..","source":"<glsl>"}`; from the starter → `"action":"new","template_id":"hx_starter"` (W also comes from `shader_list_assets`).
 18. Clock or timeline → `["clock","bpm"|"speed"]`; first timeline edit sets `["timeline","start"]`, `["timeline","end"]` and `["timeline","loop"]` in one call.
 19. Generate a 360 from a prompt → `validate_config` then `run_workflow` and `get_status` (hub skill).
 20. Change a Fractal value or play its timeline → `fractal` skill; `get_fractal_context` fails until a Fractal scene is open.

@@ -46,7 +46,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.11"
+SERVER_VERSION = "0.6.12"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 MCP_STATUS_TTL_S = 5.0
@@ -3269,7 +3269,7 @@ SHADER_EXTENSION_TOOLS = [
                                 "copy becomes selected only after the app confirms. Replies pending; the Workshop switches to the copy; confirm with shader_list_assets (shader_get_operation may say unknown); go back with shader_open_asset.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
-    _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" makes one from the hx_starter template (optional space; "
+    _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" with template_id \"hx_starter\" makes one from the starter (required for new; optional space; "
                                      "no title), action \"paste\" saves source you supply as an unmodified original with unknown licence "
                                      "(optional title; never reads local files). Pass request_id and project_context_witness "
                                      "(freshness token, from get_live_context(view=\"shader\") or shader_list_assets). Returns the new Shader and its "
