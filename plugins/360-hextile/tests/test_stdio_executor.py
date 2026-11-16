@@ -286,97 +286,111 @@ def test_describe_image_exact_body_timeout_and_text_only_result() -> None:
     assert len(seen) == 1
 
 
-def test_external_gate_checks_each_call_before_activity_or_dispatch() -> None:
+class _GateClient:
+    """A client with no injected opener, so the external MCP-status gate runs."""
+
+    def __init__(self, answers) -> None:  # noqa: ANN001
+        self.answers = answers  # callable returning the status payload or raising
+        self.status_calls = 0
+        self.activity: list[tuple[str, str]] = []
+
+    def request_json(self, method, path):  # noqa: ANN001, ANN201
+        assert (method, path) == ("GET", "/api/agent/mcp-status")
+        self.status_calls += 1
+        return self.answers()
+
+    def post_activity(self, envelope):  # noqa: ANN001, ANN201
+        self.activity.append((envelope["tool"], envelope["phase"]))
+
+
+def _gate_server(client, dispatched):  # noqa: ANN001, ANN202
     sys.path.insert(0, str(ROOT / "mcp"))
-    from hextile_client import Client
     from hextile_mcp import HextileMcpServer
 
-    enabled = False
-    paths: list[str] = []
+    server = HextileMcpServer(client=client, child_token="")
 
-    class Response:
-        status = 200
+    def handler(_args):  # noqa: ANN001, ANN202
+        dispatched.append(1)
+        if client_refusal:
+            raise client_refusal[0]
+        return {"run_id": "run_1", "status": "running"}
 
-        def __init__(self, payload):  # noqa: ANN001
-            self.payload = payload
+    client_refusal: list = []
+    server._handlers["get_status"] = handler
+    server._refusal = client_refusal
+    return server
 
-        def read(self):  # noqa: ANN201
-            return json.dumps(self.payload).encode()
 
-        def __enter__(self):  # noqa: ANN201
-            return self
+def test_external_gate_reuses_enabled_status_and_never_reuses_disabled() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    from hextile_client import HextileClientError
 
-        def __exit__(self, *args):  # noqa: ANN002, ANN201
-            return None
+    state = {"enabled": False}
+    client = _GateClient(lambda: {"enabled": state["enabled"]})
+    dispatched: list[int] = []
+    server = _gate_server(client, dispatched)
+    call = lambda: server.call_tool("get_status", {"run_id": "run_1"})  # noqa: E731
 
-    def opener(req, timeout):  # noqa: ANN001, ANN201
-        nonlocal enabled
-        assert req.get_header("X-hextile-agent") == "mcp"
-        paths.append(req.full_url.removeprefix("http://127.0.0.1:8000"))
-        if paths[-1] == "/api/agent/mcp-status":
-            return Response({"enabled": enabled})
-        if paths[-1] == "/api/agent/events":
-            return Response({"ok": True})
-        assert paths[-1] == "/api/renders/run_1"
-        return Response({"run_id": "run_1", "status": "running"})
+    # Disabled: refused before activity or dispatch, and never reused.
+    assert call()["isError"] is True and call()["isError"] is True
+    assert client.status_calls == 2 and dispatched == [] and client.activity == []
 
-    server = HextileMcpServer(client=Client(opener=opener), child_token="")
-    listed = server.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
-    assert listed is not None and listed["result"]["tools"]
-    assert paths == []
-    denied = server.call_tool("get_status", {"run_id": "run_1"})
-    assert denied["isError"] is True
-    assert "disabled" in denied["content"][0]["text"]
-    assert paths == ["/api/agent/mcp-status"]
+    # Enabled: the first call checks, the second inside the window reuses the result.
+    state["enabled"] = True
+    assert call()["isError"] is False
+    assert client.status_calls == 3 and len(dispatched) == 1
+    state["enabled"] = False  # Settings flipped; the reuse window still holds.
+    assert call()["isError"] is False
+    assert client.status_calls == 3 and len(dispatched) == 2
 
-    enabled = True
-    allowed = server.call_tool("get_status", {"run_id": "run_1"})
-    assert allowed["isError"] is False
-    assert paths[1] == "/api/agent/mcp-status"
-    assert "/api/renders/run_1" in paths[2:]
+    # A 403 mcp_disabled from the APP clears the reuse, so the next call checks again.
+    server._refusal.append(HextileClientError("off", status_code=403, body='{"code": "mcp_disabled"}'))
+    assert call()["isError"] is True
+    assert server._mcp_enabled_until == 0.0
+    server._refusal.clear()
+    assert call()["isError"] is True  # re-checked: now disabled
+    assert client.status_calls == 4
 
-    paths.clear()
-    enabled = False
-    assert server.call_tool("get_status", {"run_id": "run_1"})["isError"] is True
-    assert paths == ["/api/agent/mcp-status"]
+
+def test_external_gate_rechecks_after_the_reuse_window() -> None:
+    client = _GateClient(lambda: {"enabled": True})
+    server = _gate_server(client, [])
+    assert server.call_tool("get_status", {})["isError"] is False
+    server._mcp_enabled_until = time.monotonic() - 1
+    assert server.call_tool("get_status", {})["isError"] is False
+    assert client.status_calls == 2
+
+
+def test_activity_sender_posts_in_order_and_flushes_on_exit() -> None:
+    client = _GateClient(lambda: {"enabled": True})
+    server = _gate_server(client, [])
+    server.start_activity_sender()
+    server.call_tool("get_status", {})
+    server.call_tool("get_status", {})
+    server.flush_activity()
+    phases = [phase for _tool, phase in client.activity]
+    assert len(phases) >= 4 and phases[0] == "started"
+    assert phases.index("started", 1) > 1  # call 1 finished before call 2 started
+    assert server._activity_queue is None
 
 
 def test_external_gate_fails_closed_on_bad_status() -> None:
     sys.path.insert(0, str(ROOT / "mcp"))
-    from hextile_client import Client
-    from hextile_mcp import HextileMcpServer
+    from hextile_client import HextileClientError
 
-    class Response:
-        status = 200
+    def raising(error):  # noqa: ANN001, ANN202
+        def answer():  # noqa: ANN202
+            raise error
+        return answer
 
-        def __init__(self, raw):  # noqa: ANN001
-            self.raw = raw
-
-        def read(self):  # noqa: ANN201
-            return self.raw
-
-        def __enter__(self):  # noqa: ANN201
-            return self
-
-        def __exit__(self, *args):  # noqa: ANN002, ANN201
-            return None
-
-    for raw in (b"{}", b'{"enabled": 1}', b'{"enabled": "true"}', b"[]", b"not json", None, 404, 503):
-        paths = []
-
-        def opener(req, timeout):  # noqa: ANN001, ANN201
-            paths.append(req.full_url)
-            assert req.full_url.endswith("/api/agent/mcp-status")
-            if raw is None:
-                raise urllib.error.URLError("offline")
-            if isinstance(raw, int):
-                raise urllib.error.HTTPError(req.full_url, raw, "unavailable", {}, io.BytesIO(b""))
-            return Response(raw)
-
-        server = HextileMcpServer(client=Client(opener=opener), child_token="")
+    for answer in (lambda: {}, lambda: {"enabled": 1}, lambda: {"enabled": "true"}, lambda: [], lambda: None,
+                   raising(OSError("offline")), raising(HextileClientError("down", status_code=503))):
+        client = _GateClient(answer)
+        dispatched: list[int] = []
+        server = _gate_server(client, dispatched)
         result = server.call_tool("get_status", {"run_id": "run_1"})
         assert result["isError"] is True
-        assert len(paths) == 1
+        assert client.status_calls == 1 and dispatched == [] and client.activity == []
 
 
 def test_request_marker_is_unoverridable_and_private_token_is_backend_checked() -> None:

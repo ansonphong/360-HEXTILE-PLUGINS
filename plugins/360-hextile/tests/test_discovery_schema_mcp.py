@@ -291,6 +291,8 @@ def test_config_schema_query_and_processor_schema_pass_through() -> None:
     caps = server.call_tool("get_capabilities", {})
     body = json.loads(caps["content"][0]["text"])
     assert body["native_render"]["contract"] == "native-render/1"
+    assert body["server"]["version"] and len(body["server"]["build"]) == 12
+    int(body["server"]["build"], 16)
     assert body["native_render"]["shader_raster_policy"]["profile"] == "shader-raster-policy/1"
     assert client.get_processor_schema("sdxl") == processor
 

@@ -10,6 +10,7 @@ Catalog + persist + run + monitor + config + seed + models + guides + live conte
 from __future__ import annotations
 
 import difflib
+import hashlib
 import http.client
 import base64
 import json
@@ -1481,7 +1482,7 @@ TOOLS: list[dict[str, Any]] = [
             },
             "document": {
                 "type": "object",
-                "description": "Full config document (preferred over workflow_id when set)",
+                "description": "Full config document. Send exactly one of workflow_id or document",
             },
             "overrides": {
                 "type": "object",
@@ -1789,7 +1790,8 @@ TOOLS: list[dict[str, Any]] = [
         "install_model",
         "Use to download a model. Pass pipeline_id, model_id and bundle (boolean). bundle true installs "
         "the current default bundle and also needs expected_selection_fingerprint: the "
-        "selection_fingerprint on that model's row in get_model_readiness. Needs host approval.",
+        "selection_fingerprint on that model's row in get_model_readiness; bundle false installs only that "
+        "model. Needs host approval.",
         {
             "pipeline_id": {"type": "string", "minLength": 1},
             "model_id": {"type": "string", "minLength": 1},
@@ -3805,6 +3807,23 @@ def _closed_tool_args(args: Any, allowed: frozenset[str]) -> dict[str, Any]:
     return args
 
 
+_SERVER_BUILD: Optional[dict[str, str]] = None
+
+
+def _server_build() -> dict[str, str]:
+    """Plugin version and a short content hash of the two server files, computed once."""
+    global _SERVER_BUILD
+    if _SERVER_BUILD is None:
+        digest = hashlib.sha256()
+        for name in ("hextile_mcp.py", "hextile_client.py"):
+            try:
+                digest.update((Path(__file__).resolve().parent / name).read_bytes())
+            except OSError:
+                digest.update(name.encode())
+        _SERVER_BUILD = {"version": SERVER_VERSION, "build": digest.hexdigest()[:12]}
+    return dict(_SERVER_BUILD)
+
+
 class HextileMcpServer:
     def __init__(
         self,
@@ -4023,7 +4042,8 @@ class HextileMcpServer:
                     "instructions": (
                         "Start with get_guide(name=\"recipes\"): one line per task with the exact tool and arguments. "
                         "Orient with one get_live_context(view=\"shader\"); edit a Shader by shader_id with shader_edit, "
-                        "one call per edit; it saves itself (register_shader_update is only for the file-workspace flow). "
+                        "it saves itself, and one shader_edit call can batch several edits (for example delete a parameter together with "
+                        "the code change that stops using it); register_shader_update is only for the file-workspace flow. "
                         "A 403 \"No document is open\" or connected:false means nothing is open: do not poll or retry; "
                         "ask the user to open a document or the Shader Workshop, then try once. "
                         "Recover a lost reply with the same request_id; for lost_to_human and lease rules see "
@@ -4456,7 +4476,9 @@ class HextileMcpServer:
         return self.client.get_workflow(str(origin), str(wid))
 
     def _get_capabilities(self, _args: dict[str, Any]) -> Any:
-        return self.client.get_capabilities()
+        data = self.client.get_capabilities()
+        # A stale server shows here: the plugin version plus a build id of the code it is running.
+        return {**data, "server": _server_build()} if isinstance(data, dict) else data
 
     def _get_config_schema(self, args: dict[str, Any]) -> Any:
         args = _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["get_config_schema"])

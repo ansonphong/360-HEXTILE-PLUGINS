@@ -8,7 +8,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 ## How to work fast
 
 - Orient with one read: `get_live_context(view="shader")`.
-- Act by `shader_id` with `shader_edit`: one call per edit, no open step, no Save; it saves itself.
+- Act by `shader_id` with `shader_edit` (one call can batch several edits), no open step, no Save; it saves itself.
 - 403 `No document is open` or `connected: false`: never poll it; ask the user to open a document or the Shader Workshop.
 - Lost reply: resend the same request with the same `request_id`.
 
