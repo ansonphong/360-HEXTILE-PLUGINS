@@ -1377,10 +1377,16 @@ def test_rename_and_delete_receipts_match_route_bodies(monkeypatch) -> None:
 def test_native_new_and_fork_forward_only_closed_creation(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     sent = []
+    digest = "sha256:" + "a" * 64
     monkeypatch.setattr(client, "request_json", lambda method, path, body:
-                        sent.append((method, path, body)) or {"request_id": body["request_id"],
+                        sent.append((method, path, body)) or {"schema": 1, "request_id": body["request_id"],
                             "operation": "shader_create_asset" if body["action"] == "new" else "shader_fork_asset",
-                            "state": "saved", "receipt": {"shader": {"origin": "user", "shaderId": "result"}}})
+                            "scope": "creation", "project_context_witness": body["project_context_witness"],
+                            "state": "saved", "receipt": {
+                                "stack": "v2", "shader": {"origin": "user", "shaderId": "result"},
+                                "working_revision": 1, "document_hash": digest, "title": "Untitled Shader",
+                                "base": {"kind": "saved", "working_revision": 1, "document_hash": digest,
+                                         "source_hash": digest}}})
     common = {"request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea",
               "project_context_witness": "wit"}
     new = {**common, "action": "new", "template_id": "hx_starter"}
@@ -1593,7 +1599,7 @@ def test_native_shader_extension_transport_and_unknown_outcome(monkeypatch) -> N
     assert client.rename_shader_asset(body) == renamed
     assert calls[0][1].endswith("/asset-state")
     assert calls[1][1].endswith("/rename")
-    assert calls[1][2] == body
+    assert calls[1][2] == {**body, "library_intent": "saved"}
     assert client.get_shader_operation({"request_id": request_id, "shader": ref,
                                         "project_context_witness": "wit"}) == {"state": "applied"}
     assert calls[2][1].endswith("/operations/" + request_id)
@@ -2532,8 +2538,8 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
     described = {tool["name"]: tool["description"] for tool in TOOLS + SHADER_EXTENSION_TOOLS}
     assert "Pass shader_id and request_id only." in described["open_shader_workspace"]
     assert "render_observation.run_id" in described["control_shader_sequence"]
-    assert "shader_checkpoint_save" in described["shader_checkpoint"]
-    assert 'operation:"rename"' in described["shader_rename_asset"]
+    assert "filled for you" in described["shader_checkpoint"]
+    assert "filled for you" in described["shader_rename_asset"]
     assert 'operation:"delete"' in described["shader_delete_asset"]
     assert "action and slot_id" in described["shader_set_resource"]
     assert "no title" in described["shader_create_asset"] and "(optional title;" in described["shader_create_asset"]
@@ -2611,10 +2617,13 @@ def test_working_digest_documented_and_defaulted_on_write_tools(monkeypatch) -> 
     names = {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look",
              "shader_checkpoint", "shader_restore_revision", "shader_copy_revision", "shader_history_retention",
              "shader_stage_resource", "shader_set_resource", "shader_rename_asset"}
+    head_base = {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look",
+                 "shader_checkpoint", "shader_restore_revision"}
     for row in SHADER_EXTENSION_TOOLS:
         if row["name"] in names:
-            assert "base.document_hash" in row["description"], row["name"]
+            assert ("base is optional" if row["name"] in head_base else "base.document_hash") in row["description"], row["name"]
             assert "expected_working_digest" not in row["inputSchema"]["required"], row["name"]
+            assert ("base" in row["inputSchema"]["required"]) is (row["name"] not in head_base), row["name"]
     client = Client("http://127.0.0.1:9")
     digest = "sha256:" + "a" * 64
     base = {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}
@@ -2681,3 +2690,38 @@ def test_edit_result_carries_skip_reasons_and_an_unchanged_save() -> None:
     assert _edit_result({"save": "unchanged", "changed": False, "results": [], "commit": 3, "revision": 3})["save"] == "unchanged"
     with pytest.raises(HextileClientError):
         _edit_result({**partial, "results": [{**row, "reason": 7}]})
+
+
+def test_look_by_name_fills_owner_and_hash_and_sequence_takes_nested_base(monkeypatch) -> None:
+    from hextile_client import _flat_sequence_base
+
+    client = Client("http://127.0.0.1:9")
+    shader = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "e" * 64
+    sent = []
+
+    def reply(method, path, body=None, **kwargs):
+        sent.append((method, path, body))
+        if path.endswith("/looks"):
+            return {"schema": 1, "shader": shader, "project_context_witness": "w", "provenance": "saved",
+                    "entries": [{"id": "look_1", "title": "Warm", "revision": 2, "envelope_hash": digest}]}
+        return {"request_id": body["request_id"], "operation": "shader_apply_look", "state": "saved"}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    client.apply_shader_look({"shader": shader, "project_context_witness": "w", "request_id": request_id,
+                              "name": "warm"})
+    assert sent[-1][2] == {"shader": shader, "project_context_witness": "w", "request_id": request_id,
+                           "look_id": "look_1", "expected_look_envelope_hash": digest, "library_intent": "saved",
+                           "confirmation_scope": {"operation": "shader_apply_look", "shader": shader}}
+    with pytest.raises(HextileClientError, match='No Look "Cold"'):
+        client.apply_shader_look({"shader": shader, "project_context_witness": "w", "request_id": request_id,
+                                  "name": "Cold"})
+    with pytest.raises(HextileClientError, match="use base from the previous write reply"):
+        client.copy_shader_revision({"shader": shader, "project_context_witness": "w", "request_id": request_id,
+                                     "destination_origin": "user", "checkpoint_id": "cp"})
+    base = {"kind": "saved", "working_revision": 3, "document_hash": digest, "source_hash": digest}
+    assert _flat_sequence_base({"name": "n", "base": base}) == {
+        "name": "n", "working_revision": 3, "document_hash": digest, "source_hash": digest}
+    with pytest.raises(HextileClientError, match="disagrees with base"):
+        _flat_sequence_base({"base": base, "working_revision": 2})

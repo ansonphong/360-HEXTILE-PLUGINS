@@ -441,12 +441,13 @@ GUIDE_NAMES = (
     "best-practices",
     "website-index",
     "recipes",
+    "recipes-detail",
     "shader-cookbook",
 )
 _GUIDE_INDEX = (
     "A workflow starts with get_capabilities. "
     "A read-only \"what Shader is open?\" question is only get_live_context(view=\"shader\") and does not call get_capabilities. "
-    "Shader edits use shader_edit, which saves itself; register_shader_update is only for the file-workspace flow. One-line recipes: get_guide(name=\"recipes\"). "
+    "Shader edits use shader_edit, which saves itself; register_shader_update is only for the file-workspace flow. One-line recipes: get_guide(name=\"recipes\"); full steps per recipe: get_guide(name=\"recipes-detail\"). "
     "Read merge. Watch compile. Only the human moves the lease. "
     "A still is shader_preflight_still_export then shader_export_still using that preflight_request_id; no preview is needed first. "
     "A sequence is preflight_shader_sequence then render_shader_sequence. "
@@ -789,6 +790,8 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
                                   "id": {"type": "string", "minLength": 1,
                                          "pattern": r"^[a-zA-Z0-9_-]+$"}}),
     "project_context_witness": {"type": "string", "minLength": 1, "maxLength": 256},
+    "base": _shader_closed({"kind": {"const": "saved"}, "working_revision": {"type": "integer", "minimum": 1},
+                            "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST}),
     "working_revision": {"type": "integer", "minimum": 1},
     "document_hash": _SHADER_DIGEST, "source_hash": _SHADER_DIGEST,
     "resource_manifest_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]},
@@ -813,8 +816,10 @@ _SHADER_SEQUENCE_REQUEST = _shader_closed({
     "folder_export": {"oneOf": [_SHADER_FOLDER_INTENT, {"type": "null"}]},
     "publication_mode": {"oneOf": [{"const": "deferred"}, {"type": "null"}]},
     "render_route": _RENDER_ROUTE,
-}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy", "render_route", "saved_sequence"))
+}, ("resource_manifest_hash", "selected_resource_frames", "supersampling", "folder_export", "publication_mode", "input_capture_id", "raster_policy", "render_route", "saved_sequence",
+    "base", "working_revision", "document_hash", "source_hash"))
 _SHADER_SEQUENCE_REQUEST["allOf"] = [
+    {"anyOf": [{"required": ["base"]}, {"required": ["working_revision", "document_hash", "source_hash"]}]},
     {"if": {"properties": {"publication_mode": {"const": "deferred"}}, "required": ["publication_mode"]},
      "then": {"properties": {"folder_export": {"type": "null"}}},
      "else": {"required": ["folder_export"], "properties": {"folder_export": _SHADER_FOLDER_INTENT}}},
@@ -1826,7 +1831,7 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "string",
                 "description": (
                     "workflow-schema | best-practices | website-index | "
-                    "recipes | shader-cookbook | index"
+                    "recipes | recipes-detail | shader-cookbook | index"
                 ),
             },
             "field": {
@@ -2490,7 +2495,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "preflight_shader_sequence",
      "description": "Use to check a Shader video render (sequence) before queueing it. Pass the saved Shader "
                     "(shader_ref), project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
-                    "and its working_revision, document_hash and source_hash (from shader_get_asset_state), plus "
+                    "and base {kind, working_revision, document_hash, source_hash} (from shader_get_asset_state or a write "
+                    "reply; the flat working_revision/document_hash/source_hash fields also work), plus "
                     "idempotency_key, name, frame_rate, frame_count, start_time, end_time (exact fractions), width, "
                     "height, seed and output. Returns a deterministic sequence_id and request_hash; keep them to "
                     "recover a lost render reply. PNG/JPG/EXR direct output uses folder_export (destination_folder is "
@@ -2505,8 +2511,8 @@ TOOLS: list[dict[str, Any]] = [
                     "what actions are possible. Continue needs the same request and fingerprint.",
      "inputSchema": _SHADER_INSPECT, "annotations": _annotations("inspect_shader_sequence_output")},
     {"name": "render_shader_sequence",
-     "description": "Use to queue the Shader sequence you already preflighted, with the same arguments and the same "
-                    "idempotency_key and confirmed revision. Direct output uses its folder and encoding. After a lost "
+     "description": "Use to queue the Shader sequence you already preflighted, with the same arguments (base or the "
+                    "flat hashes) and the same idempotency_key and confirmed revision. Direct output uses its folder and encoding. After a lost "
                     "reply call get_shader_sequence with the known sequence_id and compare request_hash; a 404 is "
                     "unknown, never repost blindly. The agent does not produce frames: the open Workshop does when a "
                     "WebGL route is used.",
@@ -2886,9 +2892,13 @@ SHADER_EXTENSION_TOOLS = [
                            "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}}),
     _tool_def("shader_get_asset_state", "Use to read a Shader's saved values and its saved base (working_revision, document_hash, "
                                         "source_hash: the exact saved version, needed by most write tools), plus title, tags, writable "
-                                        "and inputs. Pass shader {origin, shaderId} and project_context_witness. Does not return the "
-                                        "parameter definitions or GLSL.",
-              _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
+                                        "and inputs. Pass shader {origin, shaderId} and project_context_witness. Any shelf, open or not "
+                                        "(Built-ins too). include [\"parameters\"] adds every parameter definition (label, help, group, "
+                                        "range, options); include [\"source\"] adds the saved GLSL as {\"source.glsl\": text, "
+                                        "\"modules/x.glsl\": text} (up to 192 KB).",
+              {**_NATIVE_SHADER_TARGET, "include": {"type": "array", "uniqueItems": True, "maxItems": 2,
+                                                    "items": {"enum": ["source", "parameters"]}}},
+              ["shader", "project_context_witness"]),
     _tool_def("shader_request_preview", "Use to render a full-size preview of a saved Shader and inspect it. Pass shader, "
                                         "project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
                                         "studio_surface_id, a fresh request_id, base, mode (\"still\" or \"sequence\"), width, height and "
@@ -2976,73 +2986,79 @@ SHADER_EXTENSION_TOOLS = [
                                   "project_context_witness (freshness token, from get_live_context(view=\"shader\")). Returns ids and "
                                   "envelope hashes, no source or pixels.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_save_look", "Use to save the Shader's current values as a named Look. Pass shader, project_context_witness "
-                                  "(freshness token, from get_live_context(view=\"shader\")), base, a fresh request_id and title. "
-                                  "Optional look_id plus expected_look_envelope_hash replaces an existing Look. Library Shader: "
-                                  "library_intent \"saved\", confirmation_scope {operation:\"shader_save_look\"}, no studio_surface_id. "
-                                  "Open Shader: studio_surface_id and no library_intent. Omit expected_working_digest: it defaults "
-                                  "to base.document_hash from shader_get_asset_state/shader_list_assets.",
+    _tool_def("shader_save_look", "Use to save the Shader's current saved values as a named Look. Pass shader, project_context_witness "
+                                  "(freshness token, from get_live_context(view=\"shader\")), a fresh request_id and title. base is "
+                                  "optional (omitted = the saved head; the person's edits still win). Optional look_id (or id) plus "
+                                  "expected_look_envelope_hash replaces an existing Look. Library Shader: library_intent and "
+                                  "confirmation_scope are filled for you. Open Shader: studio_surface_id. The reply's base feeds "
+                                  "the next write.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "include_overrides": {"type": "boolean"}, "look_id": _NATIVE_HISTORY_CHECKPOINT,
                "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
-              ["shader", "project_context_witness", "base", "request_id", "title"]),
+              ["shader", "project_context_witness", "request_id", "title"]),
     _tool_def("shader_apply_look", "Use to apply a saved Look to a Shader. Pass shader, project_context_witness (freshness token, "
-                                   "from get_live_context(view=\"shader\")), base, request_id, look_id and expected_look_envelope_hash "
-                                   "(from shader_get_looks). Library Shader: library_intent \"saved\" and confirmation_scope "
-                                   "{operation:\"shader_apply_look\"}. Open Shader: studio_surface_id and no library_intent. GLSL "
-                                   "changes need separate policy. Omit expected_working_digest: it defaults to base.document_hash "
-                                   "from shader_get_asset_state/shader_list_assets.",
+                                   "from get_live_context(view=\"shader\")), request_id and the Look by name (its title) or look_id. "
+                                   "base is optional, and so is expected_look_envelope_hash (omitted = the saved head and the Look as "
+                                   "it is now; the person's edits still win). " + "Library Shader: library_intent and confirmation_scope are filled for you. Open Shader: studio_surface_id." + " GLSL changes need "
+                                   "separate policy. The reply's base feeds the next write.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
+               "name": {"type": "string", "minLength": 1, "maxLength": 256,
+                        "description": "The Look's title, instead of look_id."},
+               "id": {**_NATIVE_HISTORY_CHECKPOINT, "description": "Same as look_id (the shader_get_looks field)."},
+               "envelope_hash": {**_SHADER_DIGEST, "description": "Same as expected_look_envelope_hash."},
                "seen": _SEEN},
-              ["shader", "project_context_witness", "base", "request_id",
-               "look_id", "expected_look_envelope_hash"]),
+              ["shader", "project_context_witness", "request_id"]),
     _tool_def("shader_rename_look", "Use to rename a saved Look. Pass shader, project_context_witness (freshness token, from "
-                                    "get_live_context(view=\"shader\")), base, request_id, look_id, expected_look_envelope_hash (from "
-                                    "shader_get_looks) and title. Library Shader: library_intent \"saved\" and confirmation_scope "
-                                    "{operation:\"shader_rename_look\"}. Omit expected_working_digest: it defaults to "
-                                    "base.document_hash from shader_get_asset_state/shader_list_assets.",
+                                    "get_live_context(view=\"shader\")), request_id, the Look by name (its current title) or "
+                                    "look_id, and title (the new name). base is optional, and so is expected_look_envelope_hash. "
+                                    "Library Shader: library_intent and confirmation_scope are filled for you. Open Shader: studio_surface_id. The reply's base feeds the next write.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
+               "name": {"type": "string", "minLength": 1, "maxLength": 256,
+                        "description": "The Look's title, instead of look_id."},
+               "id": {**_NATIVE_HISTORY_CHECKPOINT, "description": "Same as look_id (the shader_get_looks field)."},
+               "envelope_hash": {**_SHADER_DIGEST, "description": "Same as expected_look_envelope_hash."},
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "seen": _SEEN},
-              ["shader", "project_context_witness", "base", "request_id",
-               "look_id", "expected_look_envelope_hash", "title"]),
+              ["shader", "project_context_witness", "request_id", "title"]),
     _tool_def("shader_delete_look", "Use to delete a saved Look. Pass shader, project_context_witness (freshness token, from "
-                                    "get_live_context(view=\"shader\")), base, request_id, look_id and expected_look_envelope_hash "
-                                    "(from shader_get_looks). Library Shader: library_intent \"saved\" and confirmation_scope "
-                                    "{operation:\"shader_delete_look\"}. Old revisions keep their copy. Omit expected_working_digest: "
-                                    "it defaults to base.document_hash from shader_get_asset_state/shader_list_assets.",
+                                    "get_live_context(view=\"shader\")), request_id and the Look by name (its title) or look_id. "
+                                    "base is optional, and so is expected_look_envelope_hash. Library Shader: library_intent and confirmation_scope are filled for you. Open Shader: studio_surface_id. Old revisions "
+                                    "keep their copy. The reply's base feeds the next write.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
+               "name": {"type": "string", "minLength": 1, "maxLength": 256,
+                        "description": "The Look's title, instead of look_id."},
+               "id": {**_NATIVE_HISTORY_CHECKPOINT, "description": "Same as look_id (the shader_get_looks field)."},
+               "envelope_hash": {**_SHADER_DIGEST, "description": "Same as expected_look_envelope_hash."},
                "seen": _SEEN},
-              ["shader", "project_context_witness", "base", "request_id",
-               "look_id", "expected_look_envelope_hash"]),
+              ["shader", "project_context_witness", "request_id"]),
     _tool_def("shader_checkpoint", "Use to save, rename or remove a named checkpoint (a bookmark in history). Pass shader, "
                                    "project_context_witness (freshness token, from get_live_context(view=\"shader\")), base, "
                                    "request_id and action (\"save\", \"rename\" or \"remove\"), plus title, checkpoint_id or expected_name "
-                                   "as the action needs. Library Shader: library_intent \"saved\" and confirmation_scope "
-                                   "{operation:\"shader_checkpoint_save|shader_checkpoint_rename|shader_checkpoint_remove\"}. Open "
-                                   "Shader: studio_surface_id and no library_intent. Omit expected_working_digest: it defaults to "
-                                   "base.document_hash from shader_get_asset_state/shader_list_assets.",
+                                   "as the action needs. base is optional (omitted = the saved head). Library Shader: "
+                                   "library_intent and confirmation_scope are filled for you. Open Shader: studio_surface_id.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["save", "rename", "remove"]},
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT,
                "expected_name": {"type": "string", "minLength": 1, "maxLength": 256},
                "target": _NATIVE_HISTORY_TARGET},
-              ["shader", "project_context_witness", "base", "request_id", "action"]),
+              ["shader", "project_context_witness", "request_id", "action"]),
     _tool_def("shader_restore_revision", "Use to go back to an older revision or checkpoint; it is saved as the next revision. Pass "
-                                         "shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), base, "
-                                         "request_id and target (or checkpoint_id). Library Shader: library_intent \"saved\" and "
-                                         "confirmation_scope {operation:\"shader_restore_revision\"}. After a lost reply recover with the "
-                                         "original request_id. Omit expected_working_digest: it defaults to base.document_hash from "
-                                         "shader_get_asset_state/shader_list_assets.",
+                                         "shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
+                                         "request_id and one of steps_back (1 = the revision before the current one: \"undo my last "
+                                         "change\"), target {document_ref, document_hash} from shader_get_history, or checkpoint_id. base is "
+                                         "optional (omitted = the saved head; the person's edits still win). Library Shader: "
+                                         "library_intent and confirmation_scope are filled for you. The reply's base feeds the next write. "
+                                         "After a lost reply read shader_get_operation (scope \"asset\") with the same request_id.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
-               "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT},
-              ["shader", "project_context_witness", "base", "request_id"]),
+               "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT,
+               "steps_back": {"type": "integer", "minimum": 1, "maximum": 1000}},
+              ["shader", "project_context_witness", "request_id"]),
     _tool_def("shader_copy_revision", "Use to save an old revision or checkpoint as a separate new Shader (keeps credits, Looks, "
                                       "resources). Pass shader, project_context_witness (freshness token, from "
                                       "get_live_context(view=\"shader\")), base, request_id, destination_origin (\"user\" or \"project\"), "
@@ -3161,11 +3177,11 @@ SHADER_EXTENSION_TOOLS = [
               ["request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"]),
     _tool_def("shader_rename_asset", "Use to rename a Shader in My Library (its library title). Only origin \"user\" is allowed. Pass "
                                      "request_id (fresh UUID), shader {origin:\"user\", shaderId}, project_context_witness (freshness "
-                                     "token, from get_live_context(view=\"shader\")), base, title, library_intent \"saved\" and "
-                                     "confirmation_scope {operation:\"rename\", shader}. No studio surface. To change the title inside "
-                                     "the package use shader_edit [\"meta\",\"title\"]. For a lost reply call shader_get_operation with "
-                                     "the same request_id. Omit expected_working_digest: it defaults to base.document_hash from "
-                                     "shader_get_asset_state/shader_list_assets.",
+                                     "token, from get_live_context(view=\"shader\")), base (from the previous write reply or "
+                                     "shader_list_assets) and title; library_intent and confirmation_scope are filled for you. No "
+                                     "studio surface. To change the title inside the package use shader_edit [\"meta\",\"title\"]. "
+                                     "For a lost reply call shader_get_operation with the same request_id. expected_working_digest "
+                                     "defaults to base.document_hash. The reply's base feeds the next write.",
               {"shader": _USER_SHADER_REF, "project_context_witness": _NATIVE_SHADER_TARGET["project_context_witness"],
                "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": _WORKING_DIGEST,
@@ -3175,7 +3191,7 @@ SHADER_EXTENSION_TOOLS = [
                "confirmation_scope": {"type": "object", "properties": {"operation": {"const": "rename"},
                                       "shader": _USER_SHADER_REF},
                                       "required": ["operation", "shader"], "additionalProperties": False}},
-              ["request_id", "shader", "project_context_witness", "base", "title", "confirmation_scope"]),
+              ["request_id", "shader", "project_context_witness", "base", "title"]),
     _tool_def("shader_delete_asset", "Use to delete a Shader from My Library (only origin \"user\"). Destructive. Pass request_id (fresh "
                                      "UUID), shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
                                      "base, library_intent \"saved\" and confirmation_scope {operation:\"delete\", shader}. Omit "
@@ -3256,8 +3272,9 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" makes one from the hx_starter template (optional space; "
                                      "no title), action \"paste\" saves source you supply as an unmodified original with unknown licence "
                                      "(optional title; never reads local files). Pass request_id and project_context_witness "
-                                     "(freshness token, from get_live_context(view=\"shader\")). It is not opened; use "
-                                     "shader_open_asset. Recover a paste with shader_get_operation scope \"creation\".",
+                                     "(freshness token, from get_live_context(view=\"shader\")). Returns the new Shader and its "
+                                     "base. It is not opened; use shader_open_asset. Recover a lost reply with shader_get_operation "
+                                     "scope \"creation\" and the same request_id.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID,
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
                "action": {"enum": ["new", "paste"]}, "template_id": {"const": "hx_starter"},
@@ -4046,6 +4063,7 @@ class HextileMcpServer:
                         "the code change that stops using it); register_shader_update is only for the file-workspace flow. "
                         "A 403 \"No document is open\" or connected:false means nothing is open: do not poll or retry; "
                         "ask the user to open a document or the Shader Workshop, then try once. "
+                        "Every Shader write reply carries base: pass it to the next write instead of re-reading. "
                         "Recover a lost reply with the same request_id; for lost_to_human and lease rules see "
                         "get_guide(name=\"workflow-schema\")."
                     ),

@@ -935,6 +935,10 @@ def _valid_creation_receipt(receipt: Any, operation: str) -> bool:
     """Closed legacy receipt, or the v2 library receipt (stack, no source/manifest hash)."""
     if type(receipt) is not dict or not _creation_shader_ref(receipt.get("shader")):
         return False
+    if "base" in receipt:
+        if not _reply_base(receipt["base"]):
+            return False
+        receipt = {key: value for key, value in receipt.items() if key != "base"}
     revision = receipt.get("working_revision")
     if type(revision) is not int or revision < 1 or not _creation_digest(receipt.get("document_hash")):
         return False
@@ -952,6 +956,8 @@ def _valid_creation_receipt(receipt: Any, operation: str) -> bool:
         live = live | {"bundle_sha256"}
     if operation == "shader_duplicate_asset":
         live = live | {"origin", "shaderId", "title"}
+    if operation in {"shader_create_asset", "shader_fork_asset"}:
+        live = live | {"title"}
     if keys != live or receipt.get("stack") != "v2":
         return False
     if operation == "shader_import_bundle" and not _creation_digest(receipt["bundle_sha256"]):
@@ -966,6 +972,14 @@ def _valid_creation_receipt(receipt: Any, operation: str) -> bool:
 
 
 _RENAME_RECEIPT_FIELDS = {"stack", "shader_id", "title", "tags", "revision", "commit", "digest", "lease"}
+
+
+def _reply_base(value: Any) -> bool:
+    """The saved base a write reply hands the next write."""
+    return (type(value) is dict and set(value) == {"kind", "working_revision", "document_hash", "source_hash"}
+            and value["kind"] == "saved" and type(value["working_revision"]) is int and value["working_revision"] >= 1
+            and all(type(value[key]) is str and _WORKSPACE_DIGEST.fullmatch(value[key]) is not None
+                    for key in ("document_hash", "source_hash")))
 _DELETE_RECEIPT_FIELDS = {"stack", "deleted", "shader_id", "origin"}
 
 
@@ -976,7 +990,8 @@ def _target_shader(args: Mapping[str, Any]) -> Mapping[str, Any] | None:
 
 def _accepted_rename_receipt(receipt: Any, args: Mapping[str, Any]) -> bool:
     """POST /rename returns rename_shader: title plus shader id. No request-id shortcut."""
-    if type(receipt) is not dict or set(receipt) != _RENAME_RECEIPT_FIELDS:
+    if (type(receipt) is not dict or set(receipt) - {"base"} != _RENAME_RECEIPT_FIELDS
+            or "base" in receipt and not _reply_base(receipt["base"])):
         return False
     shader = _target_shader(args)
     tags = receipt.get("tags")
@@ -1007,7 +1022,8 @@ def _valid_shader_creation_status(result: Any, args: Mapping[str, Any], *, compl
     try:
         if (not common <= set(result) or set(result) - common - {"receipt", "error"}
                 or type(result["schema"]) is not int or result["schema"] != 1 or result["request_id"] != args["request_id"]
-                or result["operation"] not in {"shader_create_asset", "shader_import_bundle", "shader_duplicate_asset"} or result["scope"] != "creation"
+                or result["operation"] not in {"shader_create_asset", "shader_fork_asset", "shader_import_bundle",
+                                               "shader_duplicate_asset"} or result["scope"] != "creation"
                 or result["project_context_witness"] != args["project_context_witness"]
                 or type(result["state"]) is not str
                 or result["state"] not in {"pending", "unknown", "refused", "expired", "saved"}
@@ -1204,6 +1220,8 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
                 common | {"request_id", "base", "expected_working_digest", "confirmation_scope"} |
                 ({"title"} if operation == "rename" else set()))
     optional = {"expected_owner_generation", "library_intent"} if operation in {"rename", "delete"} else set()
+    if isinstance(args, Mapping) and "base" in expected and "base" not in args:
+        raise HextileClientError(_BASE_REQUIRED, status_code=422, kind="other")
     if not isinstance(args, Mapping) or expected - args.keys() or set(args) - expected - optional:
         raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
     ref = args["shader"]
@@ -1251,7 +1269,8 @@ def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[st
             parts.append("missing " + ", ".join(missing))
         if unknown:
             parts.append("unknown " + ", ".join(unknown))
-        raise HextileClientError(label + ": " + "; ".join(parts), status_code=422, kind="other")
+        hint = " (" + _BASE_REQUIRED + ")" if "base" in missing else ""
+        raise HextileClientError(label + ": " + "; ".join(parts) + hint, status_code=422, kind="other")
 
 
 def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set[str] = frozenset()) -> None:
@@ -1282,6 +1301,12 @@ def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set
         raise HextileClientError("Invalid history kind", status_code=422, kind="other")
 
 
+_BASE_REQUIRED = ("base is required: use base from the previous write reply, shader_get_asset_state "
+                  "or shader_list_assets.")
+# Writes that may omit base and run against the saved head: per-unit merge keeps the person's edits.
+_HEAD_BASE_OPERATIONS = {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look",
+                         "shader_checkpoint_save", "shader_checkpoint_rename", "shader_checkpoint_remove",
+                         "shader_restore_revision"}
 def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
     common = {"shader", "project_context_witness", "base", "expected_working_digest"}
     owner = {"library_intent", "confirmation_scope", "studio_surface_id", "expected_edit_sequence"}
@@ -1301,17 +1326,25 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
     if operation not in fields or not isinstance(args, Mapping):
         raise HextileClientError("Unknown Shader history operation", status_code=422, kind="other")
     required, optional = fields[operation]
+    if operation == "shader_restore_revision":
+        optional = optional | {"steps_back"}
     required = common | required | (set() if operation == "shader_history_preview" else {"request_id"})
+    if operation in _HEAD_BASE_OPERATIONS and "base" not in args:
+        # The saved head: these writes merge per unit (the person's edits win), so no base is needed.
+        if "expected_working_digest" in args:
+            raise HextileClientError("expected_working_digest needs the base it came from", status_code=422, kind="other")
+        required = required - {"base", "expected_working_digest"}
+    elif "base" not in args:
+        raise HextileClientError(_BASE_REQUIRED, status_code=422, kind="other")
     looks = {"shader_save_look", "shader_apply_look", "shader_rename_look", "shader_delete_look"}
     if operation in looks:
         optional = optional | {"seen"}
-    if required - args.keys() or set(args) - required - optional - owner:
-        raise HextileClientError("Invalid Shader history fields", status_code=422, kind="other")
+    _closed_argument_error("Invalid Shader history fields", args, required, optional | owner)
     if "seen" in args and not _shader_seen(args["seen"]):
         raise HextileClientError("Malformed seen evidence", status_code=422, kind="other")
     _native_shader_args("state", {key: args[key] for key in ("shader", "project_context_witness")})
-    base = args["base"]
-    if (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
+    base = args.get("base")
+    if "base" in args and (not isinstance(base, Mapping) or set(base) != {"kind", "working_revision", "document_hash", "source_hash"}
             or base["kind"] != "saved" or type(base["working_revision"]) is not int or base["working_revision"] < 1
             or any(type(base[key]) is not str or not _WORKSPACE_DIGEST.fullmatch(base[key])
                    for key in ("document_hash", "source_hash"))
@@ -1353,8 +1386,12 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
             or not _WORKSPACE_DIGEST.fullmatch(args["target"]["document_hash"])):
         raise HextileClientError("Invalid Shader history target", status_code=422, kind="other")
     if operation in {"shader_restore_revision", "shader_copy_revision"} and (
-            ("target" in args) == ("checkpoint_id" in args)):
-        raise HextileClientError("History needs one exact target", status_code=422, kind="other")
+            sum(key in args for key in ("target", "checkpoint_id", "steps_back")) != 1):
+        raise HextileClientError("Send exactly one of target, checkpoint_id or steps_back (restore only)",
+                                 status_code=422, kind="other")
+    if "steps_back" in args and (type(args["steps_back"]) is not int or not 1 <= args["steps_back"] <= 1000):
+        raise HextileClientError("steps_back must be a whole number from 1 (1 = the revision before the current one)",
+                                 status_code=422, kind="other")
     if operation == "shader_save_look" and (("look_id" in args) != ("expected_look_envelope_hash" in args)):
         raise HextileClientError("Look replacement needs an envelope hash", status_code=422, kind="other")
     if "include_overrides" in args and type(args["include_overrides"]) is not bool:
@@ -1380,7 +1417,7 @@ def _valid_compact_inputs(value: Any) -> bool:
     return True
 
 
-def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> dict:
+def _native_read_result(data: Any, *, kind: str, entries: int | None = None, limit: int = 32768) -> dict:
     try:
         size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
     except (TypeError, ValueError, UnicodeError) as exc:
@@ -1390,7 +1427,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
                   "capability", "working_digest", "owner_generation", "title", "tags",
                   "document_schema", "draft_state", "writable", "save_state", "reasons",
                   "saved_values", "unaccepted_values", "mounted_values",
-                  "bundle_state", "human_only", "inputs"},
+                  "bundle_state", "human_only", "inputs", "source", "source_omitted", "parameters"},
         "assets": {"schema", "project_context_witness", "entries", "next_cursor", "project"},
         "history": {"schema", "shader", "project_context_witness", "kind", "current",
                     "inventory_generation", "entries", "next_cursor", "total"},
@@ -1414,7 +1451,11 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None) -> 
         "looks": {"id", "title", "revision", "content_hash", "envelope_hash", "manifest_hash",
                   "frozen_document_revision", "frozen_document_hash"},
     }.get(kind)
-    if (type(data) is not dict or size > 32768 or data.get("schema") != 1 or
+    if (type(data) is not dict or size > limit or data.get("schema") != 1 or
+            (kind == "state" and ("source" in data and (type(data["source"]) is not dict or any(
+                type(name) is not str or type(text) is not str for name, text in data["source"].items()))
+                or "parameters" in data and type(data["parameters"]) is not dict
+                or "source_omitted" in data and type(data["source_omitted"]) is not str)) or
             set(data) - allowed or required - set(data) or
             (kind == "state" and "inputs" in data and not _valid_compact_inputs(data.get("inputs"))) or
             (kind == "state" and (data.get("status") not in {"saved", "unaccepted", "incomplete"}
@@ -2071,6 +2112,22 @@ def _native_inspection_result(data: Any, producer: str) -> dict[str, Any]:
         raise HextileClientError("Invalid native destination ownership", kind="other")
     # The caller keeps its immutable selected locator; never echo APP absolute paths.
     return result
+
+
+def _flat_sequence_base(body: Any) -> Any:
+    """Accept the nested base every other Shader write takes; the APP reads the flat fields."""
+    if not isinstance(body, Mapping) or "base" not in body:
+        return body
+    base = body["base"]
+    if not _reply_base(base):
+        raise HextileClientError("base must be {kind:\"saved\", working_revision, document_hash, source_hash}",
+                                 kind="other", status_code=422)
+    flat = {key: value for key, value in body.items() if key != "base"}
+    for key in ("working_revision", "document_hash", "source_hash"):
+        if key in flat and flat[key] != base[key]:
+            raise HextileClientError(f"{key} disagrees with base.{key}; send base alone", kind="other", status_code=422)
+        flat[key] = base[key]
+    return flat
 
 
 def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
@@ -3058,7 +3115,8 @@ def _saved_result(value: Any) -> dict:
 def _edit_result(value: Any) -> dict:
     if (type(value) is not dict or value.get("save") not in {"saved", "unchanged"}
             or not {"save", "results", "commit", "revision"} <= set(value)
-            or set(value) - {"save", "results", "commit", "revision", "compile", "changed", "warning"}
+            or set(value) - {"save", "results", "commit", "revision", "compile", "changed", "warning", "base"}
+            or ("base" in value and not _reply_base(value["base"]))
             or ("changed" in value and type(value["changed"]) is not bool)
             or ("warning" in value and (type(value["warning"]) is not str or len(value["warning"]) > 300))
             or type(value.get("commit")) is not int or value["commit"] < 0
@@ -4206,6 +4264,7 @@ class Client:
         return result
 
     def _shader_sequence_post(self, body: Mapping[str, Any], *, preflight: bool) -> dict[str, Any]:
+        body = _flat_sequence_base(body)
         validate_shader_sequence_request(body)
         route = body.get("render_route") if isinstance(body.get("render_route"), Mapping) else None
         if (body.get("publication_mode") != "deferred" or body.get("supersampling", 1) != 1
@@ -4229,7 +4288,7 @@ class Client:
     def inspect_shader_sequence_output(self, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping) or set(args) != {"request"}:
             raise HextileClientError("Expected a closed Shader destination inspection", kind="other", status_code=422)
-        request = args["request"]
+        request = _flat_sequence_base(args["request"])
         validate_shader_sequence_request(request)
         if request.get("folder_export") is None:
             raise HextileClientError("Inspection needs a selected Shader destination", kind="other", status_code=422)
@@ -4442,7 +4501,7 @@ class Client:
             headers = {'X-Hextile-Project-Witness': args['project_context_witness']}
         elif action in {"continue", "start_over"} and set(args) == {
                 "sequence_id", "action", "request", "inspection_fingerprint"} | ({"confirmed"} if action == "start_over" else set()):
-            request = args["request"]
+            request = _flat_sequence_base(args["request"])
             validate_shader_sequence_request(request)
             if (request.get("folder_export") is None or type(args["inspection_fingerprint"]) is not str
                     or _WORKSPACE_DIGEST.fullmatch(args["inspection_fingerprint"]) is None):
@@ -4573,10 +4632,18 @@ class Client:
         )
 
     def get_shader_asset_state(self, args: Mapping[str, Any]) -> Any:
-        _native_shader_args("state", args)
-        return _native_read_result(self._shader_request("GET", "/api/shaders/agent-operations/asset-state", params={
-            "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
-            "project_context_witness": args["project_context_witness"]}), kind="state")
+        include = args.get("include", []) if isinstance(args, Mapping) else []
+        if (type(include) is not list or len(set(include)) != len(include)
+                or any(item not in {"source", "parameters"} for item in include)):
+            raise HextileClientError('include takes "source" and/or "parameters"', status_code=422, kind="other")
+        _native_shader_args("state", {key: value for key, value in args.items() if key != "include"})
+        params = {"origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
+                  "project_context_witness": args["project_context_witness"]}
+        if include:
+            params["include"] = ",".join(include)
+        return _native_read_result(self._shader_request("GET", "/api/shaders/agent-operations/asset-state",
+                                                        params=params), kind="state",
+                                   limit=262144 if include else 32768)
 
     def list_shader_assets(self, args: Mapping[str, Any]) -> dict:
         _native_read_args(args, set(), {
@@ -4604,8 +4671,59 @@ class Client:
             "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
             "project_context_witness": args["project_context_witness"]}), kind="looks", entries=128)
 
+    def _shader_history_args(self, args: Mapping[str, Any], operation: str) -> Mapping[str, Any]:
+        """Fill what the Shader already says: Library owner fields, and a Look named or listed by shader_get_looks."""
+        if not isinstance(args, Mapping):
+            return args
+        args = dict(args)
+        if operation in {"shader_apply_look", "shader_rename_look", "shader_delete_look", "shader_save_look"}:
+            for alias, field in (("id", "look_id"), ("envelope_hash", "expected_look_envelope_hash")):
+                if alias in args:
+                    value = args.pop(alias)
+                    if field in args and args[field] != value:
+                        raise HextileClientError(f"{alias} and {field} disagree; send one", status_code=422, kind="other")
+                    args[field] = value
+        if operation in {"shader_apply_look", "shader_rename_look", "shader_delete_look"} and (
+                "name" in args or "expected_look_envelope_hash" not in args):
+            args = self._resolve_look(args)
+        if ("library_intent" not in args and "studio_surface_id" not in args
+                and isinstance(args.get("shader"), Mapping)):
+            args["library_intent"] = "saved"
+        if args.get("library_intent") == "saved" and "confirmation_scope" not in args \
+                and isinstance(args.get("shader"), Mapping):
+            scope = "shader_history_retention" if operation.startswith("shader_history_") else operation
+            args["confirmation_scope"] = {"operation": scope, "shader": dict(args["shader"])}
+        return args
+
+    def _resolve_look(self, args: dict) -> dict:
+        """One Look by look_id or name, with its current envelope hash when none was sent."""
+        name = args.pop("name", None)
+        if name is not None and (type(name) is not str or not name.strip()):
+            raise HextileClientError("name must be a Look title", status_code=422, kind="other")
+        if name is None and "look_id" not in args:
+            raise HextileClientError("Send look_id or name (a Look title from shader_get_looks)",
+                                     status_code=422, kind="other")
+        looks = self.get_shader_looks({key: args[key] for key in ("shader", "project_context_witness") if key in args})
+        rows = [row for row in looks.get("entries", []) if isinstance(row, Mapping)]
+        if "look_id" in args:
+            found = [row for row in rows if row.get("id") == args["look_id"]]
+        else:
+            found = [row for row in rows if row.get("title") == name] or [
+                row for row in rows if isinstance(row.get("title"), str)
+                and row["title"].casefold() == name.strip().casefold()]
+        titles = ", ".join(json.dumps(row.get("title")) for row in rows[:20]) or "none"
+        if not found:
+            raise HextileClientError(f"No Look {json.dumps(name or args['look_id'])} on this Shader. Looks: {titles}",
+                                     status_code=404, kind="other")
+        if len(found) > 1:
+            raise HextileClientError(f"{len(found)} Looks are named {json.dumps(name)}; send look_id instead",
+                                     status_code=409, kind="other")
+        args["look_id"] = found[0]["id"]
+        args.setdefault("expected_look_envelope_hash", found[0].get("envelope_hash"))
+        return args
+
     def _shader_history_write(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
-        args = _default_working_digest(args)
+        args = _default_working_digest(self._shader_history_args(args, operation))
         checked = dict(args)
         if operation.startswith("shader_checkpoint_"):
             if checked.pop("action", None) != operation.removeprefix("shader_checkpoint_"):
@@ -4665,7 +4783,7 @@ class Client:
         if action == "preview":
             if args.get("preview_operation", "compact") != "compact":
                 raise HextileClientError("Unsupported history preview operation", status_code=422, kind="other")
-            args = _default_working_digest(args)
+            args = _default_working_digest(self._shader_history_args(args, "shader_history_preview"))
             checked = {key: value for key, value in args.items() if key != "action"}
             _native_history_args("shader_history_preview", checked)
             result = self._shader_request("POST", "/api/shaders/agent-operations/history-retention", dict(args))
@@ -4813,6 +4931,10 @@ class Client:
 
     def rename_shader_asset(self, args: Mapping[str, Any]) -> Any:
         args = _default_working_digest(args)
+        if isinstance(args, Mapping) and isinstance(args.get("shader"), Mapping):
+            # Renaming a Library title is the confirmed scope itself; fill it so agents never assemble it.
+            args = {"library_intent": "saved",
+                    "confirmation_scope": {"operation": "rename", "shader": dict(args["shader"])}, **args}
         _native_shader_args("rename", args)
         request_id = args["request_id"]
         try:
@@ -5113,25 +5235,21 @@ class Client:
                     raise HextileClientError("Invalid Shader creation: " + "; ".join(parts),
                                              kind="other", status_code=422)
             raise HextileClientError("Invalid Shader creation", kind="other", status_code=422)
+        # New, Paste and Fork are all recorded in scope "creation" under the original request_id.
+        unknown = ("Shader creation outcome unknown; call shader_get_operation with this request_id and "
+                   'scope "creation" (no shader). Do not create again.')
         try:
             result = self._shader_request("POST", "/api/shaders/agent-operations/create", dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
                     or exc.kind == "other" and 200 <= exc.status_code < 300:
-                raise HextileClientError("Shader creation outcome unknown; read shader_get_operation by original request ID.",
-                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
-                    **({"scope": "creation"} if action == "paste" else {"shader": source})}) from exc
+                raise HextileClientError(unknown, kind="shader_operation_outcome_unknown",
+                    receipt={"request_id": args["request_id"], "scope": "creation"}) from exc
             raise
-        if type(result) is not dict or result.get("request_id") != args["request_id"] or result.get("operation") != (
-                "shader_create_asset" if action in {"new", "paste"} else "shader_fork_asset"):
-            raise HextileClientError("Shader creation acknowledgement unknown; read shader_get_operation.",
-                kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
-                **({"scope": "creation"} if action == "paste" else {"shader": source})})
-        if action == "paste":
-            if not _valid_shader_creation_status(result, args, complete=True):
-                raise HextileClientError("Shader Paste acknowledgement unknown; read original creation status.",
-                    kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"],
-                    "scope": "creation"})
+        if (not _valid_shader_creation_status(result, args, complete=True)
+                or result.get("operation") != ("shader_fork_asset" if action == "fork" else "shader_create_asset")):
+            raise HextileClientError(unknown, kind="shader_operation_outcome_unknown",
+                receipt={"request_id": args["request_id"], "scope": "creation"})
         return result
 
     def create_shader_asset(self, args: Mapping[str, Any]) -> dict:
