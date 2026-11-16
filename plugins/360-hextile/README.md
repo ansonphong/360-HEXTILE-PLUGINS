@@ -334,7 +334,7 @@ python3 -m pytest pipe/matte/test_trim.py -q
 
 ## Docs
 
-Bundled agent guides: `get_guide` (`workflow-schema`, `best-practices`, `website-index`, `recipes`, `shader-cookbook`).
+Bundled agent guides: `get_guide` (`workflow-schema`, `best-practices`, `website-index`, `recipes`, `recipes-detail`, `shader-cookbook`, `index`).
 `website-index` points at **existing** https://360hextile.com/docs/ pages (templates, pipelines, input, prompts). A dedicated Automation docs section is still 06-docs.
 
 ## License

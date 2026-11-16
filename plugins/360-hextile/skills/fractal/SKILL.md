@@ -63,7 +63,7 @@ work. It is retained later-publication intent, not direct JPG rendering or an
 early successful export. Native PNG completion alone does not prove that the
 requested destination is saved. Separate existing publication remains available:
 `preflight_fractal_sequence_export` → `export_fractal_sequence`, preserving exact
-folder/format/quality and transaction fingerprint/attempt ID/revision.
+folder/format/quality and `transaction_fingerprint`/attempt ID/revision.
 
 Use `inspect_fractal_sequence_output` with `{request,destination}` for existing
 output. This reads native identity metadata, not frame bytes. For matching
