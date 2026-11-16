@@ -1086,7 +1086,7 @@ def test_checkpoint_retention_and_history_match_seal_on_demand(monkeypatch):
         {"schema": 1, "shader": shader, "project_context_witness": "wit", "kind": "revisions",
          "entries": [{"document_ref": "rev:3", "seal": {"reason": "agent_handoff", "actor": "agent",
                                                        "at": "2026-11-16T00:00:00Z"}},
-                     {"document_ref": "rev:4", "seal": None}], "next_cursor": None}
+                     {"document_ref": "rev:4", "seal": None, "package_missing": True}], "next_cursor": None}
         if path.endswith("/history") else
         {"preview_token": "sha256:" + "d" * 64} if body.get("action") == "preview" else
         {"request_id": request_id, "operation": body["confirmation_scope"]["operation"], "state": "saved"}))
@@ -1101,6 +1101,7 @@ def test_checkpoint_retention_and_history_match_seal_on_demand(monkeypatch):
     assert sent[-1]["request_id"] == request_id
     rows = client.get_shader_history({"shader": shader, "project_context_witness": "wit"})["entries"]
     assert [row["seal"] and row["seal"]["reason"] for row in rows] == ["agent_handoff", None]
+    assert rows[1]["package_missing"] is True
     for bad in ({"reason": "autosave", "actor": "agent", "at": "t"}, {"reason": "output", "actor": "agent"},
                 {"reason": "output", "actor": "agent", "at": "t", "extra": 1}, {"reason": "output", "actor": 1, "at": "t"},
                 {"reason": "output", "actor": "a" * 65, "at": "t"}, "output"):
@@ -1109,6 +1110,11 @@ def test_checkpoint_retention_and_history_match_seal_on_demand(monkeypatch):
             "entries": [{"document_ref": "rev:3", "seal": bad}], "next_cursor": None})
         with pytest.raises(HextileClientError):
             client.get_shader_history({"shader": shader, "project_context_witness": "wit"})
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
+        "schema": 1, "shader": shader, "project_context_witness": "wit", "kind": "revisions",
+        "entries": [{"document_ref": "rev:3", "package_missing": "yes"}], "next_cursor": None})
+    with pytest.raises(HextileClientError):
+        client.get_shader_history({"shader": shader, "project_context_witness": "wit"})
 
 
 def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypatch) -> None:

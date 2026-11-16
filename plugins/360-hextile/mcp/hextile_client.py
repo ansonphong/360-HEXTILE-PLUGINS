@@ -1457,7 +1457,8 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None, lim
         "assets": {"shader", "title", "status", "reasons", "base"},
         "history": {"document_ref", "document_hash", "ordinal", "integrity", "publication",
                     "schema", "timestamp", "hash_suffix", "restore_eligible", "copy_eligible",
-                    "eligibility_reason", "id", "name", "actor", "error", "target_family", "seal"},
+                    "eligibility_reason", "id", "name", "actor", "error", "target_family", "seal",
+                    "package_missing"},
         "looks": {"id", "title", "revision", "content_hash", "envelope_hash", "manifest_hash",
                   "frozen_document_revision", "frozen_document_hash"},
     }.get(kind)
@@ -1497,6 +1498,9 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None, lim
             (kind == "history" and "total" in data and (type(data["total"]) is not int or data["total"] < 0)) or
             (kind == "history" and any(not _history_seal(row.get("seal")) for row in data.get("entries") or []
                                        if type(row) is dict and "seal" in row)) or
+            (kind == "history" and any(type(row.get("package_missing")) is not bool
+                                       for row in data.get("entries") or []
+                                       if type(row) is dict and "package_missing" in row)) or
             (kind == "conventions" and (type(data.get("profiles")) is not list or
                                          len(data["profiles"]) > 8)) or
             ("next_cursor" in data and data["next_cursor"] is not None and
