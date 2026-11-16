@@ -4,7 +4,7 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 
 ## How to work fast
 
-- Orient with one read: `get_live_context {"view":"shader"}` (`shaderId`, `writable`, witness, `studio_surface_id`, `lease`, `revision`, `saved_base`).
+- Shader on screen (or "this Shader"): orient with one read, `get_live_context {"view":"shader"}`. A Shader named by title: skip it and start with `shader_list_assets`. On screen: (`shaderId`, `writable`, witness, `studio_surface_id`, `lease`, `revision`, `saved_base`).
 - Act by id: `shader_edit {"shader_id":..}` edits a Shader with no window and no open step, and saves itself. One call per edit; put related entries (min with max, create with code) in one `edits` list.
 - 403 `No document is open` or `connected:false`: do not poll. Ask the user to open a document or the Workshop, then try once.
 - Lost reply: send the same request with the same `request_id`; it returns the recorded result; `request_expired` (409) means the record is gone, so check state, then use a new id. Use a new id for a new or repaired edit.
