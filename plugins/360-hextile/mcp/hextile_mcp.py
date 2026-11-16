@@ -3259,7 +3259,8 @@ SHADER_EXTENSION_TOOLS = [
                                    "again for the same Shader. Check get_live_context(view=\"shader\").agent_open first: policy "
                                    "\"never\" gives open_blocked. force:true switches at once, only if the user asked for a fully "
                                    "agent-driven session or asked this turn; it is ignored if the user turned force-open off and "
-                                   "still refused while they are typing or have unsaved edits. Nothing is saved or discarded.",
+                                   "still refused while they are typing or have unsaved edits. With no Shader mounted, force and always-allow "
+                                   "do not apply: the user always sees the Open request. Nothing is saved or discarded.",
               {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"],
                "force": {"type": "boolean", "default": False}},
               ["request_id", "project_context_witness", "target"]),
