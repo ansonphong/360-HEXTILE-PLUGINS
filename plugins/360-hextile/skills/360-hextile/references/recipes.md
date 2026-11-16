@@ -59,7 +59,7 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 
 ## Looks and history
 
-- Save a Look at a value → `shader_edit` the value, then `shader_save_look` (it saves the current values). `shader_list_assets` gives `S` and `W`; one `shader_get_asset_state` gives the parameter ids. Chain each reply; do not re-read between steps.
+- Set a value and save it as a Look, in one call → `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[{"op":"set","address":["values","travel_speed"],"value":0.4},{"op":"create","address":["looks","warm"],"value":{"name":"Warm","values":{"travel_speed":0.4}}}]}` (Look id: lowercase, no spaces). Parameter ids are usually the label in snake_case ("Travel speed" → `travel_speed`); a wrong id returns 400 `unknown_id` and saves nothing. Set → Look → set → apply is 4 calls: `shader_list_assets` (for `S`, `W`), this edit, the next value edit, `shader_apply_look {..,"name":"Warm"}`.
 - Save a Look → `shader_save_look {"shader":S,"project_context_witness":W,"request_id":U,"title":"Warm"}` (on screen add `studio_surface_id`). It creates a revision.
 - Apply a Look → `shader_apply_look {"shader":S,"project_context_witness":W,"request_id":U,"name":"Warm"}`; `shader_get_looks` rows (`id`, `envelope_hash`) also work as `look_id`/`id`, hash optional. Rename / delete: same shape; rename needs only `name` (or `look_id`) plus `title`.
 - History → `shader_get_history {"shader":S,"project_context_witness":W,"kind":"revisions","newest":true,"limit":5}`.

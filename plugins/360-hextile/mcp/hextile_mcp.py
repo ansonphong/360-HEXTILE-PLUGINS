@@ -2464,8 +2464,8 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def("get_shader_parameters",
         "Use to read the open Shader's parameters: ids, current values, label, type, range "
         "(min/max/step), help, group, default, options and option_labels, plus document commit and "
-        "revision. No GLSL source. Mounted Shader only; MCP must be enabled. To read another Shader's "
-        "saved values use shader_get_asset_state. If no document is open it fails 403 \"No document is "
+        "revision. No GLSL source. Takes no arguments: the on-screen Shader only; MCP must be enabled. For an "
+        "off-screen Shader use shader_get_asset_state {shader, project_context_witness, include:[\"parameters\"]}. If no document is open it fails 403 \"No document is "
         "open in 360 Hextile...\": ask the user to open one, then try once. Do not poll.",
         {}),
     _tool_def("shader_edit",

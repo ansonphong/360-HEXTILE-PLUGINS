@@ -27,7 +27,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 9. Duplicate → `shader_duplicate_asset {"shader":S,"base":B,"destination_origin":"user","title":"Copy",..}`; `shader_save_as` (on screen) replies `pending` and the Workshop switches to the copy — confirm with `shader_list_assets`.
 10. Delete → `shader_delete_asset` with `W`, `B` — My Library only.
 11. Play, pause, jump to 3 s → `shader_control_clock {"action":"play"|"pause"|"seek","time":3,..}` — on screen.
-12. Save or apply a Look → `shader_save_look {..,"title":"Warm"}`; `shader_apply_look {..,"name":"Warm"}` — no base, owner fields or hash needed.
+12. Set a value, save it as a Look, change it, apply the Look (4 calls) → `shader_list_assets {"search":"<title>"}` for `S`, `W`; `shader_edit {"shader_id":"<id>","request_id":"a","edits":[{"op":"set","address":["values","travel_speed"],"value":0.4},{"op":"create","address":["looks","warm"],"value":{"name":"Warm","values":{"travel_speed":0.4}}}]}`; `shader_edit` the new value; `shader_apply_look {"shader":S,"project_context_witness":W,"request_id":U,"name":"Warm"}`. Parameter id = the label in snake_case ("Travel speed" → `travel_speed`); don't look it up first (a wrong id is 400 `unknown_id`, nothing saved). Current values only: `shader_save_look {"shader":S,"project_context_witness":W,"request_id":U,"title":"Warm"}`.
 13. Go back a version → `shader_restore_revision {..,"steps_back":1}` (or a history row's `document_ref` and `document_hash`).
 14. Render a still → `shader_preflight_still_export` then `shader_export_still` — on screen (below).
 15. Render a sequence → `preflight_shader_sequence` then `render_shader_sequence` (below).
