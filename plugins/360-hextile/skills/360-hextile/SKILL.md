@@ -9,7 +9,7 @@ description: "Drive 360 Hextile workflows from an AI coding agent. Use when gene
 
 - Orient with one read: `get_live_context(view="shader")` for the Shader Workshop, `get_live_context` for the Studio, `get_fractal_context` for Fractal.
 - Edit a Shader by `shader_id` with `shader_edit`: one call per edit, no open step, no Save; it saves itself.
-- 403 `Studio isn't present` or `connected:false`: no document is open. Never poll it; ask the user to open a document, then try once.
+- 403 `No document is open` or `connected:false`: never poll it; ask the user to open a document, then try once.
 - Lost reply: resend the same request with the same `request_id`; it returns the recorded result.
 
 ## Top recipes

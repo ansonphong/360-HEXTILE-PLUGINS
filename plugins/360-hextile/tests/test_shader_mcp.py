@@ -1650,8 +1650,7 @@ def test_list_shader_assets_omits_an_absent_witness(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     tool = next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == "shader_list_assets")
     assert "project_context_witness" not in tool["inputSchema"].get("required", [])
-    assert tool["description"].endswith(
-        "Omit the witness to discover it; the reply carries the current project_context_witness.")
+    assert "Omit project_context_witness the first time: the reply returns it." in tool["description"]
     client = Client("http://127.0.0.1:9")
     calls = []
     reply = {"schema": 1, "project_context_witness": "live", "project": {},
@@ -2531,13 +2530,13 @@ def test_v2_receipts_compile_credits_and_named_fields(monkeypatch) -> None:
 
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     described = {tool["name"]: tool["description"] for tool in TOOLS + SHADER_EXTENSION_TOOLS}
-    assert "Send no other fields" in described["open_shader_workspace"]
+    assert "Pass shader_id and request_id only." in described["open_shader_workspace"]
     assert "render_observation.run_id" in described["control_shader_sequence"]
     assert "shader_checkpoint_save" in described["shader_checkpoint"]
-    assert "operation rename" in described["shader_rename_asset"]
-    assert "operation delete" in described["shader_delete_asset"]
-    assert "slot_id is required" in described["shader_set_resource"]
-    assert "title is accepted only for action paste" in described["shader_create_asset"]
+    assert 'operation:"rename"' in described["shader_rename_asset"]
+    assert 'operation:"delete"' in described["shader_delete_asset"]
+    assert "action and slot_id" in described["shader_set_resource"]
+    assert "no title" in described["shader_create_asset"] and "(optional title;" in described["shader_create_asset"]
     skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
     authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
     assert "connected: false" in skill and "shader: null" in skill

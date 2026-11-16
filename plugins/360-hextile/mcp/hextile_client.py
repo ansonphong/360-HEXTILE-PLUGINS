@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import http.client
 import hashlib
+import io
 import json
 import math
 import os
 import re
+import select
 import socket
 import subprocess
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from fractions import Fraction
@@ -3068,6 +3072,36 @@ def _edit_result(value: Any) -> dict:
     _shape_merge_container(value)
     return value
 
+_KEEPALIVE_IDLE_S = 2.0  # Reuse only well inside the APP's 5 s uvicorn keep-alive window.
+_KEEPALIVE_ERROR_CAP = 64 * 1024
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+class _KeptResponse:
+    """One response on a kept connection; drops the connection unless the body was fully read."""
+
+    def __init__(self, owner: "Client", resp: http.client.HTTPResponse) -> None:
+        self._owner, self._resp = owner, resp
+        self.status, self.headers = resp.status, resp.headers
+
+    def getcode(self) -> int:
+        return self.status
+
+    def read(self, amt: Optional[int] = None) -> bytes:
+        return self._resp.read(amt)
+
+    def __enter__(self) -> "_KeptResponse":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        complete = self._resp.isclosed() and not self._resp.will_close
+        self._resp.close()
+        if complete:
+            self._owner._kept.used = time.monotonic()
+        else:
+            self._owner._drop_kept()
+
+
 class Client:
     """Sync HTTP wrapper around local APP routes (stdlib urllib)."""
 
@@ -3085,6 +3119,9 @@ class Client:
         self._opener = opener
         self.internal_mode = internal_mode
         self.follow_record = follow_record
+        # The stdio server opts in: one keep-alive loopback connection per thread.
+        self.keep_alive = False
+        self._kept = threading.local()
         self._bootstrap_dir: str | None = None
         self.endpoint_resolution: LocalEndpointResolution | None = None
         if follow_record:
@@ -3171,6 +3208,8 @@ class Client:
         try:
             if self._opener is not None:
                 resp_cm = self._opener(req, timeout=to)
+            elif self.keep_alive:
+                resp_cm = self._open_kept(req, to)
             else:
                 resp_cm = urllib.request.urlopen(req, timeout=to)
             with resp_cm as resp:
@@ -3238,6 +3277,60 @@ class Client:
             ) from exc
         except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as exc:
             raise HextileClientError(APP_DOWN_MSG, status_code=None, body=str(exc), kind="app_down") from exc
+
+    def _drop_kept(self) -> None:
+        conn = getattr(self._kept, "conn", None)
+        self._kept.conn = None
+        if conn is not None:
+            conn.close()
+
+    def _open_kept(self, req: urllib.request.Request, timeout: float) -> Any:
+        """Send req on this thread's kept loopback connection (urlopen for anything else)."""
+        parts = urllib.parse.urlsplit(req.full_url)
+        if parts.scheme != "http" or parts.hostname not in _LOOPBACK_HOSTS:
+            return urllib.request.urlopen(req, timeout=timeout)
+        key = (parts.hostname, parts.port or 80)
+        target = parts.path + ("?" + parts.query if parts.query else "")
+        method = req.get_method()
+        while True:
+            kept = self._kept
+            conn = getattr(kept, "conn", None)
+            # An idle socket that reads as ready has been closed by the APP: reconnect before sending.
+            reused = (conn is not None and conn.sock is not None and kept.key == key
+                      and time.monotonic() - kept.used < _KEEPALIVE_IDLE_S
+                      and not select.select([conn.sock], [], [], 0)[0])
+            if not reused:
+                self._drop_kept()
+                kept.conn, kept.key, kept.used = http.client.HTTPConnection(*key, timeout=timeout), key, 0.0
+            conn = kept.conn
+            conn.timeout = timeout
+            if conn.sock is not None:
+                conn.sock.settimeout(timeout)
+            try:
+                conn.request(method, target, body=req.data, headers=dict(req.header_items()))
+                resp = conn.getresponse()
+            except ConnectionError:
+                self._drop_kept()
+                if reused and method == "GET":
+                    continue  # The APP closed an idle socket; a read is safe to resend once, fresh.
+                raise
+            except http.client.HTTPException as exc:
+                self._drop_kept()
+                raise ConnectionError(str(exc)) from exc
+            except BaseException:
+                self._drop_kept()
+                raise
+            break
+        if 300 <= resp.status < 400:
+            resp.read()
+            self._drop_kept()
+            return urllib.request.urlopen(req, timeout=timeout)
+        if resp.status >= 400:
+            body = resp.read(_KEEPALIVE_ERROR_CAP + 1)
+            _KeptResponse(self, resp).__exit__()
+            raise urllib.error.HTTPError(req.full_url, resp.status, resp.reason, resp.headers,
+                                         io.BytesIO(body[:_KEEPALIVE_ERROR_CAP]))
+        return _KeptResponse(self, resp)
 
     def _shader_request(self, method: str, path: str, body: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> Any:
         """Shader agent HTTP. A 4xx {code, message, next_step} body replaces the raw HTTP text."""

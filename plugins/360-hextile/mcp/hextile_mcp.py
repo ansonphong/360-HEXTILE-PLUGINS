@@ -17,6 +17,7 @@ import math
 import os
 import re
 import sys
+import queue
 import threading
 import time
 import traceback
@@ -44,9 +45,11 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.9"
+SERVER_VERSION = "0.6.10"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
+MCP_STATUS_TTL_S = 5.0
+ACTIVITY_FLUSH_TIMEOUT_S = 5.0
 
 # Canonical tool names — drift tests assert SKILL.md ⊆ this list.
 TOOL_NAMES = (
@@ -442,9 +445,9 @@ GUIDE_NAMES = (
 _GUIDE_INDEX = (
     "A workflow starts with get_capabilities. "
     "A read-only \"what Shader is open?\" question is only get_live_context(view=\"shader\") and does not call get_capabilities. "
-    "Shader package edits use shader_edit or register_shader_update. "
+    "Shader edits use shader_edit, which saves itself; register_shader_update is only for the file-workspace flow. One-line recipes: get_guide(name=\"recipes\"). "
     "Read merge. Watch compile. Only the human moves the lease. "
-    "A still is shader_request_preview, then shader_get_preview with image true as the 512px RGB display image, then shader_preflight_still_export, then shader_export_still using that preflight_request_id. "
+    "A still is shader_preflight_still_export then shader_export_still using that preflight_request_id; no preview is needed first. "
     "A sequence is preflight_shader_sequence then render_shader_sequence. "
     "8K equirect PNG at 2× is shader_preflight_still_export profile shader-raster-still/1, width 8192, height 4096, supersampling 2, and an absolute output_path. "
     "Omit render_route for native. Other routes are webgl-display-native-encode, webgl-browser-encode-desktop, webgl-browser-encode-backend, and webgl-raw-float; browser routes add browser_codec. "
@@ -610,17 +613,6 @@ _CREDIT_CHANGES["minProperties"] = 1
 _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
                      "pattern": r"^[A-Za-z0-9_-]{1,64}:[1-9][0-9]{0,15}$",
                      "description": "<handle>:<expected_generation+1>; suffix <= 9007199254740991, no leading zeros. Replay the original ID, generation and digest only."}
-_WORKSPACE_GUIDANCE = (
-    "For Shader source editing, read the installed shader skill's references/authoring.md "
-    "or get_guide(name=\"workflow-schema\") before editing. "
-    "Open takes shader_id and request_id only. Send no other fields. It returns the lease. "
-    "Register saves the digest with the lease and seen. "
-    "Register saves. Read merge to see what was kept. Unchanged rows are kept_count. "
-    "Source bodies are path, sha256 and bytes. Watch compile; if it fails, fix and register again. "
-    "A field the human has edited carries a human number wherever you read it. To change such a field, send that pair in seen with your edit. "
-    "If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Resend that unit with shader_edit and the new seen pair only if you still mean it. "
-    "Only the human moves the lease."
-)
 
 
 def _shader_ref(identity: dict[str, Any]) -> dict[str, Any]:
@@ -1231,28 +1223,34 @@ _PREFERENCE_CHANGES = {
 
 
 TOOLS: list[dict[str, Any]] = [
-    _tool_def("list_hotkeys", "Read this app's device-local Hotkeys profile, revision, effective bindings and availability in pages of 20 actions. Start with no cursor; pass next_cursor unchanged until null. On stale_revision restart with no cursor. Requires the app; no render document needed.",
+    _tool_def("list_hotkeys", "Use to read the keyboard shortcuts (Hotkeys) set up in this app. Call with no cursor, then pass "
+                              "next_cursor unchanged until it is null (20 actions per page). If you get stale_revision, start "
+                              "over with no cursor. Needs the app open, not a render.",
               {"cursor": {"type": "string", "minLength": 1, "maxLength": 128,
                           "description": "Opaque next_cursor from the previous page at the same profile revision."}}),
-    _tool_def("inspect_hotkey", "Inspect one Hotkey and optional candidate bindings for edit errors, conflicts and explained overlaps at the current revision.",
+    _tool_def("inspect_hotkey", "Use to check whether a shortcut change would work before making it. Pass the hotkey id and "
+                                "optional candidate bindings; returns errors, conflicts and overlaps at the current revision. "
+                                "Changes nothing.",
               {"id": _HOTKEY_ID, "bindings": _HOTKEY_BINDINGS}, ["id"]),
-    _tool_def("set_hotkey_bindings", "Replace one complete Hotkey alias list; an empty list unbinds it. Read first and obtain approval for the exact bindings and revision. Conflicts never reassign other actions.",
+    _tool_def("set_hotkey_bindings", "Use to set all shortcuts for one Hotkey action. bindings replaces the whole list for that id; an "
+                                     "empty list unbinds it. Read first with list_hotkeys, pass its revision, and get the user's "
+                                     "approval of the exact bindings. Conflicts are reported, never reassigned.",
               {"id": _HOTKEY_ID, "bindings": _HOTKEY_BINDINGS, "revision": _HOTKEY_REVISION}, ["id", "bindings", "revision"]),
-    _tool_def("remove_hotkey_binding", "Remove exactly one assigned Hotkey chord using the revision from a fresh read.",
+    _tool_def("remove_hotkey_binding", "Use to remove one shortcut (chord) from a Hotkey action. Pass id, the binding, and revision from a fresh list_hotkeys read.",
               {"id": _HOTKEY_ID, "binding": _HOTKEY_BINDING, "revision": _HOTKEY_REVISION}, ["id", "binding", "revision"]),
-    _tool_def("restore_hotkey", "Restore one customized Hotkey to its factory bindings using the revision from a fresh read.",
+    _tool_def("restore_hotkey", "Use to put one customized Hotkey back to its factory shortcuts. Pass id and revision from a fresh list_hotkeys read.",
               {"id": _HOTKEY_ID, "revision": _HOTKEY_REVISION}, ["id", "revision"]),
-    _tool_def("reset_hotkeys", "Clear all Hotkey binding overrides, including inert unknown IDs. Leaves the separate single-key switch unchanged. Explicit approval and a fresh revision required.",
+    _tool_def("reset_hotkeys", "Use to clear every custom shortcut, including unknown ids. Needs explicit user approval and a fresh revision from list_hotkeys. The separate single-key switch stays as is.",
               {"revision": _HOTKEY_REVISION}, ["revision"]),
     _tool_def(
         "list_workflows",
-        "List workflow templates on all shelves (builtin / user / project). "
-        "A workflow is a full .hextile.json config document.",
+        "Use to see available workflow templates (a workflow is a full .hextile.json config) on the "
+        "builtin, user and project shelves. Returns ids to use with get_workflow or run_workflow.",
         {},
     ),
     _tool_def(
         "get_workflow",
-        "Read one workflow template before overriding fields.",
+        "Use to read one workflow template before overriding its fields. Pass id (from list_workflows) and optionally origin (builtin, user or project).",
         {
             "origin": {
                 "type": "string",
@@ -1268,82 +1266,81 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_capabilities",
-        "Handshake: GET /api/workflows/capabilities "
-        "(workflow_api_version + features).",
+        "Use to check the workflow API version and supported features before relying on a newer option.",
         {},
     ),
     _tool_def(
         "get_config_schema",
-        "Read owned workflow config model names, or one model's JSON schema. "
-        "Optional model is a class name such as PromptSettings; PromptSettings uses the wire field global. "
-        "This is not the current config, not /api/config, and not validate_config.",
+        "Use to learn the fields of a workflow config model. Omit model to list model names, or pass a "
+        "class name such as PromptSettings (its wire field is \"global\") for that JSON schema. This is not "
+        "the current config; use validate_config to test one.",
         {"model": {"type": "string", "minLength": 1, "maxLength": 128,
                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"}},
     ),
     _tool_def(
         "list_processors",
-        "Read processor identity, display, type, channel, surface, and admission metadata. "
-        "Does not load, unload, or admit a model.",
+        "Use to see which processors (generation pipelines) exist: identity, display name, type, channel "
+        "and admission info. Read-only: it does not load, unload or admit a model.",
         {},
     ),
     _tool_def(
         "get_processor_schema",
-        "Read one processor UI schema by pipeline_id. Does not validate or unload.",
+        "Use to read the settings form of one processor. Pass pipeline_id (from list_processors). Read-only.",
         {"pipeline_id": {"type": "string", "minLength": 1, "maxLength": 128,
                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"}},
         ["pipeline_id"],
     ),
     _tool_def(
         "get_plugin_catalog",
-        "Read plugin metadata, availability, dependencies, and operations. "
-        "Does not start CREATE or animation and does not register jobs.",
+        "Use to see installed plugins: metadata, availability, dependencies and operations. Read-only; it "
+        "does not start CREATE or animation.",
         {},
     ),
     _tool_def(
         "get_app_preferences",
-        "Read safe app preferences plus effective_default_pipeline. "
-        "Does not return the output folder, creator profile, EULA, credentials, or filesystem paths.",
+        "Use to read safe app preferences and the effective default pipeline. It never returns the output "
+        "folder, creator profile, EULA, credentials or file paths.",
         {},
     ),
     _tool_def(
         "update_app_preferences",
-        "Patch one nonempty closed set of safe preferences through the native settings update. "
-        "Null does not clear a field. Privacy toggles change only when explicitly selected. "
-        "mcp_enabled false uses native disconnect. A lost acknowledgement is unknown: reread and do not replay.",
+        "Use to change safe app preferences. changes holds a nonempty set of fields; null does not clear "
+        "a field. Privacy toggles change only when explicitly selected; mcp_enabled false disconnects "
+        "MCP. After a lost reply, reread with get_app_preferences and do not resend.",
         {"changes": _PREFERENCE_CHANGES},
         ["changes"],
     ),
     _tool_def(
         "get_storage_summary",
-        "Read disk free and total, default and fallback flags, and storage class identity. "
-        "refresh defaults to false and keeps the native memoized scan. No folder argument and no roots or paths.",
+        "Use to see disk free/total and storage class. refresh (default false) reuses the cached scan. "
+        "Takes no folder; returns no paths.",
         {"refresh": {"type": "boolean"}},
     ),
     _tool_def(
         "get_cache_buckets",
-        "Read cache bucket identity, display name, size, file count, protection, and total size. "
-        "Does not return cache directories.",
+        "Use to see cache buckets: name, size, file count, whether protected, and the total. Returns no "
+        "directories. Use the bucket ids with clear_disposable_cache.",
         {},
     ),
     _tool_def(
         "clear_disposable_cache",
-        "Clear disposable cache through the native clear routes. Omit bucket to clear every disposable bucket. "
-        "Protected buckets and live owners stay refused. Errors in a completed response are not success. "
-        "A lost acknowledgement is unknown and must not be replayed.",
+        "Use to free disk by clearing disposable cache. Pass bucket to clear one, or omit to clear all "
+        "disposable buckets; protected buckets and buckets in use are refused. Errors inside a completed "
+        "reply mean it failed. After a lost reply, reread get_cache_buckets; do not resend.",
         {"bucket": {"type": "string", "minLength": 1, "maxLength": 64,
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"}},
     ),
     _tool_def(
         "get_license_status",
-        "Read the current license activation, tier, access state and source, features, and non-secret access flags. "
-        "No tier argument, activation, or machine identity.",
+        "Use to read the license state: tier, access state and source, features and access flags. No "
+        "secrets, activation or machine identity.",
         {},
     ),
     _tool_def(
         "describe_image",
-        "Describe one exact local image or equirectangular crop using APP's local vision. "
-        "Requires approval for local compute/GPU; returns text, never image bytes. "
-        "Allow up to 300 seconds. No URL, base64, or current-selection fallback.",
+        "Use to get a text description of a local image or an equirectangular crop, using the app's local "
+        "vision model. Pass source (an absolute local path; no URL or base64) and optional crop. Needs "
+        "user approval for local GPU use and can take up to 300 seconds. Returns text only.",
         {
             "source": {
                 "oneOf": [
@@ -1383,14 +1380,14 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_live_context",
-        "Read-only studio snapshot (K1). Current document/owner state, doc_generation FNV hex, "
-        "and identity-stripped live export when the studio is present. "
-        "403 studio_not_present if the FE RAM slot is empty. "
-        "Use view=shader for a compact open-Shader name, Saved/draft state, editability and blockers; "
-        "no capability handshake or source read is needed for this read-only question. "
-        "Optional shader_contract.code_lease is shader-code-lease/1 and means MCP holds code only. "
-        "A missing code_lease is unknown coauthoring support, not permission to replace the human document. "
-        "Default full response is unchanged. Does not merge; discovery never proves Apply or Save.",
+        "Use to see what the studio has open right now. view=\"shader\" returns the mounted Shader {origin, "
+        "shaderId}, its title, whether it is writable, project_context_witness, studio_surface_id, lease, "
+        "commit, revision, saved_base and agent_open (the open policy); no other call is needed first. "
+        "With no Shader mounted it returns connected:false or shader:null and a next hint. Default "
+        "view=\"full\" returns the full document snapshot with doc_generation (needed by "
+        "apply_config_delta). If no document is open it fails 403 \"No document is open in 360 "
+        "Hextile...\": ask the user to open one, then try once. Do not poll. Read-only; it does not prove "
+        "Apply or Save happened.",
         {
             "view": {"type": "string", "enum": ["full", "shader"], "default": "full",
                      "description": "shader: compact mounted Shader discovery only; full: existing app snapshot."},
@@ -1408,10 +1405,10 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "apply_config_delta",
-        "Apply a live delta to the exact current studio document while MCP is enabled. "
-        "Never queues GPU. Requires config_partial + doc_generation (FNV hex). "
-        "Forbidden: confirm, dry_run, workflow_id, document, queue. "
-        "Disconnected MCP refuses fresh work. Pipeline / identity keys refused.",
+        "Use to change the settings of the document open in the studio, live. Pass config_partial (only "
+        "the fields to change) and doc_generation from get_live_context. Does not queue GPU work. "
+        "Pipeline and identity keys, confirm, dry_run, workflow_id, document and queue are refused. Needs "
+        "MCP enabled.",
         {
             "config_partial": {
                 "type": "object",
@@ -1433,9 +1430,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "save_workflow",
-        "Create-only persist of a .hextile.json document on the user or "
-        "project shelf. Builtin is immutable. Existing id → HTTP 409; "
-        "use a new id or delete_workflow first.",
+        "Use to save a new workflow template to the user or project shelf. Pass id and the full "
+        ".hextile.json document. Create only: an existing id returns 409 (use a new id or delete_workflow "
+        "first). Builtin cannot be written.",
         {
             "origin": {
                 "type": "string",
@@ -1455,7 +1452,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "delete_workflow",
-        "Delete a user or project workflow. Cannot delete builtin.",
+        "Use to delete a user or project workflow template by id. Builtin ones cannot be deleted.",
         {
             "origin": {
                 "type": "string",
@@ -1468,10 +1465,10 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "run_workflow",
-        "Merge overrides into a workflow, validate, and queue a render. "
-        "Server owns deep-merge + HextileConfig validation — send overrides only. "
-        "Requires workflow_id XOR document (exactly one). "
-        "Arrays replace wholesale (add a LoRA ≠ append). No confirm argument.",
+        "Use to start a render from a workflow template. Pass exactly one of workflow_id or document, "
+        "plus overrides with only the fields to change (the server merges and validates). Arrays replace "
+        "wholesale, so adding a LoRA means sending the whole list. dry_run:true only validates (same as "
+        "validate_config). Returns run_id for get_status. No confirm argument.",
         {
             "workflow_id": {
                 "type": "string",
@@ -1506,7 +1503,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "validate_config",
-        "Terraform-plan: merge + validate without queueing (dry_run: true).",
+        "Use to check a workflow plus overrides without rendering. Same arguments as run_workflow (workflow_id or document, overrides); it merges and validates but never queues.",
         {
             "workflow_id": {"type": "string"},
             "origin": {"type": "string", "default": "builtin"},
@@ -1517,7 +1514,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_status",
-        "Poll render/job status by run_id from run_workflow.",
+        "Use to check a render started by run_workflow. Pass its run_id. Not for sequences (get_sequence) or Batch jobs (get_batch).",
         {
             "run_id": {
                 "type": "string",
@@ -1528,18 +1525,15 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_gpu_diagnostics",
-        "Read the app's current GPU/VRAM status without changing GPU state. "
-        "NVML card/process values may be cached; inspect sample time and age. "
-        "Device use, process attribution, allocator pools, and model footprints "
-        "overlap; unknown values stay unknown. This does not predict whether a "
-        "particular workload will fit.",
+        "Use to see current GPU and VRAM status without changing anything. NVML values may be cached, so "
+        "check the sample time. It does not predict whether a workload will fit.",
         {},
     ),
     _tool_def(
         "get_seed_memory_advice",
-        "Read separate GPU status and APP memory-pressure advice for one listed "
-        "360-LoRA resolution. The GPU sample age applies only to gpu; advice "
-        "samples memory independently and neither result guarantees job fit.",
+        "Use to check whether a 360-LoRA seed at a given size is likely to fit in memory. Pass lora_path, "
+        "width, height and optional cpu_offload; returns GPU status and app memory-pressure advice "
+        "separately. Not a guarantee.",
         {
             "lora_path": {"type": "string", "description": "Relative path from list_360_loras"},
             "width": {"type": "integer", "description": "Listed preset width"},
@@ -1550,7 +1544,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_render_config",
-        "Read the producing .hextile.json for a render (GET /api/renders/{id}/config). Read-only.",
+        "Use to read the .hextile.json that produced a render. Pass render_id. Read-only.",
         {
             "render_id": {
                 "type": "string",
@@ -1561,7 +1555,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_logs",
-        "Fetch failed-run logs (GET /api/renders/{id}/logs). Read-only.",
+        "Use to read the logs of a failed render. Pass run_id. Read-only.",
         {
             "run_id": {
                 "type": "string",
@@ -1572,8 +1566,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "list_runs",
-        "List library renders (monitor without a stored run_id). "
-        "Response data.renders[] includes status, progress, output_path.",
+        "Use to find renders in the library when you have no run_id. Optional lifecycle_status filter. "
+        "Each row in data.renders[] has status, progress and output_path.",
         {
             "lifecycle_status": {
                 "type": "string",
@@ -1584,8 +1578,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "search_library_prompts",
-        "Search saved global and tile prompts in render and sequence library rows. "
-        "Returns exact IDs, snippets, and a cursor for the next bounded page. Read-only.",
+        "Use to find past renders or sequences by prompt text. Pass query; optional kinds, "
+        "lifecycle_status, limit and cursor. Returns ids, snippets and a cursor for the next page. "
+        "Read-only.",
         {
             "query": {"type": "string", "minLength": 2, "maxLength": 256},
             "kinds": {
@@ -1605,7 +1600,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "cancel_run",
-        "Stop a running render (status → cancelled).",
+        "Use to stop a running render. Pass run_id; status becomes cancelled. For sequences use stop_sequence; for Batch use cancel_batch; for seeds use cancel_seed.",
         {
             "run_id": {"type": "string", "description": "Render id to stop"},
         },
@@ -1613,11 +1608,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "retry_run",
-        "Retry a crashed/failed render (POST /api/renders/{id}/retry). "
-        "APP returns 400 otherwise. Uses APP tile-reuse policy. Optional "
-        "vram_recovery=true may evict idle in-app GPU holders for this exact "
-        "render; request and approve that effect explicitly. Omitted/false "
-        "is an ordinary retry.",
+        "Use to retry a crashed or failed render. Pass run_id; the app returns 400 for other states. "
+        "vram_recovery:true may free idle GPU holders for this render, so ask the user first; omitted or "
+        "false is an ordinary retry.",
         {
             "run_id": {"type": "string", "description": "Render id to retry"},
             "vram_recovery": {
@@ -1630,9 +1623,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "generate_seed",
-        "Submit one 360-LoRA seed job with a caller-supplied UUID. Returns a "
-        "short acknowledgement with job_id; poll get_seed_job for original-index "
-        "variation paths, seeds, and terminal errors.",
+        "Use to make 360-LoRA seed images. Required: request_id (a fresh UUID), prompt, lora_path and "
+        "base_model (both from list_360_loras). Optional n, size, steps, seed and so on. Returns job_id; "
+        "poll get_seed_job for image paths and seeds.",
         {
             "request_id": {
                 "type": "string",
@@ -1704,9 +1697,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_seed_job",
-        "Read one exact 360-LoRA job (GET /api/360-lora/jobs/{job_id}). "
-        "Returns status, progress, original-index completed variations with "
-        "paths and seeds, variation errors, and typed terminal error.",
+        "Use to check a 360-LoRA seed job from generate_seed. Pass job_id; returns status, progress, "
+        "finished variations with paths and seeds, and errors.",
         {
             "job_id": {"type": "string", "description": "Job id from generate_seed"},
         },
@@ -1714,8 +1706,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "list_seed_history",
-        "List stored 360-LoRA seed batches (GET /api/360-lora/history). "
-        "Always sends offset+limit so APP returns {batches, total}.",
+        "Use to browse past 360-LoRA seed batches. Optional offset, limit, status; returns {batches, "
+        "total}.",
         {
             "offset": {
                 "type": "integer",
@@ -1736,7 +1728,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_seed_batch",
-        "Read one stored 360-LoRA seed batch (GET /api/360-lora/history/{batch_id}).",
+        "Use to read one stored 360-LoRA seed batch. Pass batch_id (from list_seed_history).",
         {
             "batch_id": {
                 "type": "string",
@@ -1747,8 +1739,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "cancel_seed",
-        "Cancel only the named 360-LoRA job (POST /api/360-lora/jobs/{job_id}/cancel). "
-        "Use cancel_run for renders.",
+        "Use to cancel one 360-LoRA seed job. Pass job_id. For renders use cancel_run.",
         {
             "job_id": {"type": "string", "description": "Exact seed job id to cancel"},
         },
@@ -1756,15 +1747,12 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "list_360_loras",
-        "List installed/known 360-LoRAs. Use path + base_model on generate_seed.",
+        "Use to find installed 360-LoRAs. Pass each one's path and base_model to generate_seed.",
         {},
     ),
     _tool_def(
         "list_installed_models",
-        "List installed weights for a pipeline "
-        "(GET /api/models/{pipeline_id}?installed_only=true). "
-        "pipeline_id is required. Dry-run is Pydantic only — this tool is how "
-        "the agent sees installed weights.",
+        "Use to see which model weights are installed for a pipeline. pipeline_id is required.",
         {
             "pipeline_id": {
                 "type": "string",
@@ -1775,8 +1763,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_model_readiness",
-        "Read current model fit, availability, and install bundle from the app. "
-        "Fit estimates total card capacity, not current free VRAM. Overrides are exploratory only.",
+        "Use to check which models fit and are available, plus the install bundle. Fit is estimated "
+        "against total card VRAM, not current free VRAM. overrides is exploratory only.",
         {"overrides": {"type": "array", "maxItems": 32, "items": {
             "type": "object", "additionalProperties": False,
             "properties": {
@@ -1794,13 +1782,14 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_model_download_queue",
-        "Read the app's active and queued model downloads, including queue_entry_id for exact cancellation.",
+        "Use to see active and queued model downloads. Each row has queue_entry_id, which cancel_model_download needs.",
         {},
     ),
     _tool_def(
         "install_model",
-        "Queue one registry model, or its current default-catalog selected bundle. "
-        "Bundle requires the server-issued selection fingerprint; host approval is required.",
+        "Use to download a model. Pass pipeline_id, model_id and bundle (boolean). bundle true installs "
+        "the current default bundle and also needs expected_selection_fingerprint: the "
+        "selection_fingerprint on that model's row in get_model_readiness. Needs host approval.",
         {
             "pipeline_id": {"type": "string", "minLength": 1},
             "model_id": {"type": "string", "minLength": 1},
@@ -1811,15 +1800,16 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "repair_model",
-        "Ask the app to diagnose and queue repair for one registry model. Host approval is required.",
+        "Use to diagnose and repair one installed model. Pass pipeline_id and model_id. Needs host approval.",
         {"pipeline_id": {"type": "string", "minLength": 1},
          "model_id": {"type": "string", "minLength": 1}},
         required=["pipeline_id", "model_id"],
     ),
     _tool_def(
         "cancel_model_download",
-        "Request cancellation of only the observed queue admission. "
-        "A successful request may still be draining; observe the queue. Host approval is required.",
+        "Use to cancel one model download. Pass pipeline_id, model_id and expected_queue_entry_id from "
+        "get_model_download_queue. It may keep draining after success, so check the queue. Needs host "
+        "approval.",
         {"pipeline_id": {"type": "string", "minLength": 1},
          "model_id": {"type": "string", "minLength": 1},
          "expected_queue_entry_id": {"type": "string", "minLength": 1}},
@@ -1827,8 +1817,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_guide",
-        "Read bundled agent documentation (schema, best practices, "
-        "website index, recipes, shader cookbook). Pass name, or omit to list guides.",
+        "Use to read bundled agent guides (config schema, best practices, website index, recipes, shader "
+        "cookbook). Pass name to read one, or omit it to list them. Read this before unfamiliar work.",
         {
             "name": {
                 "type": "string",
@@ -1857,8 +1847,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "search_docs",
-        "Search the public 360 Hextile docs bundled with this APP version. "
-        "Returns page/section hits with URLs; then call read_doc for the text.",
+        "Use to search the public 360 Hextile docs shipped with this app version. Returns page and "
+        "section hits with URLs; then call read_doc for the text.",
         {
             "query": {"type": "string", "minLength": 1, "maxLength": 200},
             "limit": {"type": "integer", "minimum": 1, "maximum": 10},
@@ -1867,9 +1857,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "read_doc",
-        "Read one docs page or one section (anchor from search_docs). "
-        "Long pages return an outline; request a section. If the APP is closed, "
-        'use get_guide(name="website-index") and https://360hextile.com/llms.txt.',
+        "Use to read one docs page, or one section by anchor from search_docs. Long pages return an "
+        "outline; ask for a section. If the app is closed, use get_guide(name=\"website-index\") or "
+        "https://360hextile.com/llms.txt.",
         {
             "path": {"type": "string", "minLength": 1, "maxLength": 200},
             "section": {"type": "string", "maxLength": 200},
@@ -1878,9 +1868,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "extract_sequence_video",
-        "Extract video frames to a folder (POST /api/sequences/extract-video). "
-        "Returns folder_path for create_sequence. "
-        "Suffixes .mp4 .mpg .mpeg .m4v .mov. Not run_workflow.",
+        "Use to turn a video (.mp4 .mpg .mpeg .m4v .mov) into still frames in a folder. Returns "
+        "folder_path to pass to create_sequence.",
         {
             "video_path": {
                 "type": "string",
@@ -1891,9 +1880,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "create_sequence",
-        "Create a seq_* from a folder of stills (POST /api/sequences/create). "
-        "config is a full HextileConfig (clone get_workflow upres-still; "
-        "never a partial). run_workflow cannot create a seq_*.",
+        "Use to make a sequence from a folder of still images. Pass folder_path and config, which must be "
+        "a full HextileConfig (clone get_workflow \"upres-still\"; never partial), plus optional name. "
+        "run_workflow cannot create sequences. Start it with start_sequence.",
         {
             "folder_path": {
                 "type": "string",
@@ -1915,8 +1904,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "start_sequence",
-        "Start GPU processing of an existing sequence "
-        "(POST /api/sequences/{sequence_id}/start).",
+        "Use to start GPU processing of an existing sequence. Pass sequence_id (from create_sequence or "
+        "list_sequences).",
         {
             "sequence_id": {
                 "type": "string",
@@ -1927,8 +1916,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_sequence",
-        "Poll bounded sequence status by sequence_id (GET /api/sequences/{id}?include_frames=false). "
-        "Never pass a seq_* to get_status.",
+        "Use to check a sequence. Pass sequence_id; returns bounded status without frames. Never pass a "
+        "seq_ id to get_status.",
         {
             "sequence_id": {
                 "type": "string",
@@ -1939,8 +1928,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "list_sequences",
-        "List sequences (monitor without a stored sequence_id). "
-        "GET /api/sequences/?lifecycle_status= (default active).",
+        "Use to find sequences when you have no sequence_id. Optional lifecycle_status (default active).",
         {
             "lifecycle_status": {
                 "type": "string",
@@ -1951,15 +1939,15 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "list_sequence_frames",
-        "Read one bounded page of sequence frame states and output handles.",
+        "Use to see per-frame state and output handles of a sequence, one page at a time (sequence_id, optional page and page_size).",
         {"sequence_id": {"type": "string", "minLength": 1},
          "page": {"type": "integer", "minimum": 1, "default": 1},
          "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
         required=["sequence_id"],
     ),
-    _tool_def("inspect_sequence_upscale", "Inspect a saved sequence for native upscale eligibility.",
+    _tool_def("inspect_sequence_upscale", "Use to check whether a saved sequence can be upscaled natively. Pass source_id (the sequence id).",
               {"source_id": {"type": "string", "minLength": 1}}, required=["source_id"]),
-    _tool_def("upscale_sequence", "Upscale a saved sequence with a caller-owned UUID. Recover uncertain results with get_sequence_upscale_request using the same UUID.",
+    _tool_def("upscale_sequence", "Use to upscale a saved sequence. Pass source_id, scale_factor and a fresh UUID request_id (optional name). After a lost reply call get_sequence_upscale_request with the same request_id.",
               {"source_id": {"type": "string", "minLength": 1},
                "request_id": {"type": "string", "format": "uuid"},
                "project": {"type": ["string", "null"]},
@@ -1967,24 +1955,24 @@ TOOLS: list[dict[str, Any]] = [
                "scale_factor": {"type": "integer", "enum": [2, 4]},
                "name": {"type": "string", "minLength": 1, "maxLength": 120}},
               required=["source_id", "request_id", "scale_factor"]),
-    _tool_def("get_sequence_upscale_request", "Recover the original sequence upscale request by its UUID.",
+    _tool_def("get_sequence_upscale_request", "Use to recover the result of an upscale_sequence call after a lost reply. Pass the same request_id.",
               {"request_id": {"type": "string", "format": "uuid"}}, required=["request_id"]),
     _tool_def(
-        "resume_sequence", "Resume the exact accepted sequence run.",
+        "resume_sequence", "Use to resume a stopped sequence. Pass sequence_id and the run_id of the accepted run.",
         {"sequence_id": {"type": "string", "minLength": 1},
          "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}},
         required=["sequence_id", "run_id"],
     ),
     _tool_def(
-        "retry_sequence_failed_frames", "Retry failed frames for the exact accepted sequence run.",
+        "retry_sequence_failed_frames", "Use to retry only the failed frames of a sequence. Pass sequence_id and the accepted run_id.",
         {"sequence_id": {"type": "string", "minLength": 1},
          "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}},
         required=["sequence_id", "run_id"],
     ),
     _tool_def(
         "stop_sequence",
-        "Stop a running sequence (POST /api/sequences/{id}/stop). "
-        "Status → cancelled. Destructive. Not cancel_run.",
+        "Use to stop a running sequence (status becomes cancelled). Pass sequence_id; run_id optional. "
+        "Not cancel_run.",
         {
             "sequence_id": {
                 "type": "string",
@@ -1996,24 +1984,24 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "rename_sequence",
-        "Rename only a sequence's display metadata; preserve frozen recipes, paths and render ownership. "
-        "After an uncertain reply, read get_sequence with this same ID before retrying.",
+        "Use to rename a sequence's display name only. Pass sequence_id and name. After a lost reply, "
+        "read get_sequence before retrying.",
         {"sequence_id": {"type": "string", "minLength": 1},
          "name": {"type": "string", "minLength": 1, "maxLength": 120}},
         required=["sequence_id", "name"],
     ),
     _tool_def(
         "set_sequence_lifecycle",
-        "Archive, move to Trash or restore the named sequence via the native library operation. "
-        "No files are deleted. Recover an uncertain reply with get_sequence/list_sequences.",
+        "Use to archive, trash or restore a sequence. Pass sequence_id and status. No files are deleted. "
+        "After a lost reply, check get_sequence.",
         {"sequence_id": {"type": "string", "minLength": 1},
          "status": {"type": "string", "enum": ["active", "archived", "trashed"]}},
         required=["sequence_id", "status"],
     ),
     _tool_def(
         "set_sequence_tags",
-        "Replace the named sequence's tag selection with existing tag IDs. Include the favorite "
-        "tag ID to keep it selected. Recover an uncertain reply with get_sequence_tags.",
+        "Use to set a sequence's tags. tag_ids replaces the whole selection with existing tag ids; "
+        "include the favorite tag id to keep it favorited. After a lost reply, check get_sequence_tags.",
         {"sequence_id": {"type": "string", "minLength": 1},
          "tag_ids": {"type": "array", "maxItems": 256,
                      "items": {"type": "string", "minLength": 1, "maxLength": 128}}},
@@ -2021,15 +2009,15 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_sequence_tags",
-        "Read the named sequence's selected tags and recover an uncertain set_sequence_tags reply.",
+        "Use to read a sequence's selected tags, or to check the result of set_sequence_tags after a lost reply.",
         {"sequence_id": {"type": "string", "minLength": 1}},
         required=["sequence_id"],
     ),
     _tool_def(
         "preflight_batch",
-        "Create a Batch preflight (POST /api/batch-workflows/preflight). "
-        "Returns promptly; poll get_batch_preflight for spec_hash and issues. "
-        "Does not start GPU work. Paths are APP filesystem paths, not the MCP host.",
+        "Use to check a Batch job (one workflow over many images) before starting. Pass idempotency_key, "
+        "workflow, input and output (paths on the app machine, not the MCP host). Returns quickly; poll "
+        "get_batch_preflight for spec_hash and issues. Starts no GPU work.",
         {
             "idempotency_key": {
                 "type": "string",
@@ -2133,9 +2121,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_batch_preflight",
-        "Poll GET /api/batch-workflows/preflights/{id} until scanning ends "
-        "(ready|failed|expired). Returns spec_hash, can_start, paged issues. "
-        "Read-only. Default page 100, max 500.",
+        "Use to poll a Batch preflight until it is ready, failed or expired. Pass preflight_id; returns "
+        "spec_hash, can_start and paged issues (default 100, max 500).",
         {
             "preflight_id": {
                 "type": "string",
@@ -2154,9 +2141,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "start_batch",
-        "Queue a Batch job from a ready preflight "
-        "(POST /api/batch-workflows). Does not rescan. "
-        "Requires matching spec_hash. Never apply this recipe to the studio.",
+        "Use to start a Batch job from a ready preflight. Pass preflight_id, its spec_hash and an "
+        "idempotency_key. It does not rescan. Never apply this recipe to the studio.",
         {
             "preflight_id": {"type": "string"},
             "spec_hash": {
@@ -2169,8 +2155,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "list_batches",
-        "List Batch jobs (GET /api/batch-workflows). Read-only. "
-        "Default page 100, max 500. Not list_runs — Batch IDs are not Render IDs.",
+        "Use to list Batch jobs (default page 100, max 500). Batch ids are not render ids; for renders "
+        "use list_runs.",
         {
             "status": {"type": "string", "description": "Optional job status filter"},
             "cursor": {"type": "string"},
@@ -2184,8 +2170,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_batch",
-        "Read one Batch job (GET /api/batch-workflows/{job_id}). Read-only. "
-        "Never pass job_id to get_status.",
+        "Use to read one Batch job by job_id. Never pass a job_id to get_status.",
         {
             "job_id": {"type": "string", "description": "Opaque Batch job id"},
         },
@@ -2193,8 +2178,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_batch_items",
-        "Page Batch item attempts (GET /api/batch-workflows/{job_id}/items). "
-        "Read-only. Default page 100, max 500.",
+        "Use to see per-item attempts of a Batch job (job_id; optional outcome, cursor, limit; default "
+        "100, max 500).",
         {
             "job_id": {"type": "string"},
             "outcome": {"type": "string", "description": "Optional outcome filter"},
@@ -2210,8 +2195,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "pause_batch",
-        "Durably request pause (POST /api/batch-workflows/{job_id}/pause). "
-        "Active item finishes and publishes first.",
+        "Use to pause a Batch job. Pass job_id, idempotency_key and expected_revision from get_batch. The "
+        "active item finishes and publishes first.",
         {
             "job_id": {"type": "string"},
             "idempotency_key": {"type": "string"},
@@ -2225,8 +2210,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "resume_batch",
-        "Resume a paused Batch job (POST /api/batch-workflows/{job_id}/resume). "
-        "Same frozen recipe. Captured project must be active.",
+        "Use to resume a paused Batch job with the same frozen workflow. Pass job_id, idempotency_key, "
+        "expected_revision (from get_batch). The project it was started in must be active.",
         {
             "job_id": {"type": "string"},
             "idempotency_key": {"type": "string"},
@@ -2236,8 +2221,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "cancel_batch",
-        "Cancel a Batch job (POST /api/batch-workflows/{job_id}/cancel). "
-        "Destructive and terminal. Published outputs stay. Not cancel_run.",
+        "Use to cancel a Batch job for good. Pass job_id, idempotency_key, expected_revision (from "
+        "get_batch). Already published outputs stay. Not cancel_run.",
         {
             "job_id": {"type": "string"},
             "idempotency_key": {"type": "string"},
@@ -2247,8 +2232,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "retry_batch",
-        "Retry failed/interrupted items (POST /api/batch-workflows/{job_id}/retry-failed). "
-        "Same job and workflow hash. Cancelled jobs cannot retry.",
+        "Use to retry failed or interrupted Batch items in the same job. Pass job_id, idempotency_key, "
+        "expected_revision (from get_batch). Cancelled jobs cannot be retried.",
         {
             "job_id": {"type": "string"},
             "idempotency_key": {"type": "string"},
@@ -2258,9 +2243,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "import_batch_outputs",
-        "Import published Batch outputs into the Library "
-        "(POST /api/batch-workflows/{job_id}/import). No GPU. "
-        "scope=all_published or item_ids (at most 500), not both.",
+        "Use to add finished Batch outputs to the Library (no GPU). Pass job_id, idempotency_key, "
+        "expected_revision, and scope \"all_published\" or item_ids (max 500), not both.",
         {
             "job_id": {"type": "string"},
             "idempotency_key": {"type": "string"},
@@ -2281,13 +2265,12 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_unreal_export_catalog",
-        "Read the Unreal export catalog (GET /api/renders/unreal-export/catalog). "
-        "Empty catalog is valid. Does not write Content.",
+        "Use to see where Unreal export can go. An empty catalog is valid. Writes nothing.",
         {},
     ),
     _tool_def(
         "preflight_unreal_export",
-        "Advisory Unreal-project preflight. Same body as the Export modal. No writes.",
+        "Use to check an Unreal export before running it. Pass render_id and unreal_project (plus optional projection, size, hdri and so on, same as the Export dialog). Advisory; writes nothing.",
         {
             "render_id": {"type": "string"},
             "projection": {"type": "string"},
@@ -2306,9 +2289,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "export_to_unreal_project",
-        "Export one render into a paired Unreal project via POST /api/renders/{id}/export. "
-        "Requires actual Unreal Engine (HDRI) M1 state. Timeout 300s; one attempt. "
-        "Does not encode locally or write Content from the plugin.",
+        "Use to send one render into a paired Unreal project. Pass render_id and unreal_project (run "
+        "preflight_unreal_export first). Needs Unreal Engine (HDRI) set up. One 300s attempt; does not "
+        "write Content from the plugin.",
         {
             "render_id": {"type": "string"},
             "projection": {"type": "string"},
@@ -2327,16 +2310,17 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "preflight_file_export",
-        "Read-only check of an exact graph-node export into a selected folder. "
-        "Returns source_revision, output_fingerprint, exact paths and blockers; no writes.",
+        "Use to check exporting a render node to an image file in a folder. Pass render_id, "
+        "source_node_id, folder_path, output_name, projection and encoding. Returns source_revision, "
+        "output_fingerprint, exact paths and blockers for export_render_file. Writes nothing.",
         _FILE_EXPORT_PROPERTIES,
         required=list(_FILE_EXPORT_REQUIRED),
     ),
     _tool_def(
         "export_render_file",
-        "Create-only ordinary render export. Requires the source_revision and "
-        "output_fingerprint from preflight plus fresh user approval. One 300s "
-        "attempt; after a connection loss inspect the destination before a new attempt.",
+        "Use to export a render node as an image file. Pass everything from preflight_file_export plus "
+        "its source_revision and output_fingerprint, and get fresh user approval. Never overwrites. One "
+        "300s attempt: after a lost connection, inspect the destination folder before trying again.",
         {
             **_FILE_EXPORT_PROPERTIES,
             "source_revision": {"type": "string"},
@@ -2346,16 +2330,19 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_layer_draft",
-        "Inspect the exact saved render HEAD and v6 Layers draft before any generation or land. "
-        "Returns bounded active layer ids, bare source-pair leaves and take fingerprints; no viewer needed.",
+        "Use to inspect a saved render's current HEAD and Layers draft before generating or landing a "
+        "layer. Pass render_id and parent_id; returns active layer ids, source-pair leaves and take "
+        "fingerprints. No viewer needed.",
         {"render_id": {"type": "string"}, "parent_id": _LAYER_ID},
         required=["render_id", "parent_id"],
     ),
     _tool_def(
         "generate_layer",
-        "Start one Generate Layer job. Saved target requires a stable 32-hex request_id and exact "
-        "HEAD/draft/revision; generate uses controls, regen/variation use the witnessed source pair. "
-        "This does not land or commit. Live target is approved internal Copilot only; external MCP gets 403.",
+        "Use to start a Generate Layer job on a saved render. Pass target \"saved\", render_id, parent_id, "
+        "expected_head, mode (generate, regen or variation) and a stable 32-hex request_id, with "
+        "draft/revision values from get_layer_draft. Regen and variation need the source layer pair. It "
+        "does not land or commit; poll get_layer_generation. target \"live\" is internal Copilot only (403 "
+        "for MCP).",
         {
             "target": _LAYER_TARGET, "render_id": {"type": "string"},
             "request_id": _LAYER_JOB_ID, "expected_head": _LAYER_ID, "parent_id": _LAYER_ID,
@@ -2374,26 +2361,26 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_layer_generation",
-        "Read one exact Generate Layer job by id until terminal. Ready means an artifact exists, not a landed layer.",
+        "Use to poll one Generate Layer job (render_id, job_id) until it ends. Ready means a result exists, not that a layer was landed.",
         {"render_id": {"type": "string"}, "job_id": _LAYER_JOB_ID},
         required=["render_id", "job_id"],
     ),
     _tool_def(
         "cancel_layer_generation",
-        "Request cancellation of one exact Generate Layer job. The acknowledgement is not GPU release; "
-        "read get_layer_generation until terminal and released. execution_target defaults to saved; "
-        "live requires an approved internal Copilot turn.",
+        "Use to cancel one Generate Layer job (render_id, job_id). The acknowledgement does not mean the "
+        "GPU is free: poll get_layer_generation until it is terminal and released. execution_target "
+        "\"live\" is internal Copilot only.",
         {"render_id": {"type": "string"}, "job_id": _LAYER_JOB_ID,
          "execution_target": _LAYER_TARGET},
         required=["render_id", "job_id"],
     ),
     _tool_def(
         "rematte_layer",
-        "Re-matte an exact retained RGB draft, or Keep rectangle with alpha.mode=opaque. "
-        "External MCP must supply rgb_draft from the exact job; approved internal Copilot omits it. "
-        "execution_target defaults to saved; live requires an approved internal Copilot turn. "
-        "target selects the recovery take, not saved/live execution. One call only: the server mints "
-        "the new job id, so transport loss is unknown and non-replayable.",
+        "Use to redo the matte (cutout edge) of a generated layer, from an exact job (or a Keep rectangle "
+        "with alpha.mode=opaque). Pass render_id, job_id and alpha; external MCP must also pass rgb_draft "
+        "from that job. One call only: the server makes the new job id, so a lost reply cannot be "
+        "replayed; check get_layer_generation. target picks the recovery take, execution_target (default "
+        "saved) picks saved or live.",
         {"render_id": {"type": "string"}, "job_id": _LAYER_JOB_ID,
          "rgb_draft": {"type": "string", "minLength": 8, "maxLength": 200},
          "alpha": _LAYER_ALPHA, "target": _LAYER_RECOVERY_TARGET,
@@ -2402,9 +2389,10 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "land_generated_layer",
-        "Land one ready job pair into an exact v6 draft; no commit. New insertion needs a stable "
-        "client layer_id, regen uses its witnessed source layer id. Saved target requires exact HEAD/draft/revision. "
-        "Live target is approved internal Copilot only; external MCP gets 403.",
+        "Use to place a finished Generate Layer result into the Layers draft (no commit). Pass target "
+        "\"saved\", render_id, job_id, a stable layer_id (new layer), expected_head, draft_id, "
+        "composition_id, expected_mutation_rev and pose (all from get_layer_draft). For regen also pass "
+        "source_layer_id. Live target is internal Copilot only.",
         {"target": _LAYER_TARGET, "render_id": {"type": "string"},
          "layer_id": {"type": "string", "pattern": "^pl_[A-Za-z0-9_-]{3,}$", "maxLength": 64},
          "job_id": _LAYER_JOB_ID, "expected_head": _LAYER_ID, "draft_id": _LAYER_ID,
@@ -2416,8 +2404,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "commit_layer_draft",
-        "Explicitly bake the exact saved v6 draft onto current HEAD as a final op:layers node. "
-        "No force or implicit retarget. Live target is approved internal Copilot only; external MCP gets 403.",
+        "Use to bake the saved Layers draft into the render as a final layers node. Pass target \"saved\", "
+        "render_id, parent_id, draft_id, composition_id, expected_mutation_rev (from get_layer_draft). No "
+        "force and no retargeting if HEAD moved. Live target is internal Copilot only.",
         {"target": _LAYER_TARGET, "render_id": {"type": "string"},
          "parent_id": _LAYER_ID, "draft_id": _LAYER_ID,
          "composition_id": {"type": "string", "pattern": "^comp_[0-9a-f]{12}$"},
@@ -2426,16 +2415,18 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "preflight_spot_clone",
-        "Read-only Spot Clone readiness for an exact saved render parent. Returns HEAD, "
-        "bounded mask selectors and mutable source fingerprints; no viewer needed.",
+        "Use to check Spot Clone readiness for a saved render. Pass render_id and parent_id; returns "
+        "HEAD, mask selectors and source fingerprints. Read-only; no viewer needed.",
         {"render_id": {"type": "string"}, "parent_id": _CLONE_PARENT_ID},
         required=["render_id", "parent_id"],
     ),
     {
         "name": "clone_spot",
-        "description": "After explicit approval, clone one saved render from a witnessed parent and mask, "
-        "or commit only an already prepared live Spot Clone through the private Copilot ticket. "
-        "Keep node_id stable; a lost reply requires get_spot_clone, never a new id.",
+        "description": "Use to clone one spot of a saved render onto another, after explicit user approval. Pass target "
+                       "\"saved\" with render_id, expected_head, parent_id, destination_id, source_pose, destination_pose "
+                       "and a stable 12-hex node_id (values from preflight_spot_clone). After a lost reply call "
+                       "get_spot_clone with the same node_id; never use a new one. A live target is internal Copilot "
+                       "only.",
         "inputSchema": {
             "type": "object",
             "oneOf": [
@@ -2459,107 +2450,129 @@ TOOLS: list[dict[str, Any]] = [
     },
     _tool_def(
         "get_spot_clone",
-        "Read the stored receipt for one exact Spot Clone node after an unknown reply. "
-        "A missing node remains unknown; only POST detects a different recipe under the same id.",
+        "Use to recover a clone_spot result after a lost reply. Pass render_id and node_id. A missing "
+        "node stays unknown.",
         {"render_id": {"type": "string"}, "node_id": _CLONE_NODE_ID},
         required=["render_id", "node_id"],
     ),
     _tool_def("get_shader_parameters",
-        "Read mounted Shader parameter IDs, current values, label, type, range (min/max/step), help, optional human revisions, and document commit/revision. "
-        "No GLSL, formula or help source is returned. "
-        "MCP must be enabled.",
+        "Use to read the open Shader's parameters: ids, current values, label, type, range "
+        "(min/max/step), help, group, default, options and option_labels, plus document commit and "
+        "revision. No GLSL source. Mounted Shader only; MCP must be enabled. To read another Shader's "
+        "saved values use shader_get_asset_state. If no document is open it fails 403 \"No document is "
+        "open in 360 Hextile...\": ask the user to open one, then try once. Do not poll.",
         {}),
     _tool_def("shader_edit",
-        "Edit one Shader package. Each edit is set, create, reshape or delete on one address. "
-        "An address is a list of strings naming one unit. Do not replace a parent object. "
-        "shader_edit cannot write provenance.json. "
-        "A parameter value is [\"values\", \"<parameter id>\"]. A parameter definition field is "
-        "[\"parameters\", \"<parameter id>\", \"<field>\"] with set or delete; field is one of label, default, min, max, step, "
-        "clamp, control, group, help, semantic, option_labels, animatable (type, options and interpolation need reshape of "
-        "[\"parameters\", \"<parameter id>\"] with a lease). Example, rename enum options: "
-        "{\"op\":\"set\",\"address\":[\"parameters\",\"style\",\"option_labels\"],\"value\":{\"0\":\"Girders\",\"1\":\"Rods\"}}. "
-        "Source is [\"code\"] with value {\"source.glsl\": \"...\", \"<module path>\": \"...\"} (all files). "
-        "A [\"code\"] edit is checked before saving: on failure nothing is saved and the reply is refused prepare_failed with diagnostics (file:line:col); fix the code and edit again. "
-        "Send seen for every unit a human has edited: the address and the human number from a read. "
-        "A lost_to_human row kept their value and returns the new number. "
-        "Send lease when the edit touches a leased unit. "
-        "The same request_id returns the recorded result.",
+        "Use to change a Shader's package: rename a dropdown's options, change a parameter's label, range "
+        "or default, or edit GLSL. To change a label use this, not any parameter-setting tool. Pass "
+        "shader_id, request_id (any string; the same id returns the recorded result) and edits: each is "
+        "{op: set|create|reshape|delete, address: [strings naming one unit], value}. Do not replace a "
+        "whole parent object. Examples: current value [\"values\",\"glow\"]; label "
+        "[\"parameters\",\"glow\",\"label\"]; dropdown names [\"parameters\",\"mode\",\"option_labels\"] with value "
+        "{\"0\":\"Blobs\",\"1\":\"Stripes\"} (send all labels); GLSL [\"code\"] with value "
+        "{\"source.glsl\":\"...\",\"modules/x.glsl\":\"...\"} (all files). Send lease (from "
+        "get_live_context(view=\"shader\") or open_shader_workspace) when the edit touches code, passes or "
+        "space, or creates, deletes or reshapes a parameter. Send seen [{address, human}] for any unit "
+        "the human edited (number from a read). It saves itself. Replies: if no edit applied, 400 "
+        "nothing_saved with findings [{code, field, message}] and nothing saved; if some applied, the "
+        "rest is saved and skipped rows carry results[].reason plus a warning; resending values the saved "
+        "Shader already has returns save \"unchanged\" (changed:false, no new revision). Deleting a "
+        "parameter the code still reads returns 400 parameter_in_use. A lost_to_human row means the "
+        "human's value was kept and gives the new number; resend with it only if you still mean it. A bad "
+        "[\"code\"] edit returns prepare_failed with file:line:col and saves nothing; fix and send again. "
+        "Cannot write provenance.json (credits: use shader_propose_credits).",
         {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST,
          "edits": {"type": "array", "minItems": 1, "maxItems": 64, "items": _PACKAGE_EDIT},
          "lease": _LEASE, "seen": _SEEN},
         ["shader_id", "request_id", "edits"]),
     {"name": "preflight_shader_sequence",
-     "description": "Check a confirmed saved Shader revision and exact rational native interval without queuing. "
-                    "Use the returned deterministic sequence_id and request_hash for uncertain render recovery. "
-                    "Direct PNG/JPG/EXR uses folder_export; explicit deferred keeps its managed native master. "
-                    "Top-level supersampling is a finite scale of at least 1 (window presets 1, 1.5, and 2). "
-                    "folder_export.destination_folder is the sequence folder. Viewer - High precision sequences are EXR. "
-                    "Absent render_route stays native. A WebGL route delivers shader_render_produce to the mounted Workshop.",
+     "description": "Use to check a Shader video render (sequence) before queueing it. Pass the saved Shader "
+                    "(shader_ref), project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
+                    "and its working_revision, document_hash and source_hash (from shader_get_asset_state), plus "
+                    "idempotency_key, name, frame_rate, frame_count, start_time, end_time (exact fractions), width, "
+                    "height, seed and output. Returns a deterministic sequence_id and request_hash; keep them to "
+                    "recover a lost render reply. PNG/JPG/EXR direct output uses folder_export (destination_folder is "
+                    "the sequence folder); deferred output keeps a managed master. supersampling is at least 1 "
+                    "(window presets 1, 1.5, 2). Viewer - High precision sequences are EXR. Absent render_route is "
+                    "native. Queues nothing.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("preflight_shader_sequence")},
     {"name": "inspect_shader_sequence_output",
-     "description": "Inspect one selected Shader destination with metadata only. Counts are last reported until Resume verifies saved files. Reports bounded setting differences, detached saved_settings and action capabilities; keep the chosen destination locally. Continue revalidates the exact request/fingerprint.",
+     "description": "Use to inspect a chosen output folder for a Shader sequence (metadata only). Pass request. "
+                    "Counts are last reported until Resume verifies the saved files. Reports setting differences and "
+                    "what actions are possible. Continue needs the same request and fingerprint.",
      "inputSchema": _SHADER_INSPECT, "annotations": _annotations("inspect_shader_sequence_output")},
     {"name": "render_shader_sequence",
-     "description": "Queue only the exact saved Shader request already preflighted, with its caller-known "
-                    "idempotency_key and confirmed revision. On an uncertain reply, GET the known sequence_id "
-                    "and compare request_hash; unknown 404 is an unknown outcome, never blind repost. "
-                    "Direct output uses its selected folder and encoding; explicit deferred retains the legacy master. "
-                    "Supersampling and folder_export.destination_folder are on that preflighted request. Viewer - High precision sequences are EXR. "
-                    "Absent render_route stays native. The agent does not produce frames; shader_render_produce is claimed by the mounted Workshop.",
+     "description": "Use to queue the Shader sequence you already preflighted, with the same arguments and the same "
+                    "idempotency_key and confirmed revision. Direct output uses its folder and encoding. After a lost "
+                    "reply call get_shader_sequence with the known sequence_id and compare request_hash; a 404 is "
+                    "unknown, never repost blindly. The agent does not produce frames: the open Workshop does when a "
+                    "WebGL route is used.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("render_shader_sequence")},
     _tool_def("get_shader_sequence",
-        "Read a source-free and path-free Shader sequence status by the caller-known ID. "
-        "For a lost render reply compare request_hash from preflight. A missing ID does not prove the POST failed. "
-        "A sequence the user stopped reads status incomplete with producer_state stopped and stopped_by_user true: it is Stopped, not failed; Resume or Continue it, or leave it.",
+        "Use to check a Shader sequence by its sequence_id (no source or paths). After a lost render "
+        "reply compare request_hash from the preflight; a missing id does not prove the render failed. A "
+        "sequence the user stopped reads status incomplete, producer_state stopped, stopped_by_user true: "
+        "it is Stopped, not failed. Resume or Continue it, or leave it.",
         {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}},
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
-     "description": "Stop uses render_observation.run_id from get_shader_sequence. Resume an admitted native job, or Continue the exact inspected request and fingerprint. "
-                    "Start_over requires confirmed:true after showing the destination and owned output; it archives owned direct output recoverably and returns a new sequence_id. Recover a lost Start-over reply by the identical original POST/body/key/fingerprint. Pending replacement references support recover_start_over with the observed new_sequence_id, same destination, current witness and confirmed:true. Publication controls require the observed attempt_id. A stale Stop needs a fresh GET, never an unscoped retry.",
+     "description": "Use to stop, resume, continue or restart a Shader sequence, or manage its output publishing. "
+                    "action \"stop\" needs sequence_id and run_id (render_observation.run_id from get_shader_sequence); "
+                    "\"resume\" restarts an admitted native job; \"continue\" needs the exact inspected request and "
+                    "fingerprint; \"start_over\" needs confirmed:true after you show the user the destination and files "
+                    "that will be archived, and returns a new sequence_id. Recover a lost start_over by sending the "
+                    "identical original request, or \"recover_start_over\" with the observed new_sequence_id, same "
+                    "destination, current witness and confirmed:true. Publication controls need the attempt_id from "
+                    "get_shader_sequence. After a stale Stop, read get_shader_sequence again; never retry blindly.",
      "inputSchema": _SHADER_SEQUENCE_CONTROL,
      "annotations": _annotations("control_shader_sequence")},
     {"name": "preflight_shader_sequence_export",
-     "description": "Check verified native masters and an explicitly chosen existing local destination folder. "
-                    "JPG requires quality_if_jpg 1..100; PNG keeps it null. Deferred PNG masters cannot export EXR. Returns a fingerprint and deterministic attempt_id; "
-                    "the caller must authorize this local destination before use. Private paths stay out of the receipt.",
+     "description": "Use to check publishing finished Shader sequence frames to an existing local folder. Pass "
+                    "sequence_id, destination_folder (the user must have authorized it) and format (PNG, or JPG with "
+                    "quality_if_jpg 1-100). Deferred PNG masters cannot export EXR. Returns transaction_fingerprint "
+                    "and attempt_id for export_shader_sequence. Returns no paths.",
      "inputSchema": _SHADER_FOLDER_EXPORT,
      "annotations": _annotations("preflight_shader_sequence_export")},
     {"name": "export_shader_sequence",
-     "description": "Publish only the exact preflighted folder intent using its transaction_fingerprint. "
-                    "Retain the preflight-known attempt_id; if POST acknowledgement is uncertain, GET the known "
-                    "sequence_id and compare attempt_id/fingerprint before any further action. Never blindly repost.",
+     "description": "Use to publish Shader sequence frames to the folder you preflighted. Pass sequence_id, "
+                    "destination_folder, format and the transaction_fingerprint from "
+                    "preflight_shader_sequence_export; keep its attempt_id. After a lost reply call "
+                    "get_shader_sequence and compare attempt_id and fingerprint; never repost blindly.",
      "inputSchema": {**_shader_closed({**_SHADER_FOLDER_EXPORT["properties"],
                                        "transaction_fingerprint": _SHADER_DIGEST}, ("quality_if_jpg",)),
                      "allOf": _SHADER_FOLDER_EXPORT["allOf"]},
      "annotations": _annotations("export_shader_sequence")},
     _tool_def("open_shader_workspace",
-        "Open one Shader workspace. Send shader_id and request_id only. Send no other fields. "
-        "Returns the lease, commit and revision, plus workspace_path or workspace_paths when the reply has them. "
-        "A workspace with no snapshot also returns not_adopted. "
-        "Nothing human-side refuses open. The same request_id returns the recorded result.",
+        "Use to get a Shader ready for shader_edit and to find its files. Pass shader_id and request_id "
+        "only. Returns the lease, commit and revision, plus workspace_path(s) to read GLSL with the "
+        "host's file read; not_adopted means no snapshot exists yet. The user's screen is not switched. "
+        "The same request_id returns the recorded result.",
         {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST},
         ["shader_id", "request_id"]),
     _tool_def("register_shader_update",
-        "Register saves the captured package. Send shader_id, request_id, the sha256 digest, the lease, "
-        "and seen for units a human has edited. Read merge to see what was kept. "
-        "Unchanged rows are kept_count and omitted. Source bodies are path, sha256 and bytes. Watch compile. "
-        "A lost_to_human row kept the human value and returns the new number. Resend that unit with shader_edit and the new seen pair if you still mean it. "
-        "stale_lease means the lease moved. Only the human moves the lease. "
-        "Prepare failure returns prepare failed and diagnostics. The same request_id returns the recorded result.",
+        "Use to save package files you edited directly in the workspace (not needed after shader_edit). "
+        "Pass shader_id, request_id, digest (sha256 of the captured package), lease, and seen for units a "
+        "human edited. Read merge to see what was kept (unchanged rows are only counted); watch compile. "
+        "lost_to_human: the human value was kept and the new number is returned; resend that unit with "
+        "shader_edit and the new seen only if you still mean it. stale_lease: the lease moved (only the "
+        "human moves it). A compile problem returns prepare failed with diagnostics. The same request_id "
+        "returns the recorded result.",
         {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST,
          "digest": _WORKSPACE_DIGEST, "lease": _LEASE, "seen": _SEEN},
         ["shader_id", "request_id", "digest", "lease"]),
     _tool_def("get_shader_update",
-        "Read the recorded save for one shader_edit or register request_id. Only compile may still change. "
-        "Returns merge, lease, commit, revision and compile.",
+        "Use to read the recorded result of a shader_edit or register_shader_update by shader_id and "
+        "request_id. Returns merge, lease, commit, revision and compile; only compile can still change.",
         {"shader_id": _SHADER_PACKAGE_ID, "request_id": _PACKAGE_REQUEST},
         ["shader_id", "request_id"]),
     _tool_def("request_shader_doctor",
-        "Request one GPU Doctor pass for the clean, currently previewed Shader in the mounted Workshop. "
-        "Requires the actual current native frame owner; builtin, My Library and Project are eligible. "
-        "Submit a new UUID once. On an uncertain reply, poll get_shader_doctor with the same request_id; never retry automatically.",
+        "Use to run GPU Doctor, a diagnostic check, on the clean, currently previewed Shader in the open "
+        "Workshop. Pass a fresh UUID request_id, origin, shader_id, project_context_witness (freshness "
+        "token, from get_live_context(view=\"shader\")) and studio_surface_id. Builtin, My Library and "
+        "Project Shaders are allowed. Submit once; after a lost reply poll get_shader_doctor with the "
+        "same request_id, never retry.",
         {"request_id": {"type": "string", "format": "uuid"},
          "origin": {"type": "string", "enum": ["builtin", "user", "project"]},
          "shader_id": {"type": "string", "minLength": 1, "maxLength": 128},
@@ -2567,107 +2580,114 @@ TOOLS: list[dict[str, Any]] = [
          "studio_surface_id": {"type": "string", "minLength": 1, "maxLength": 256}},
         required=["request_id", "origin", "shader_id", "project_context_witness", "studio_surface_id"]),
     _tool_def("get_shader_doctor",
-        "Poll one exact Shader Doctor request receipt. Pending and running never start GPU work; "
-        "success returns bounded diagnostics without source, pixels or overlay mask. "
-        "Use the original request_id and Project witness, including after an uncertain POST reply.",
+        "Use to read a GPU Doctor result. Pass the original request_id and project_context_witness, also "
+        "after a lost request reply. Pending or running starts no GPU work; success returns bounded "
+        "diagnostics, no source or pixels.",
         {"request_id": {"type": "string", "format": "uuid"},
          "project_context_witness": {"type": "string", "minLength": 1, "maxLength": 256}},
         required=["request_id", "project_context_witness"]),
     _tool_def("get_fractal_context",
-        "Read the mounted Fractal workshop. Returns scene identity, SHA revisions, registry target IDs, "
-        "retained orphan driver targets, admitted capabilities, suspensions, diagnostics, and numeric base/effective values. "
-        "Includes the public action witness from the actual current renderer, never a private writer ID. "
-        "No source, path or formula image. Missing optional summaries are unavailable, not inferred. "
-        "Use the exact current witness for authoring operations.",
+        "Use to see the open Fractal scene: scene identity and revisions, editable target ids, drivers, "
+        "capabilities, diagnostics and current values. Its witness (a freshness token for the current "
+        "renderer) is required by every Fractal edit, play, open, save and capture call. No source, paths "
+        "or images. Unavailable fields are reported as unavailable, not guessed.",
         {}),
     {"name": "apply_fractal_edits",
-     "description": "Submit one closed Fractal authoring batch through the actual current native writer. "
-                    "At most 32 ops. remove_driver is exactly {op, target} for a retained driver, even when that target "
-                    "is absent from the active registry. Input ops declare Mouse, gates, and key bindings only. "
-                    "They do not acquire a host input lease or inject events. "
-                    "Same client_request_id with a changed body is a conflict. An uncertain reply is get_fractal_request, not a new id.",
+     "description": "Use to edit the open Fractal scene (change values, add or remove drivers, declare inputs). Pass "
+                    "client_request_id (your own id), witness (a freshness token) from get_fractal_context, "
+                    "expected_draft_generation (from get_fractal_context) and ops (1-32). remove_driver is exactly "
+                    "{op, target}, even for a driver missing from the active registry. Input ops only declare Mouse, "
+                    "gates and key bindings; they send no events. Reusing an id with a different body is a conflict. "
+                    "After a lost reply call get_fractal_request with the same id, never a new one.",
      "inputSchema": _FRACTAL_EDIT, "annotations": _annotations("apply_fractal_edits")},
     {"name": "control_fractal_timeline",
-     "description": "Play, pause, seek, step, or rewind the mounted Fractal session clock. "
-                    "This is transient transport, not a saved timeline edit. "
-                    "Seek requires exact time. Step requires frames -1 or 1. "
-                    "Recover an uncertain reply with get_fractal_request and the same caller id.",
+     "description": "Use to play, pause, seek, step or rewind the open Fractal preview clock. This is playback only, "
+                    "not a saved edit. Pass client_request_id, witness (a freshness token) from get_fractal_context, "
+                    "action. seek needs time {num, den}; step needs frames -1 or 1. After a lost reply use "
+                    "get_fractal_request with the same id.",
      "inputSchema": _FRACTAL_TRANSPORT, "annotations": _annotations("control_fractal_timeline")},
     {"name": "open_fractal_scene",
-     "description": "Open one saved Fractal scene id on the mounted workshop. "
-                    "Requires the actual current Fractal document/renderer witness. "
-                    "Reopening a document does not enable interaction. "
-                    "Recover uncertainty with get_fractal_request. Do not mint a replacement id.",
+     "description": "Use to open a saved Fractal scene in the Fractal workshop. Pass client_request_id, witness (a "
+                    "freshness token) from get_fractal_context and scene_id (scn_...). Reopening does not enable "
+                    "interaction. After a lost reply use get_fractal_request with the same id; do not make a new one.",
      "inputSchema": _FRACTAL_OPEN, "annotations": _annotations("open_fractal_scene")},
     {"name": "save_fractal_scene",
-     "description": "Save the acknowledged scene or Save As a caller-known create-only scene id. "
-                    "mode save requires the adopted scene_revision. mode save_as omits scene_revision. "
-                    "A false ok can still carry the published revision. Do not post the same Save again. "
-                    "If the reply is lost, read get_fractal_request and the scene write-status. Unknown is not expiry.",
+     "description": "Use to save the open Fractal scene. mode \"save\" overwrites and needs scene_revision (from "
+                    "get_fractal_context); mode \"save_as\" creates a new scene under target_scene_id (scn_ + 8 hex) "
+                    "with optional name and omits scene_revision. Also pass client_request_id and witness (a "
+                    "freshness token) from get_fractal_context. A false ok can still carry a published revision. "
+                    "Never post the same Save again: after a lost reply read get_fractal_request.",
      "inputSchema": _FRACTAL_SAVE, "annotations": _annotations("save_fractal_scene")},
     _tool_def("get_fractal_request",
-        "Read one Fractal action by its caller-known client_request_id. "
-        "Pending, applied, refused, and unknown stay distinct. "
-        "410 request_expired is unknown, not proof the action was refused or that a Save did not publish.",
+        "Use to find out what happened to an earlier Fractal action after a lost reply. Pass the original "
+        "client_request_id. Pending, applied, refused and unknown are different; 410 request_expired "
+        "means unknown (the action or a Save may still have happened).",
         {"client_request_id": _FRACTAL_REQUEST_ID},
         required=["client_request_id"]),
     {"name": "capture_fractal_still",
-     "description": "Mint exactly the last acknowledged finished 360 Fractal preview through the mounted private writer. Returns actual Render/node IDs or a retained unknown; recover only by get_fractal_request with the original ID. No pixels, path, Fly switch, or destination.",
+     "description": "Use to turn the last finished Fractal preview into a saved 360 Render. Pass client_request_id "
+                    "and witness (a freshness token) from get_fractal_context. Returns the Render and node ids, or an "
+                    "unknown result; recover only with get_fractal_request and the original id. Takes no pixels, path "
+                    "or destination.",
      "inputSchema": _FRACTAL_CAPTURE, "annotations": _annotations("capture_fractal_still")},
     {"name": "preflight_fractal_sequence",
-     "description": "Check one saved Fractal scene revision, rational frame rate, exact range, and native output without queueing. "
-                    "Equirectangular output is exact 2:1 and at least 128x64. "
-                    "Fractal Dome output is square at diameter 1024, 2048, 4096, or 8192, fulldome or fulldome_angular. "
-                    "publication_mode is deferred. The receipt keeps source and output width and height. "
-                    "Resource and geometry refusals come from this check. It does not allocate a new sequence id.",
+     "description": "Use to check a Fractal video render before queueing it. Pass the saved scene_id and "
+                    "scene_revision, idempotency_key, name, frame_rate, start_time, end_time, frame_count, seed, "
+                    "quality, width, height, output and publication_mode \"deferred\". Equirectangular is exactly 2:1 "
+                    "and at least 128x64; Fractal Dome is square, diameter 1024, 2048, 4096 or 8192 (fulldome or "
+                    "fulldome_angular). Reports size and resource refusals; allocates no sequence id.",
      "inputSchema": _FRACTAL_SEQUENCE_REQUEST, "annotations": _annotations("preflight_fractal_sequence")},
     {"name": "inspect_fractal_sequence_output",
-     "description": "Inspect one selected Fractal destination with metadata only. Continue requires the same request, destination and inspection fingerprint.",
+     "description": "Use to inspect a chosen output destination for a Fractal sequence (metadata only). Pass request and destination. Continue must use the same request, destination and inspection fingerprint.",
      "inputSchema": _FRACTAL_INSPECT, "annotations": _annotations("inspect_fractal_sequence_output")},
     {"name": "render_fractal_sequence",
-     "description": "Queue the exact saved Fractal sequence request already checked, using the same idempotency_key. "
-                    "The acknowledgement returns sequence_id and request_hash. "
-                    "A lost POST is unknown. Do not change the key or mint another id. "
-                    "Native work needs the app GPU and sequence entitlement; optional destination_intent retains later publication under the same owner.",
+     "description": "Use to queue the Fractal sequence you already preflighted, with the same arguments and the same "
+                    "idempotency_key. Returns sequence_id and request_hash. Needs the app GPU and sequence "
+                    "entitlement. After a lost reply call get_fractal_sequence and compare request_hash; never change "
+                    "the key or mint another id.",
      "inputSchema": _FRACTAL_SEQUENCE_REQUEST, "annotations": _annotations("render_fractal_sequence")},
     _tool_def("get_fractal_sequence",
-        "Read one known Fractal sequence id. Compare request_hash after a lost render reply. "
-        "404 leaves that known id unknown. Do not invent a replacement id. Paths stay out of the receipt.",
+        "Use to check a Fractal sequence by its known sequence_id. After a lost render reply compare "
+        "request_hash with the preflight. A 404 means unknown, not failed: do not invent a new id. "
+        "Returns no paths.",
         {"sequence_id": _SHADER_SEQUENCE_ID},
         required=["sequence_id"]),
     {"name": "control_fractal_sequence",
-     "description": "Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request. "
-                    "cancel_export, retry_export, and open_folder require the observed attempt_id and attempt_revision. "
-                    "A lost control reply is reconciled by get_fractal_sequence, not a new sequence.",
+     "description": "Use to stop, resume or continue a Fractal sequence, or manage its export. action \"stop\" needs "
+                    "run_id (from get_fractal_sequence); \"resume\" restarts an admitted job; \"continue\" needs the "
+                    "exact inspected request. cancel_export, retry_export and open_folder need attempt_id and "
+                    "attempt_revision from get_fractal_sequence. After a lost reply read get_fractal_sequence; never "
+                    "start a new sequence.",
      "inputSchema": _FRACTAL_SEQUENCE_CONTROL, "annotations": _annotations("control_fractal_sequence")},
     {"name": "preflight_fractal_sequence_export",
-     "description": "Check verified native Fractal masters and an existing local folder for a separate publication. "
-                    "PNG omits quality_if_jpg. JPG requires 1..100. "
-                    "The receipt must include transaction_fingerprint. Destination paths are not returned.",
+     "description": "Use to check publishing finished Fractal frames to an existing local folder. Pass sequence_id, "
+                    "destination_folder and format (PNG, or JPG with quality_if_jpg 1-100). Returns "
+                    "transaction_fingerprint for export_fractal_sequence. Returns no paths.",
      "inputSchema": _FRACTAL_EXPORT, "annotations": _annotations("preflight_fractal_sequence_export")},
     {"name": "export_fractal_sequence",
-     "description": "Publish only the preflighted folder intent with its transaction_fingerprint. "
-                    "Keep the known attempt id. A lost POST is unknown until get_fractal_sequence shows that attempt. "
-                    "Do not post a different fingerprint to force a new attempt.",
+     "description": "Use to publish Fractal frames to the folder you preflighted. Pass sequence_id, "
+                    "destination_folder, format and the transaction_fingerprint from "
+                    "preflight_fractal_sequence_export. After a lost reply check get_fractal_sequence for that "
+                    "attempt; never post a different fingerprint to force a new one.",
      "inputSchema": _FRACTAL_EXPORT_SUBMIT, "annotations": _annotations("export_fractal_sequence")},
     _tool_def(
         "get_local_access_status",
-        "Read the MCP connection switch from GET /api/agent/mcp-status. "
-        "Works without Studio and when MCP is disabled.",
+        "Use to check whether MCP is switched on in the app. Works with no studio open and when MCP is "
+        "disabled.",
         {},
     ),
     _tool_def(
         "local_file_stat",
-        "Stat one absolute regular file through APP. Requires connected MCP. "
-        "Returns size, sha256, and an opaque version. No symlink following.",
+        "Use to get a local file's size, sha256 and version token. Pass an absolute path to a regular "
+        "file (symlinks are not followed). The version goes to local_file_read. Needs MCP connected.",
         {"path": _ABS_PATH},
         required=["path"],
     ),
     _tool_def(
         "local_file_read",
-        "Read a bounded chunk of one absolute regular file. Requires connected MCP and expected_version. "
-        "Decoded data is at most 32 KiB; the complete JSON result is at most 65536 UTF-8 bytes. "
-        "encoding is utf-8 or base64; APP may return base64 rather than omit bytes.",
+        "Use to read a local file in chunks. Pass absolute path, expected_version (from local_file_stat), "
+        "offset and max_bytes (at most 32 KiB per chunk; result JSON at most 64 KiB). encoding is utf-8 "
+        "or base64; the app may return base64 anyway. Needs MCP connected.",
         {
             "path": _ABS_PATH,
             "expected_version": _FILE_VERSION,
@@ -2679,10 +2699,10 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "local_file_write_begin",
-        "Start a staged create or replace. Canonical UUIDv4 request_id. "
-        "create requires expected_sha256 null; replace requires the current 64-hex SHA-256. "
-        "Same request_id and body replay the receipt. Requires connected MCP. "
-        "The proxy supplies X-Hextile-Mcp-Session; do not send it as a tool argument.",
+        "Use to start writing a local file (step 1 of 3: begin, append, commit). Pass a fresh UUIDv4 "
+        "request_id, absolute path, mode (\"create\" needs expected_sha256 null; \"replace\" needs the file's "
+        "current sha256 from local_file_stat), and total_bytes. Returns write_id. The same request_id and "
+        "body replays the receipt. Needs MCP connected.",
         {
             "request_id": _CANONICAL_UUID,
             "path": _ABS_PATH,
@@ -2694,8 +2714,8 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "local_file_write_append",
-        "Append one ordered chunk to a pending write. data_base64 is at most 64 KiB decoded. "
-        "Identical index and data retry is idempotent. Requires connected MCP.",
+        "Use to add one chunk to a write started with local_file_write_begin. Pass write_id, index (0, 1, "
+        "2 in order) and data_base64 (at most 64 KiB decoded). Repeating the same index and data is safe.",
         {
             "write_id": _WRITE_ID,
             "index": {"type": "integer", "minimum": 0},
@@ -2705,27 +2725,26 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "local_file_write_abort",
-        "Abort staging for write_id. Terminal status is aborted. Does not publish the target. "
-        "Requires connected MCP. Recover the original request with local_file_write_status.",
+        "Use to cancel a pending write (write_id). Nothing is published to the target. Check the outcome "
+        "with local_file_write_status.",
         {"write_id": _WRITE_ID},
         required=["write_id"],
     ),
     _tool_def(
         "local_file_write_commit",
-        "Publish staged bytes. create is create-only. Replace uses optimistic expected-SHA stale checking "
-        "then atomic same-directory publication, serialized among APP file-service writers. An outside process "
-        "can edit after the check and before publication; this is not atomic expected-hash CAS against "
-        "arbitrary outside editors. Observed stale targets still refuse as stale_cas. "
-        "Requires connected MCP at commit. A lost reply is local_file_write_status with the original "
-        "request_id; never mint a new id or auto-retry outcome_unknown.",
+        "Use to finish a write and publish the file (write_id). \"create\" never overwrites; \"replace\" "
+        "fails with stale_cas if the file changed since you read its sha256, but a different program "
+        "editing at that moment can still be overwritten. After a lost reply call local_file_write_status "
+        "with the original request_id; never use a new id or auto-retry an outcome_unknown result. Needs "
+        "MCP connected.",
         {"write_id": _WRITE_ID},
         required=["write_id"],
     ),
     _tool_def(
         "local_file_write_status",
-        "Read the caller-bound write receipt by original request_id. "
-        "Works after trust revoke or MCP master OFF. Status is pending, committed, aborted, revoked, "
-        "conflict, or outcome_unknown. No path or content. Wrong session is not the original receipt.",
+        "Use to check a file write after a lost reply. Pass the original request_id; returns pending, "
+        "committed, aborted, revoked, conflict or outcome_unknown (no path or content). Works even if MCP "
+        "was turned off. Must be the same session that began it.",
         {"request_id": _CANONICAL_UUID},
         required=["request_id"],
     ),
@@ -2851,9 +2870,11 @@ for _shape in _STILL_OUTPUT["anyOf"][2:4]:
         "then": {"properties": {"raster_policy": _SHADER_RASTER_PNG}},
         "else": {"properties": {"raster_policy": _SHADER_RASTER_PROCESSING}}})
 SHADER_EXTENSION_TOOLS = [
-    _tool_def("shader_list_assets", "List bounded saved, draft and incomplete Shader metadata in the current library. "
-              "Unchanged rows come from the APP's listing cache; refresh=all or refresh=id,id rereads those Shaders. "
-              "Omit the witness to discover it; the reply carries the current project_context_witness.",
+    _tool_def("shader_list_assets", "Use to list Shaders (saved, draft and incomplete) or find one by name. Optional shelf (builtin, "
+                                    "user, project), search, limit and cursor. Omit project_context_witness the first time: the reply "
+                                    "returns it. Each row's base (working_revision, document_hash, source_hash) can be sent as-is to "
+                                    "write tools such as shader_duplicate_asset or shader_rename_asset. Results are cached; pass "
+                                    "refresh=\"all\" or \"id,id\" to reread.",
               {"project_context_witness": _SHADER_TEXT,
                "shelf": {"enum": ["builtin", "user", "project"]},
                "search": {"type": "string", "maxLength": 128},
@@ -2861,86 +2882,149 @@ SHADER_EXTENSION_TOOLS = [
                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                "refresh": {"type": "string", "maxLength": 6449,
                            "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}}),
-    _tool_def("shader_get_asset_state", "Read a bounded current Shader identity and saved base under the active lease.",
+    _tool_def("shader_get_asset_state", "Use to read a Shader's saved values and its saved base (working_revision, document_hash, "
+                                        "source_hash: the exact saved version, needed by most write tools), plus title, tags, writable "
+                                        "and inputs. Pass shader {origin, shaderId} and project_context_witness. Does not return the "
+                                        "parameter definitions or GLSL.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_request_preview", "Request shader-export-preview/2 at the selected full dimensions and supersampling. Still uses the exact saved revision and its saved capture defaults; Sequence evaluates the exact end-exclusive rational sample and native replay. Requires advertised native limits and the mounted saved-base owner. Sequence saved_sequence previews the owned frozen recipe while preserving authoring; requires shader-sequence-recovery/1. Recover the original operation ID; never repost under a new ID. Absent render_route stays native. A WebGL route is delivered as shader_render_produce to the mounted Workshop; this tool does not produce frames.",
+    _tool_def("shader_request_preview", "Use to render a full-size preview of a saved Shader and inspect it. Pass shader, "
+                                        "project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
+                                        "studio_surface_id, a fresh request_id, base, mode (\"still\" or \"sequence\"), width, height and "
+                                        "output. Uses the saved revision, not unsaved edits. Read the result with shader_get_preview "
+                                        "using the same request_id; never repost under a new id. Absent render_route means native "
+                                        "rendering; this tool does not produce WebGL frames.",
               {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT, "mode": {"enum": ["still", "sequence"]},
                "width": {"type": "integer", "minimum": 2},
                "height": {"type": "integer", "minimum": 1},
                "sequence_sample": _PREVIEW_SAMPLE, "render_route": _RENDER_ROUTE,
                "saved_sequence": _SHADER_SAVED_SEQUENCE},
               _OUTPUT_OWNER_REQUIRED + ["output", "mode", "width", "height"]),
-    _tool_def("shader_capture_sequence_input", "Freeze neutral camera pose and persistent toggles from the exact saved Shader revision for offline sequences; no GPU work or private input bytes. Retry only the same request_id after an uncertain reply. Once applied, pass that request_id as input_capture_id to sequence preflight/render. Continue uses its stored recipe.",
+    _tool_def("shader_capture_sequence_input", "Use to freeze the camera pose and toggles of the saved Shader for offline sequence rendering (no "
+                                               "GPU work). Pass shader, project_context_witness (freshness token, from "
+                                               "get_live_context(view=\"shader\")), studio_surface_id, request_id and base. After it is applied, "
+                                               "pass that request_id as input_capture_id to preflight_shader_sequence or render_shader_sequence. "
+                                               "After a lost reply retry only the same request_id.",
               _OUTPUT_OWNER, _OUTPUT_OWNER_REQUIRED),
-    _tool_def("shader_get_preview", "Read actual full-resolution dimensions, selected supersampling, exact sample and native progress by original request ID. Completed metadata may include native timing (setup/frame/history separately) and an approximate sequence estimate based on one preview, excluding encoding/writing and process launch/transport. Missing timing means unavailable; no benchmark renders are started. Image true opts in to a labeled reduced display attachment (max512px/side,1MiB), not source-pixel quality. The native inspector retains the full-quality RGB raster. Pixels never enter text JSON.",
+    _tool_def("shader_get_preview", "Use to read the progress and result of shader_request_preview. Pass shader, "
+                                    "project_context_witness (freshness token, from get_live_context(view=\"shader\")) and the original "
+                                    "request_id. Returns real dimensions, supersampling, sample and progress, plus timing and a "
+                                    "sequence-time estimate when available. image:true adds a reduced preview (max 512px per side, 1 "
+                                    "MiB); pixels never appear in the text.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "image": {"type": "boolean"}}, ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_release_preview", "Cancel/release this original inspector, including a queued capture or resource freeze, without starting new work. A cancel_pending result retains the same request ID until cleanup is confirmed; it does not stop an accepted export Sequence.",
+    _tool_def("shader_release_preview", "Use to cancel or release a Shader preview (or queued capture) from shader_request_preview or "
+                                        "shader_capture_sequence_input. Pass shader, project_context_witness (freshness token, from "
+                                        "get_live_context(view=\"shader\")) and request_id. cancel_pending keeps the request id until "
+                                        "cleanup finishes. It does not stop a running sequence export.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID},
               ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_preflight_still_export", "Preflight one native PNG/JPG raster, PNG master, linear EXR, or Dome profile using the exact saved revision and capture defaults; no GPU start. Absent render_route stays native. WebGL admission delivers shader_render_produce to the mounted Workshop. "
-              "8K equirect PNG at 2×: profile shader-raster-still/1, output projection equirectangular, encoding png, width 8192, height 4096, supersampling 2, output_path the absolute PNG file. "
-              "Omit render_route for App - High precision. Otherwise render_route is profile shader-render-route/1 and route webgl-display-native-encode, webgl-browser-encode-desktop, webgl-browser-encode-backend, or webgl-raw-float. "
-              "The two browser routes also send browser_codec: png, jpeg with jpeg_quality 0.50-1.00, or exr. Equirect EXR uses shader-linear-rgba-exr/1 and omits projection. "
-              "Supersampling is a finite number of at least 1; window presets are 1, 1.5, and 2. Read studio_surface_id from get_live_context(view=shader).",
+    _tool_def("shader_preflight_still_export", "Use to check a Shader still image export before running it. Pass shader, project_context_witness "
+                                               "(freshness token, from get_live_context(view=\"shader\")), studio_surface_id, request_id, base, "
+                                               "profile and output. Example 8K equirect PNG at 2x: profile \"shader-raster-still/1\", output "
+                                               "{projection:\"equirectangular\", encoding:\"png\", width:8192, height:4096, supersampling:2, "
+                                               "output_path:<absolute .png>}. Omit render_route for the default \"App - High precision\"; "
+                                               "otherwise send a shader-render-route/1 route (webgl-display-native-encode, "
+                                               "webgl-browser-encode-desktop, webgl-browser-encode-backend or webgl-raw-float; browser routes "
+                                               "also need browser_codec png, jpeg with jpeg_quality 0.50-1.00, or exr). EXR uses profile "
+                                               "shader-linear-rgba-exr/1 and no projection. Supersampling is at least 1. studio_surface_id is "
+                                               "from get_live_context(view=\"shader\"). No GPU is started.",
               {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT,
                "allow_unpreviewed_revision": {"type": "boolean"}, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["profile", "output"]),
-    _tool_def("shader_export_still", "Start the exact preflighted native still job once. The caller UUID is the native idempotency key; recover an unknown response by status, never by reposting. Absent render_route stays native. The agent does not produce WebGL frames; the mounted Workshop claims shader_render_produce. "
-              "The preflight output holds resolution, supersampling, encoding, and output_path. 8K equirect PNG at 2× is width 8192, height 4096, supersampling 2.",
+    _tool_def("shader_export_still", "Use to render the Shader still you preflighted. Pass shader, project_context_witness (freshness "
+                                     "token, from get_live_context(view=\"shader\")), studio_surface_id, base, profile, a new "
+                                     "request_id, and preflight_request_id (the preflight's id). Resolution and output_path come from "
+                                     "the preflight. Starts the job once; after a lost reply read shader_get_output_job with this "
+                                     "request_id, never repost. This tool does not produce WebGL frames.",
               {**_OUTPUT_OWNER, "preflight_request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["preflight_request_id", "profile"]),
-    _tool_def("shader_get_output_job", "Read a native still job by the request_id you passed to the export call (never the preflight request_id, which returns 404 output_job_unknown) and Project witness, without starting GPU work.",
+    _tool_def("shader_get_output_job", "Use to check a still export job. Pass shader, project_context_witness (freshness token, from "
+                                       "get_live_context(view=\"shader\")), profile and the request_id you gave shader_export_still (not "
+                                       "the preflight id, which returns 404 output_job_unknown). Starts no GPU work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
-    _tool_def("shader_stop_output_job", "Signal Stop for an existing exact native still job only.",
+    _tool_def("shader_stop_output_job", "Use to stop a running Shader still export. Pass shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), profile and the export's request_id.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
-    _tool_def("shader_export_bundle", "Publish an accepted saved .hexshader Bundle with exact Looks and provenance at an optional absolute output_path or the host output default.",
+    _tool_def("shader_export_bundle", "Use to export a saved Shader as a .hexshader file (with its Looks and credits). Pass shader, "
+                                      "project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
+                                      "studio_surface_id, request_id, base, expected_looks and expected_provenance_hash (from "
+                                      "shader_get_looks and shader_get_credits), plus optional absolute output_path (default: the app "
+                                      "output folder).",
               {**_OUTPUT_OWNER, "output_path": _ABS_PATH,
                "expected_looks": {"type": "array", "maxItems": 32, "items": _shader_closed({
                    "id": _NATIVE_HISTORY_CHECKPOINT, "revision": {"type": "integer", "minimum": 1},
                    "envelope_hash": _SHADER_DIGEST})},
                "expected_provenance_hash": {"oneOf": [_SHADER_DIGEST, {"type": "null"}]}},
               _OUTPUT_OWNER_REQUIRED + ["expected_looks", "expected_provenance_hash"]),
-    _tool_def("shader_export_to_project", "Copy the exact accepted saved Shader, Looks, resources, credits and originals to the separately selected existing Project.",
+    _tool_def("shader_export_to_project", "Use to copy a saved Shader (with Looks, resources, credits and originals) into another existing "
+                                          "Project. Pass shader, project_context_witness (freshness token, from "
+                                          "get_live_context(view=\"shader\")), studio_surface_id, request_id, base and destination_project.",
               {**_OUTPUT_OWNER, "destination_project": _ABS_PATH}, _OUTPUT_OWNER_REQUIRED),
-    _tool_def("shader_get_history", "Read bounded retained Shader revision or checkpoint metadata. Set newest true for newest-first revisions and total; a stale cursor requires restart.",
+    _tool_def("shader_get_history", "Use to list a Shader's saved revisions or checkpoints. Pass shader and project_context_witness "
+                                    "(freshness token, from get_live_context(view=\"shader\")); optional kind, limit, cursor, "
+                                    "newest:true (newest first, with total). Restart without cursor if it goes stale.",
               {**_NATIVE_SHADER_TARGET, "kind": {"enum": ["revisions", "checkpoints"]},
                "cursor": {"type": "string", "maxLength": 8192},
                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                "newest": {"type": "boolean"}},
               ["shader", "project_context_witness"]),
-    _tool_def("shader_get_looks", "Read bounded saved Look identities without source or pixel data.",
+    _tool_def("shader_get_looks", "Use to list a Shader's saved Looks (named value presets). Pass shader and "
+                                  "project_context_witness (freshness token, from get_live_context(view=\"shader\")). Returns ids and "
+                                  "envelope hashes, no source or pixels.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_save_look", "Save the exact durable Shader values and authored state as a named Look; optional replacement binds the old Look envelope. Saved library: library_intent saved and confirmation_scope operation shader_save_look, with no studio surface. Mounted: studio_surface_id and no library_intent. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_save_look", "Use to save the Shader's current values as a named Look. Pass shader, project_context_witness "
+                                  "(freshness token, from get_live_context(view=\"shader\")), base, a fresh request_id and title. "
+                                  "Optional look_id plus expected_look_envelope_hash replaces an existing Look. Library Shader: "
+                                  "library_intent \"saved\", confirmation_scope {operation:\"shader_save_look\"}, no studio_surface_id. "
+                                  "Open Shader: studio_surface_id and no library_intent. Omit expected_working_digest: it defaults "
+                                  "to base.document_hash from shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "include_overrides": {"type": "boolean"}, "look_id": _NATIVE_HISTORY_CHECKPOINT,
                "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "request_id", "title"]),
-    _tool_def("shader_apply_look", "Apply one exact compatible saved Look through the native writer; source formula changes require their separate policy. Saved library confirmation_scope operation is shader_apply_look. Mounted history sends studio_surface_id and omits library_intent. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_apply_look", "Use to apply a saved Look to a Shader. Pass shader, project_context_witness (freshness token, "
+                                   "from get_live_context(view=\"shader\")), base, request_id, look_id and expected_look_envelope_hash "
+                                   "(from shader_get_looks). Library Shader: library_intent \"saved\" and confirmation_scope "
+                                   "{operation:\"shader_apply_look\"}. Open Shader: studio_surface_id and no library_intent. GLSL "
+                                   "changes need separate policy. Omit expected_working_digest: it defaults to base.document_hash "
+                                   "from shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "request_id",
                "look_id", "expected_look_envelope_hash"]),
-    _tool_def("shader_rename_look", "Rename one saved Look with its exact envelope hash. Saved library confirmation_scope operation is shader_rename_look. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_rename_look", "Use to rename a saved Look. Pass shader, project_context_witness (freshness token, from "
+                                    "get_live_context(view=\"shader\")), base, request_id, look_id, expected_look_envelope_hash (from "
+                                    "shader_get_looks) and title. Library Shader: library_intent \"saved\" and confirmation_scope "
+                                    "{operation:\"shader_rename_look\"}. Omit expected_working_digest: it defaults to "
+                                    "base.document_hash from shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "request_id",
                "look_id", "expected_look_envelope_hash", "title"]),
-    _tool_def("shader_delete_look", "Remove one exact saved Look while retaining historical revision pins. Saved library confirmation_scope operation is shader_delete_look. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_delete_look", "Use to delete a saved Look. Pass shader, project_context_witness (freshness token, from "
+                                    "get_live_context(view=\"shader\")), base, request_id, look_id and expected_look_envelope_hash "
+                                    "(from shader_get_looks). Library Shader: library_intent \"saved\" and confirmation_scope "
+                                    "{operation:\"shader_delete_look\"}. Old revisions keep their copy. Omit expected_working_digest: "
+                                    "it defaults to base.document_hash from shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "request_id",
                "look_id", "expected_look_envelope_hash"]),
-    _tool_def("shader_checkpoint", "Save, rename or remove one exact checkpoint name through the bound native history action. Saved library: library_intent saved and confirmation_scope operation shader_checkpoint_save, shader_checkpoint_rename, or shader_checkpoint_remove. Mounted: studio_surface_id and no library_intent. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_checkpoint", "Use to save, rename or remove a named checkpoint (a bookmark in history). Pass shader, "
+                                   "project_context_witness (freshness token, from get_live_context(view=\"shader\")), base, "
+                                   "request_id and action (\"save\", \"rename\" or \"remove\"), plus title, checkpoint_id or expected_name "
+                                   "as the action needs. Library Shader: library_intent \"saved\" and confirmation_scope "
+                                   "{operation:\"shader_checkpoint_save|shader_checkpoint_rename|shader_checkpoint_remove\"}. Open "
+                                   "Shader: studio_surface_id and no library_intent. Omit expected_working_digest: it defaults to "
+                                   "base.document_hash from shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["save", "rename", "remove"]},
                "title": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -2948,26 +3032,48 @@ SHADER_EXTENSION_TOOLS = [
                "expected_name": {"type": "string", "minLength": 1, "maxLength": 256},
                "target": _NATIVE_HISTORY_TARGET},
               ["shader", "project_context_witness", "base", "request_id", "action"]),
-    _tool_def("shader_restore_revision", "Restore one exact retained revision or checkpoint as the next revision; an uncertain result requires original request ID recovery. Saved library confirmation_scope operation is shader_restore_revision. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_restore_revision", "Use to go back to an older revision or checkpoint; it is saved as the next revision. Pass "
+                                         "shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), base, "
+                                         "request_id and target (or checkpoint_id). Library Shader: library_intent \"saved\" and "
+                                         "confirmation_scope {operation:\"shader_restore_revision\"}. After a lost reply recover with the "
+                                         "original request_id. Omit expected_working_digest: it defaults to base.document_hash from "
+                                         "shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT},
               ["shader", "project_context_witness", "base", "request_id"]),
-    _tool_def("shader_copy_revision", "Save an independent copy of one exact retained revision or checkpoint, preserving credits, Looks and resources. Recover with shader_get_operation scope asset and the source Shader. Saved library confirmation_scope operation is shader_copy_revision. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_copy_revision", "Use to save an old revision or checkpoint as a separate new Shader (keeps credits, Looks, "
+                                      "resources). Pass shader, project_context_witness (freshness token, from "
+                                      "get_live_context(view=\"shader\")), base, request_id, destination_origin (\"user\" or \"project\"), "
+                                      "target or checkpoint_id, optional title. Library Shader: library_intent \"saved\" and "
+                                      "confirmation_scope {operation:\"shader_copy_revision\"}. Recover with shader_get_operation scope "
+                                      "\"asset\" and the source Shader. Omit expected_working_digest: it defaults to base.document_hash "
+                                      "from shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "target": _NATIVE_HISTORY_TARGET, "checkpoint_id": _NATIVE_HISTORY_CHECKPOINT,
                "destination_origin": {"enum": ["user", "project"]},
                "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["shader", "project_context_witness", "base", "request_id",
                "destination_origin"]),
-    _tool_def("shader_history_retention", "Preview or compact recoverable history. Permanent purge is human only. Saved library confirmation_scope operation is shader_history_retention. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_history_retention", "Use to preview or compact a Shader's history to save space (recoverable; permanent purge is "
+                                          "human only). Pass shader, project_context_witness (freshness token, from "
+                                          "get_live_context(view=\"shader\")), base, action (\"preview\" or \"compact\") and mode (\"current\" or "
+                                          "\"checkpoints\"). Compact uses the preview_token from preview. Library Shader: library_intent "
+                                          "\"saved\" and confirmation_scope {operation:\"shader_history_retention\"}. Omit "
+                                          "expected_working_digest: it defaults to base.document_hash from "
+                                          "shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["preview", "compact"]},
                "mode": {"enum": ["current", "checkpoints"]}, "preview_token": _SHADER_DIGEST,
                "preview_operation": {"const": "compact"}},
               ["shader", "project_context_witness", "base", "action", "mode"]),
-    _tool_def("shader_get_project_conventions", "Read bounded Project Shader convention profiles and digest.",
+    _tool_def("shader_get_project_conventions", "Use to read the Project's Shader conventions (convention profiles) and their digest. Pass project_context_witness (freshness token, from get_live_context(view=\"shader\")).",
               {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),
-    _tool_def("shader_stage_resource", "Stage an exact Render node, complete Sequence range, or absolute local file/folder/ordered frame paths. All ordered frames are retained or the stage fails. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_stage_resource", "Use to prepare an image, video, folder or frame sequence for a Shader input (step 1 of 2; step 2 "
+                                       "is shader_set_resource). Pass shader, project_context_witness (freshness token, from "
+                                       "get_live_context(view=\"shader\")), base and source (a Render node, a Sequence range, or absolute "
+                                       "local file, folder or ordered frame paths). Either every frame is kept or the stage fails. "
+                                       "Returns the staged token for shader_set_resource. Omit expected_working_digest: it defaults to "
+                                       "base.document_hash from shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, "base": _NATIVE_SHADER_BASE,
                "expected_working_digest": {"oneOf": [_WORKING_DIGEST, {"type": "null"}]},
                "source": {"oneOf": [
@@ -2984,7 +3090,14 @@ SHADER_EXTENSION_TOOLS = [
                "projection": {"enum": ["equirectangular", "flat"]}, "filter": {"enum": ["linear", "nearest", "mipmap"]},
                "edge_u": {"enum": ["clamp", "repeat"]}, "edge_v": {"enum": ["clamp", "repeat"]}},
               ["shader", "project_context_witness", "base", "source"]),
-    _tool_def("shader_set_resource", "Attach, replace, locate, remove, or change typed settings of one exact Shader input through the native CAS writer. slot_id is required. Stage tokens are required for attach/replace/locate; an uncertain write must be recovered by its original request ID. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_set_resource", "Use to attach, replace, locate or remove a Shader image input, or change its settings. Pass "
+                                     "shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), base, "
+                                     "request_id, action and slot_id; attach, replace and locate also need staged_token from "
+                                     "shader_stage_resource. Library Shader: library_intent \"saved\" and confirmation_scope "
+                                     "{operation:\"shader_set_resource\", shader}. After a lost reply recover with the original "
+                                     "request_id. To create the slot itself use shader_edit [\"inputs\",\"<slot>\"]. Omit "
+                                     "expected_working_digest: it defaults to base.document_hash from "
+                                     "shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["attach", "replace", "locate", "remove", "settings"]},
                "slot_id": {"type": "string", "pattern": "^input[1-9][0-9]*$"},
@@ -2994,13 +3107,21 @@ SHADER_EXTENSION_TOOLS = [
                "end_mode": {"enum": ["hold", "loop"]}, "hold_index": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
                "seen": _SEEN},
               ["shader", "project_context_witness", "base", "request_id", "action", "slot_id"]),
-    _tool_def("shader_get_library_organization", "Read the active Project or My Library folder revision and bounded folder membership for exact moves and remove confirmation.",
+    _tool_def("shader_get_library_organization", "Use to read Shader folders and which Shaders are in them, for My Library or the Project. Pass "
+                                                 "project_context_witness (freshness token, from get_live_context(view=\"shader\")) and origin "
+                                                 "(\"user\" or \"project\"); optional cursor, limit, folder_id, revision. Use its revision for "
+                                                 "shader_organize_library.",
               {"project_context_witness": _SHADER_TEXT, "origin": {"enum": ["project", "user"]},
                "cursor": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                "revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                "folder_id": _NATIVE_SHADER_REQUEST_ID},
               ["project_context_witness", "origin"]),
-    _tool_def("shader_organize_library", "Create, rename, remove or move Shader folders/items, including one atomic move-many and native Undo. Supply exact organization revision and a stable caller session UUID; never replay an uncertain result with a new request ID.",
+    _tool_def("shader_organize_library", "Use to create, rename, remove or move Shader library folders and Shaders (including move-many "
+                                         "and Undo). Pass a fresh UUID request_id, project_context_witness (freshness token, from "
+                                         "get_live_context(view=\"shader\")), origin, library_session_id (a UUID you keep for this session), "
+                                         "expected_revision (from shader_get_library_organization) and command (e.g. {kind:\"createFolder\", "
+                                         "name:\"Glows\"} or {kind:\"moveShader\", shaderId, folderId}). removeFolder needs confirmed_revision "
+                                         "and confirmed_shader_ids. After a lost reply recover with the same request_id.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "origin": {"enum": ["project", "user"]}, "library_session_id": _NATIVE_SHADER_REQUEST_ID,
                "expected_revision": {"oneOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
@@ -3017,20 +3138,32 @@ SHADER_EXTENSION_TOOLS = [
                        "folderId": {"oneOf": [_NATIVE_SHADER_REQUEST_ID, {"type": "null"}]}}),
                    _shader_closed({"kind": {"const": "undo"}, "token": {"type": "string", "minLength": 1, "maxLength": 128}})]}},
               ["request_id", "project_context_witness", "origin", "library_session_id", "expected_revision", "command"]),
-    _tool_def("shader_set_tags", "Assign or remove one existing personal Tag for one exact Shader through the native tag registry. No tool lists tag ids; ask the user for the tag. Package tags are shader_edit [\"meta\",\"tags\"].",
+    _tool_def("shader_set_tags", "Use to add or remove one of the user's existing tags on a Shader. Pass a fresh UUID request_id, "
+                                 "project_context_witness (freshness token, from get_live_context(view=\"shader\")) and command "
+                                 "{kind:\"setShaderTag\", shader:{origin,shaderId}, tagId, assigned:true|false}. No tool lists tag "
+                                 "ids: ask the user. To change the package tags inside the Shader use shader_edit [\"meta\",\"tags\"].",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "command": _shader_closed({"kind": {"const": "setShaderTag"}, "shader": _NATIVE_SHADER_REF,
                    "tagId": {"type": "string", "minLength": 1, "maxLength": 256}, "assigned": {"type": "boolean"}}),
                "seen": _SEEN},
               ["request_id", "project_context_witness", "command"]),
-    _tool_def("shader_set_project_conventions", "Replace Project convention profiles through the fixed native document writer with exact expected digest and Project witness. A stale digest refuses without changing stored bytes.",
+    _tool_def("shader_set_project_conventions", "Use to replace the Project's Shader conventions. Pass request_id, project_context_witness "
+                                                "(freshness token, from get_live_context(view=\"shader\")), expected_digest (from "
+                                                "shader_get_project_conventions), profiles and default_profile_id. A stale digest is refused and "
+                                                "nothing changes.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "expected_digest": {"oneOf": [{"type": "string", "pattern": "^[0-9a-f]{64}$"}, {"type": "null"}]},
                "profiles": {"type": "array", "maxItems": 8, "items": {"type": "object"}},
                "default_profile_id": {"oneOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]},
                "seen": _SEEN},
               ["request_id", "project_context_witness", "expected_digest", "profiles", "default_profile_id"]),
-    _tool_def("shader_rename_asset", "Rename one saved Shader with an exact base, owner and request ID. Saved library: library_intent saved and confirmation_scope operation rename for that shader. Do not send a studio surface. An uncertain write must be checked by shader_get_operation. expected_working_digest is base.document_hash from shader_get_asset_state/shader_list_assets; omit it and it defaults to base.document_hash.",
+    _tool_def("shader_rename_asset", "Use to rename a Shader in My Library (its library title). Only origin \"user\" is allowed. Pass "
+                                     "request_id (fresh UUID), shader {origin:\"user\", shaderId}, project_context_witness (freshness "
+                                     "token, from get_live_context(view=\"shader\")), base, title, library_intent \"saved\" and "
+                                     "confirmation_scope {operation:\"rename\", shader}. No studio surface. To change the title inside "
+                                     "the package use shader_edit [\"meta\",\"title\"]. For a lost reply call shader_get_operation with "
+                                     "the same request_id. Omit expected_working_digest: it defaults to base.document_hash from "
+                                     "shader_get_asset_state/shader_list_assets.",
               {"shader": _USER_SHADER_REF, "project_context_witness": _NATIVE_SHADER_TARGET["project_context_witness"],
                "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE, "expected_working_digest": _WORKING_DIGEST,
@@ -3041,7 +3174,12 @@ SHADER_EXTENSION_TOOLS = [
                                       "shader": _USER_SHADER_REF},
                                       "required": ["operation", "shader"], "additionalProperties": False}},
               ["request_id", "shader", "project_context_witness", "base", "title", "confirmation_scope"]),
-    _tool_def("shader_delete_asset", "Delete one exact saved Shader. Saved library: library_intent saved and confirmation_scope operation delete for that shader. Do not send a studio surface. Use base.document_hash from shader_get_asset_state/shader_list_assets as the digest: expected_working_digest defaults to base.document_hash, and base is the conflict check, so omit it (a different value is refused). Recover an uncertain outcome by request ID.",
+    _tool_def("shader_delete_asset", "Use to delete a Shader from My Library (only origin \"user\"). Destructive. Pass request_id (fresh "
+                                     "UUID), shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
+                                     "base, library_intent \"saved\" and confirmation_scope {operation:\"delete\", shader}. Omit "
+                                     "expected_working_digest: it defaults to base.document_hash from "
+                                     "shader_get_asset_state/shader_list_assets. Base is the conflict check. Recover a lost reply by "
+                                     "request_id.",
               {"shader": _USER_SHADER_REF, "project_context_witness": _NATIVE_SHADER_TARGET["project_context_witness"],
                "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE,
@@ -3053,11 +3191,17 @@ SHADER_EXTENSION_TOOLS = [
                                       "shader": _USER_SHADER_REF},
                                       "required": ["operation", "shader"], "additionalProperties": False}},
               ["request_id", "shader", "project_context_witness", "base", "confirmation_scope"]),
-    _tool_def("shader_get_operation", "Read one original Shader operation outcome by exact request ID and asset, creation, library, Project, or output scope without starting work.",
+    _tool_def("shader_get_operation", "Use to find out what happened to a Shader write, open or export after a lost reply or while "
+                                      "waiting. Pass project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
+                                      "the original request_id and scope (\"asset\", \"creation\", \"library\", \"project\" or \"output\"); asset "
+                                      "scope also needs shader. Starts no work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "scope": {"enum": ["asset", "creation", "library", "project", "output"]}},
               ["request_id", "project_context_witness"]),
-    _tool_def("shader_get_credits", "Read paged saved Credits and Sources for the current Shader identity without including source. Follow text_ref pages to inspect complete known notices and retained credits; unknown or conflicting licence evidence grants no permission.",
+    _tool_def("shader_get_credits", "Use to read a Shader's Credits and Sources (authors, licences, notices), a page at a time. Pass "
+                                    "shader and project_context_witness (freshness token, from get_live_context(view=\"shader\")); "
+                                    "optional section, text_ref, offset_utf8, cursor, limit. Follow text_ref pages for full notices. "
+                                    "Unknown or conflicting licence evidence grants no permission.",
               {**_NATIVE_SHADER_TARGET,
                "section": {"enum": ["sources", "contributors", "current_roles", "history",
                                      "retained_credits", "notices", "text"]},
@@ -3066,26 +3210,52 @@ SHADER_EXTENSION_TOOLS = [
                "cursor": {"type": "integer", "minimum": 0},
                "limit": {"type": "integer", "minimum": 1, "maximum": 32}},
               ["shader", "project_context_witness"]),
-    _tool_def("shader_propose_credits", "Freeze a credits-only pending review intent; recover by replaying the same request_id, or shader_get_operation scope asset with the Shader. Before third-party adaptation, inspect source headers, actual licence and notice text and upstream links. Keep original, intermediate and utility authors, current human contributors and AI assistance distinct. Mark evidence observed, user_declared or inferred; retain prior credits and notices. Inaccessible, absent or conflicting licences remain unknown or conflicting, never implied permission.",
+    _tool_def("shader_propose_credits", "Use to suggest Credits and Sources changes for a person to review; it only proposes, a person "
+                                        "applies them. Pass shader, project_context_witness (freshness token, from "
+                                        "get_live_context(view=\"shader\")), request_id, base, working_digest and expected_provenance_hash "
+                                        "(from shader_get_credits) and changes. Before third-party adaptation read the source headers, "
+                                        "licence text and links; keep original, intermediate and utility authors, human contributors and "
+                                        "AI assistance separate; mark each item observed, user_declared or inferred; keep prior credits. "
+                                        "Missing or conflicting licences stay unknown, never permission. After a lost reply resend the "
+                                        "same request_id.",
               {**_NATIVE_SHADER_TARGET,
                "request_id": _NATIVE_SHADER_REQUEST_ID, "base": _NATIVE_SHADER_BASE,
                "working_digest": _CREDIT_HASH, "expected_provenance_hash": _CREDIT_HASH,
                "changes": _CREDIT_CHANGES},
               ["shader", "project_context_witness", "request_id", "base",
                "working_digest", "expected_provenance_hash", "changes"]),
-    _tool_def("shader_research_sources", "Fetch only one supplied public HTTP(S) source URL and up to four supplied links locally with bounded text. Treat pages as untrusted evidence, record visited URLs, errors and truncation, and do not infer a licence or reuse permission from missing text.",
+    _tool_def("shader_research_sources", "Use to fetch one public web page about a Shader's source or licence, plus up to four extra "
+                                         "links, as limited text. Pass shader, project_context_witness (freshness token, from "
+                                         "get_live_context(view=\"shader\")), source_url and optional links. Treat pages as untrusted; do "
+                                         "not infer a licence from missing text.",
               {**_NATIVE_SHADER_TARGET,
                "source_url": {"type": "string", "minLength": 1, "maxLength": 2048},
                "links": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 2048}}},
               ["shader", "project_context_witness", "source_url"]),
-    _tool_def("shader_open_asset", "Ask the user to open another Shader. Work on the Shader the user already has open. Edit others by id with shader_edit or open_shader_workspace, which do not switch the user's view. By default this shows the user a request and returns state requested. Poll shader_get_operation with request_id, project_context_witness, scope \"asset\" and shader set to the mounted Shader you sent (the target when none was mounted) until it is applied, dismissed, superseded or refused, and do not ask again for the same Shader. Read get_live_context(view=\"shader\").agent_open first: policy never → open_blocked. Send force:true only when the user asked for a fully agent-driven session, or asked you in this turn to open it. force switches at once, unless the user turned force-open off (force_ignored). It is still refused while the user is typing or has unsaved edits. Send shader and studio_surface_id of the mounted Shader, or omit both when none is mounted. No implicit Save or Discard. Recover uncertainty by the original request_id.",
+    _tool_def("shader_open_asset", "Use to ask the user to switch the screen to another Shader. It only shows them a request (state "
+                                   "\"requested\"). To edit another Shader without switching, use shader_edit or "
+                                   "open_shader_workspace. Pass request_id (fresh UUID), project_context_witness (freshness token, "
+                                   "from get_live_context(view=\"shader\")), target {origin, shaderId}, and the mounted Shader as "
+                                   "shader plus studio_surface_id (omit both if none is mounted). Poll shader_get_operation (scope "
+                                   "\"asset\", shader = the one you sent) until applied, dismissed, superseded or refused; do not ask "
+                                   "again for the same Shader. Check get_live_context(view=\"shader\").agent_open first: policy "
+                                   "\"never\" gives open_blocked. force:true switches at once, only if the user asked for a fully "
+                                   "agent-driven session or asked this turn; it is ignored if the user turned force-open off and "
+                                   "still refused while they are typing or have unsaved edits. Nothing is saved or discarded.",
               {**_MOUNTED_SHADER_FIELDS, "target": _NATIVE_SHADER_TARGET["shader"],
                "force": {"type": "boolean", "default": False}},
               ["request_id", "project_context_witness", "target"]),
-    _tool_def("shader_save_as", "Save a copy of the current mounted RAM Shader through its native library writer, preserving Looks, credits and resources. A dirty draft is saved as merged. The new asset is selected only after its original-ticket transition acknowledgement.",
+    _tool_def("shader_save_as", "Use to save a copy of the open Shader as a new Library Shader (keeps Looks, credits and "
+                                "resources; unsaved edits are included). Pass shader, project_context_witness (freshness token, "
+                                "from get_live_context(view=\"shader\")), studio_surface_id, request_id and optional title. The "
+                                "copy becomes selected only after the app confirms.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
-    _tool_def("shader_create_asset", "Create a saved Shader from hx_starter or paste exact supplied UTF-8 source as an inert original while MCP is connected. title is accepted only for action paste; action new rejects title. Paste preserves the original with unknown licence and never reads local source. It is not selected until Open. Recover Paste by request ID with creation scope.",
+    _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" makes one from the hx_starter template (optional space; "
+                                     "no title), action \"paste\" saves source you supply as an unmodified original with unknown licence "
+                                     "(optional title; never reads local files). Pass request_id and project_context_witness "
+                                     "(freshness token, from get_live_context(view=\"shader\")). It is not opened; use "
+                                     "shader_open_asset. Recover a paste with shader_get_operation scope \"creation\".",
               {"request_id": _NATIVE_SHADER_REQUEST_ID,
                "project_context_witness": _NATIVE_WORKSPACE_WITNESS,
                "action": {"enum": ["new", "paste"]}, "template_id": {"const": "hx_starter"},
@@ -3093,32 +3263,52 @@ SHADER_EXTENSION_TOOLS = [
                "source": {"type": "string", "minLength": 1, "maxLength": 2097152},
                "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["request_id", "project_context_witness", "action"]),
-    _tool_def("shader_fork_asset", "Fork the exact saved source Shader and retain its credits, Looks, resources and history pins. Result is saved but not selected.",
+    _tool_def("shader_fork_asset", "Use to make an editable copy of a saved Shader, keeping its credits, Looks, resources and "
+                                   "history. Pass request_id, project_context_witness (freshness token, from "
+                                   "get_live_context(view=\"shader\")), action \"fork\", shader and expected_document_hash "
+                                   "(base.document_hash); optional checkpoint_id. The copy is saved but not opened. For a plain copy "
+                                   "see shader_duplicate_asset.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"const": "fork"}, "expected_document_hash": _SHADER_DIGEST,
                "checkpoint_id": {"type": "string", "minLength": 1, "maxLength": 128}},
               ["request_id", "project_context_witness", "action", "shader", "expected_document_hash"]),
-    _tool_def("shader_duplicate_asset", "Duplicate one exact saved Shader into My Library or the active Project. Optional title names the copy. Same-shelf copies sit beside the source; a different shelf places the copy at the top. Result reports placement placed or unavailable and does not open or select the copy. Replay and status use the original request ID and do not create a second copy.",
+    _tool_def("shader_duplicate_asset", "Use to copy a saved Shader into My Library or the active Project. Pass request_id, "
+                                        "project_context_witness (freshness token, from get_live_context(view=\"shader\")), shader and "
+                                        "base; optional destination_origin and title. The copy is not opened. Replaying the same "
+                                        "request_id returns the same copy.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "base": _NATIVE_SHADER_BASE,
                "destination_origin": {"enum": ["user", "project"]},
                "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["request_id", "project_context_witness", "shader", "base"]),
-    _tool_def("shader_import_bundle", "Import an absolute .hexshader file through the native importer. Optional bundle_sha256 is an expected digest. Explicit fork intent creates a new asset without a mounted source Shader; recover uncertainty by original request ID.",
+    _tool_def("shader_import_bundle", "Use to import a .hexshader file as a new Shader. Pass request_id, project_context_witness "
+                                      "(freshness token, from get_live_context(view=\"shader\")), input_path (absolute) and "
+                                      "collision_intent \"fork\"; optional bundle_sha256 as an expected digest. After a lost reply "
+                                      "recover with the same request_id.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "input_path": _ABS_PATH, "bundle_sha256": _SHADER_DIGEST,
                "collision_intent": {"const": "fork"}},
               ["request_id", "project_context_witness", "input_path", "collision_intent"]),
-    _tool_def("shader_set_capture", "Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. APP binds the actual current writer and captured frame. Live seed changes the current preview only; authored defaults use the native editor and remain unsaved until native Save. Never send pointer input or arm Interact. An uncertain reply requires shader_get_operation with the original request ID.",
+    _tool_def("shader_set_capture", "Use to set the random seed or the saved capture defaults of the open Shader. action \"live_seed\" "
+                                    "with seed (uint32) changes only the current preview; action \"defaults\" with the full "
+                                    "capture_defaults edits the unsaved draft until the user Saves. Pass shader, "
+                                    "project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
+                                    "studio_surface_id, request_id. Never sends pointer input. After a lost reply call "
+                                    "shader_get_operation with the same request_id.",
               {**_MOUNTED_SHADER_FIELDS, "action": {"enum": ["live_seed", "defaults"]},
                "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
                "capture_defaults": _CAPTURE_DEFAULTS, "seen": _SEEN}, _MOUNTED_SHADER_REQUIRED + ["action"]),
-    _tool_def("shader_control_clock", "Deliver play, pause or seek to the mounted v2 Shader Workshop. Seek uses time in seconds. Delivery is session transport, not a saved edit; inspect the Workshop if a reply is lost.",
+    _tool_def("shader_control_clock", "Use to play, pause or seek the open Shader's preview clock. Pass shader, project_context_witness "
+                                      "(freshness token, from get_live_context(view=\"shader\")), request_id and action; seek also needs "
+                                      "time in seconds. Playback only, not a saved edit. If the reply is lost, look at the Workshop.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["play", "pause", "seek"]},
                "time": {"type": "number", "minimum": 0}},
               ["shader", "project_context_witness", "request_id", "action"]),
-    _tool_def("shader_step_frame", "Deliver one forward or backward frame step to the mounted v2 Shader Workshop. Delivery is session transport, not a saved edit; inspect the Workshop if a reply is lost.",
+    _tool_def("shader_step_frame", "Use to step the open Shader's preview one frame back or forward. Pass shader, "
+                                   "project_context_witness (freshness token, from get_live_context(view=\"shader\")), request_id and "
+                                   "direction (-1 or 1). owner is optional; omit it to step the preview mounted now. Playback only, "
+                                   "not a saved edit. If the reply is lost, look at the Workshop.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "direction": {"enum": [-1, 1]},
                "owner": {**_shader_closed({
@@ -3158,7 +3348,9 @@ for _name, _variants in {
 }.items():
     next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == _name)["inputSchema"]["oneOf"] = _variants
 
-TOOLS.insert(0, _tool_def("call_hextile_api", "Call the configured local Hextile native API with relative /api/... paths, or GET /openapi.json. Named tools remain preferred. No mutation retry; recover an uncertain result through its native status API.",
+TOOLS.insert(0, _tool_def("call_hextile_api", "Use to call a Hextile app endpoint that no named tool covers. Pass method, a relative /api/... "
+                                              "path (or GET /openapi.json), optional query and body. Prefer a named tool when one exists. "
+                                              "Mutations are not retried: after a lost reply, check the matching status endpoint.",
     {"method": {"enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]},
      "path": {"type": "string", "minLength": 1},
      "query": {"type": "object"}, "body": {}}, ["method", "path"]))
@@ -3624,6 +3816,11 @@ class HextileMcpServer:
         self.internal_mode = bool(self.child_token)
         self.client = client or Client(internal_mode=self.internal_mode, follow_record=True)
         self.notify = notify
+        # A confirmed MCP-enabled status is reused briefly; the APP still gates every request.
+        self._mcp_enabled_until = 0.0
+        # None posts activity inline; the stdio server starts a background sender.
+        self._activity_queue: Optional[queue.Queue] = None
+        self._activity_thread: Optional[threading.Thread] = None
         self.session_id: Optional[str] = None
         self.client_name: Optional[str] = None
         self.client_version: Optional[str] = None
@@ -3824,11 +4021,13 @@ class HextileMcpServer:
                         "version": SERVER_VERSION,
                     },
                     "instructions": (
-                        "For read-only Shader connection use get_live_context(view=\"shader\") once; "
-                        "do not fetch inventories, GLSL or DevTools just to identify it. "
-                        "For workflow compose, call get_capabilities then get_live_context; "
-                        "validate_config before run_workflow."
-                        " " + _WORKSPACE_GUIDANCE
+                        "Start with get_guide(name=\"recipes\"): one line per task with the exact tool and arguments. "
+                        "Orient with one get_live_context(view=\"shader\"); edit a Shader by shader_id with shader_edit, "
+                        "one call per edit; it saves itself (register_shader_update is only for the file-workspace flow). "
+                        "A 403 \"No document is open\" or connected:false means nothing is open: do not poll or retry; "
+                        "ask the user to open a document or the Shader Workshop, then try once. "
+                        "Recover a lost reply with the same request_id; for lost_to_human and lease rules see "
+                        "get_guide(name=\"workflow-schema\")."
                     ),
                 },
             )
@@ -3913,7 +4112,7 @@ class HextileMcpServer:
                              "shader_stop_output_job", "shader_get_preview", "shader_release_preview"}
         ):
             probe = getattr(self.client, "request_json", None)
-            if callable(probe):
+            if callable(probe) and time.monotonic() >= self._mcp_enabled_until:
                 try:
                     status = probe("GET", "/api/agent/mcp-status")
                 except HextileClientError as exc:
@@ -3933,6 +4132,7 @@ class HextileMcpServer:
                         "MCP is disabled in 360 Hextile Settings. Enable it and retry.",
                         kind="mcp_disabled", status_code=403,
                     )))
+                self._mcp_enabled_until = time.monotonic() + MCP_STATUS_TTL_S
         if name in _CLOSED_ARGUMENT_KEYS:
             try:
                 _closed_tool_args(arguments, _CLOSED_ARGUMENT_KEYS[name])
@@ -4020,6 +4220,8 @@ class HextileMcpServer:
             )
             return _ok_result(data)
         except HextileClientError as exc:
+            if exc.status_code == 403 and "mcp_disabled" in (exc.body or ""):
+                self._mcp_enabled_until = 0.0  # Settings changed inside the reuse window.
             exc = self._version_mismatch(exc)
             safe_error = _layer_error_payload(exc) if name in _LAYER_TOOLS else error_payload(exc)
             if name in _HOTKEY_OPS and exc.receipt is not None:
@@ -4182,10 +4384,37 @@ class HextileMcpServer:
             }
         if overrides_keys is not None:
             envelope["overrides_keys"] = list(overrides_keys)
+        if self._activity_queue is not None:
+            self._activity_queue.put(envelope)
+            return
         try:
             self.client.post_activity(envelope)
         except Exception:
             pass
+
+    def start_activity_sender(self) -> None:
+        """Post activity in order on one background thread, off the tool-call path."""
+        self._activity_queue = queue.Queue()
+
+        def run(pending: queue.Queue) -> None:
+            while (envelope := pending.get()) is not None:
+                try:
+                    self.client.post_activity(envelope)
+                except Exception:
+                    pass
+
+        self._activity_thread = threading.Thread(target=run, args=(self._activity_queue,),
+                                                 name="hextile-mcp-activity", daemon=True)
+        self._activity_thread.start()
+
+    def flush_activity(self, timeout: float = ACTIVITY_FLUSH_TIMEOUT_S) -> None:
+        """Send what is queued, then stop the sender (bounded so a down APP cannot hold exit)."""
+        pending, thread = self._activity_queue, self._activity_thread
+        if pending is None or thread is None:
+            return
+        self._activity_queue = None
+        pending.put(None)
+        thread.join(timeout)
 
     def _notify_progress(
         self,
@@ -5688,6 +5917,8 @@ def main() -> int:
     except Exception:
         pass
     server.notify = lambda msg: _write_message(stdout, msg)
+    server.client.keep_alive = True
+    server.start_activity_sender()
 
     # tools/call on one worker so generate_seed cannot starve ping.
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hextile-mcp")
@@ -5788,6 +6019,7 @@ def main() -> int:
     finally:
         executor.shutdown(wait=True)
         control_executor.shutdown(wait=True)
+        server.flush_activity()
     return 0
 
 

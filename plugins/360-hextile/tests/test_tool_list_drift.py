@@ -1259,7 +1259,7 @@ def test_mcp_initialize() -> None:
     )
     assert resp is not None
     assert resp["result"]["serverInfo"]["name"] == "hextile"
-    assert resp["result"]["serverInfo"]["version"] == "0.6.9"
+    assert resp["result"]["serverInfo"]["version"] == "0.6.10"
     assert resp["result"]["protocolVersion"] == "2024-11-05"
     assert "tools" in resp["result"]["capabilities"]
     instructions = resp["result"]["instructions"]
@@ -1499,9 +1499,9 @@ def test_get_guide_reads_real_markdown() -> None:
         prose = page["markdown"]
         assert "A workflow starts with get_capabilities." in prose
         assert "does not call get_capabilities." in prose
-        assert "Shader package edits use shader_edit or register_shader_update." in prose
+        assert "Shader edits use shader_edit, which saves itself; register_shader_update is only for the file-workspace flow." in prose
         assert "Read merge. Watch compile. Only the human moves the lease." in prose
-        assert "shader_request_preview, then shader_get_preview with image true as the 512px RGB display image, then shader_preflight_still_export, then shader_export_still using that preflight_request_id." in prose
+        assert "A still is shader_preflight_still_export then shader_export_still using that preflight_request_id; no preview is needed first." in prose
         assert "A sequence is preflight_shader_sequence then render_shader_sequence." in prose
         assert "same saved hashes and the same frozen inputs." in prose
         assert "Width and height are top-level on shader_request_preview." in prose
@@ -1576,7 +1576,7 @@ def test_get_guide_field_lookup_uses_closed_shader_schemas() -> None:
     assert "answer" not in unknown
     assert 1 <= len(unknown["nearest"]) <= 5
     opened = next(tool["description"] for tool in TOOLS if tool["name"] == "open_shader_workspace")
-    assert opened.startswith("Open one Shader workspace. Send shader_id and request_id only.")
+    assert opened.startswith("Use to get a Shader ready for shader_edit") and "Pass shader_id and request_id only." in opened
     assert "recorded result" in opened
     for phrase in ("Attach native files", "materialize", "authoring.md", "before attaching", "source-modules/1",
                    "Leave Apply to the human"):

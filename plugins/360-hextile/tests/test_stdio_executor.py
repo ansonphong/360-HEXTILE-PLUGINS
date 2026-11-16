@@ -61,6 +61,13 @@ def test_control_lane_replies_while_ordinary_call_is_blocked(monkeypatch) -> Non
 
     class FakeServer:
         notify = None
+        client = type("FakeClient", (), {})()
+
+        def start_activity_sender(self) -> None:
+            pass
+
+        def flush_activity(self) -> None:
+            pass
 
         def handle_rpc(self, msg):  # noqa: ANN001
             name = msg["params"]["name"]

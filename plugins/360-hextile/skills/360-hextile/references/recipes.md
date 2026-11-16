@@ -4,7 +4,7 @@
 
 - Orient with one read: `get_live_context {"view":"shader"}`. It returns `shaderId`, `writable`, the witness, `studio_surface_id`, `lease`, `revision` and `saved_base`.
 - Act by id: `shader_edit {"shader_id":..}` edits a Shader with no window and no open step, and saves itself. One call per edit; put related entries (min with max, create with code) in one `edits` list.
-- 403 `Studio isn't present` or `connected:false` means no document is open. Do not poll or retry. Ask the user to open a document or the Shader Workshop, then try once.
+- 403 `No document is open` or `connected:false`: do not poll or retry. Ask the user to open a document or the Shader Workshop, then try once.
 - Lost reply: send the same request with the same `request_id`; it returns the recorded result. Use a new id only for a new or repaired edit.
 
 ## Placeholders
@@ -88,7 +88,7 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 ## Playback (on screen, not saved)
 
 - To play, pause or seek → `shader_control_clock {"shader":S,"project_context_witness":W,"request_id":U,"action":"play"|"pause"|"seek","time":2.5}`.
-- To step one frame → `shader_step_frame {..,"direction":1,"owner":{..}}` — `owner` comes from the full `get_live_context {}` (no view), not `view:"shader"`.
+- To step one frame → `shader_step_frame {"shader":S,"project_context_witness":W,"request_id":U,"direction":1}` — `owner` is optional; omit it to step the Shader on screen.
 - To read the frame preview → `shader_request_preview`, `shader_get_preview`, `shader_release_preview` (schema only).
 
 ## Render and export
