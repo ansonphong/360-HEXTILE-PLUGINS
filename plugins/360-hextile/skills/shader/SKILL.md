@@ -24,7 +24,7 @@ those. `title` is the saved package title. Ask politely. Call
 the user; poll the request_id; never retry a dismissed request; ask in chat
 instead. Use force only when the user asked for an agent-driven session. To
 change another Shader without switching the view, edit it by id with
-`shader_edit` or `open_shader_workspace`. A missing Shader means none is open. `connected: false` or
+`shader_edit` (or `open_shader_workspace` for the file workspace). A missing Shader means none is open. `connected: false` or
 `shader: null` means the Workshop is empty. Call `shader_list_assets` with the
 `project_context_witness` from that context. The list returns that witness.
 APP down: “Launch 360 Hextile, then retry.” MCP disabled: enable MCP in APP Settings.

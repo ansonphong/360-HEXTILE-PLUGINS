@@ -1734,6 +1734,26 @@ def test_asset_state_accepts_a_compact_input_list() -> None:
         _native_read_result(state, kind="state")
 
 
+def test_shape_mismatch_names_the_side_to_update(monkeypatch) -> None:
+    from hextile_mcp import SERVER_VERSION
+    client = Client("http://127.0.0.1:9")
+    future = {"view": "shader", "stack": "v3", "connected": True, "mcp_enabled": True}
+    caps = {"agent_plugin_version": "999.0.0"}
+    monkeypatch.setattr(client, "get_json", lambda path, **kwargs: caps if path.endswith("/capabilities") else future)
+    monkeypatch.setattr(client, "_opener", object())
+    server = HextileMcpServer(client=client)
+    newer_app = json.loads(server.call_tool("get_live_context", {"view": "shader"})["content"][0]["text"])
+    assert newer_app["kind"] == "version_mismatch"
+    assert newer_app["error"] == (f"The 360 Hextile plugin (version {SERVER_VERSION}) does not match this APP. "
+                                  "Update the plugin and start a new agent session.")
+    caps.pop("agent_plugin_version")
+    older_app = json.loads(server.call_tool("get_live_context", {"view": "shader"})["content"][0]["text"])
+    assert older_app["error"].endswith("Update 360 Hextile.")
+    caps["agent_plugin_version"] = SERVER_VERSION
+    same = json.loads(server.call_tool("get_live_context", {"view": "shader"})["content"][0]["text"])
+    assert same["kind"] == "unsupported"
+
+
 def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     v2 = {"view": "shader", "stack": "v2", "connected": True, "mcp_enabled": True,

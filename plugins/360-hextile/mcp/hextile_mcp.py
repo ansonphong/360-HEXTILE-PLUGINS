@@ -44,7 +44,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.7"
+SERVER_VERSION = "0.6.8"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -2469,7 +2469,12 @@ TOOLS: list[dict[str, Any]] = [
         "Edit one Shader package. Each edit is set, create, reshape or delete on one address. "
         "An address is a list of strings naming one unit. Do not replace a parent object. "
         "shader_edit cannot write provenance.json. "
-        "A parameter is [\"values\", \"<parameter id>\"]; source is [\"code\"] with value {\"source.glsl\": \"...\", \"<module path>\": \"...\"} (all files). "
+        "A parameter value is [\"values\", \"<parameter id>\"]. A parameter definition field is "
+        "[\"parameters\", \"<parameter id>\", \"<field>\"] with set or delete; field is one of label, default, min, max, step, "
+        "clamp, control, group, help, semantic, option_labels, animatable (type, options and interpolation need reshape of "
+        "[\"parameters\", \"<parameter id>\"] with a lease). Example, rename enum options: "
+        "{\"op\":\"set\",\"address\":[\"parameters\",\"style\",\"option_labels\"],\"value\":{\"0\":\"Girders\",\"1\":\"Rods\"}}. "
+        "Source is [\"code\"] with value {\"source.glsl\": \"...\", \"<module path>\": \"...\"} (all files). "
         "A [\"code\"] edit is checked before saving: on failure nothing is saved and the reply is refused prepare_failed with diagnostics (file:line:col); fix the code and edit again. "
         "Send seen for every unit a human has edited: the address and the human number from a read. "
         "A lost_to_human row kept their value and returns the new number. "
@@ -4011,6 +4016,7 @@ class HextileMcpServer:
             )
             return _ok_result(data)
         except HextileClientError as exc:
+            exc = self._version_mismatch(exc)
             safe_error = _layer_error_payload(exc) if name in _LAYER_TOOLS else error_payload(exc)
             if name in _HOTKEY_OPS and exc.receipt is not None:
                 safe_error.pop("receipt", None)
@@ -4707,6 +4713,37 @@ class HextileMcpServer:
 
     def _shader_step_frame(self, args: dict[str, Any]) -> Any:
         return self.client.step_shader_frame(args)
+
+    def _version_mismatch(self, exc: HextileClientError) -> HextileClientError:
+        """A missing route or an unknown reply shape names the side to update when versions differ."""
+        try:
+            route_missing = exc.status_code == 404 and json.loads(exc.body or "{}").get("detail") == "Not Found"
+        except (ValueError, AttributeError):
+            route_missing = False
+        if not (route_missing or exc.kind in {"upgrade", "unsupported"}
+                or exc.kind == "other" and str(exc).startswith("Malformed")):
+            return exc
+        try:
+            caps = self.client.get_capabilities()
+        except Exception:  # noqa: BLE001
+            return exc
+        app_version = caps.get("agent_plugin_version") if isinstance(caps, dict) else None
+
+        def parts(value: Any) -> Optional[tuple[int, ...]]:
+            if type(value) is not str or re.fullmatch(r"\d+(\.\d+)*", value) is None:
+                return None
+            return tuple(int(part) for part in value.split("."))
+
+        ours, theirs = parts(SERVER_VERSION), parts(app_version)
+        if theirs is not None and theirs == ours:
+            return exc
+        if theirs is not None and theirs > ours:
+            message = (f"The 360 Hextile plugin (version {SERVER_VERSION}) does not match this APP. "
+                       "Update the plugin and start a new agent session.")
+        else:
+            message = (f"This 360 Hextile APP is older than the plugin (version {SERVER_VERSION}). "
+                       "Update 360 Hextile.")
+        return HextileClientError(message, kind="version_mismatch", status_code=exc.status_code)
 
     def _get_shader_parameters(self, args: dict[str, Any]) -> Any:
         if args:
@@ -5620,6 +5657,28 @@ def _write_message(stdout, msg: dict[str, Any]) -> None:
         stdout.flush()
 
 
+def _exit_with_parent() -> None:
+    """Exit when the launching process is gone, so a dead agent host leaves no orphan."""
+    parent = os.getppid()
+    if os.name == "nt":
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel32.OpenProcess(0x00100000, False, parent)  # SYNCHRONIZE; immune to PID reuse
+        if not handle:
+            return
+
+        def wait() -> None:
+            kernel32.WaitForSingleObject(ctypes.c_void_p(handle), 0xFFFFFFFF)
+            os._exit(0)
+    else:
+        def wait() -> None:
+            while os.getppid() == parent:
+                time.sleep(5)
+            os._exit(0)
+    threading.Thread(target=wait, name="hextile-mcp-parent", daemon=True).start()
+
+
 def main() -> int:
     # Keep process alive even if app is down — tools return clean errors.
     server = HextileMcpServer()
@@ -5633,6 +5692,7 @@ def main() -> int:
     except Exception:
         pass
     server.notify = lambda msg: _write_message(stdout, msg)
+    _exit_with_parent()
 
     # tools/call on one worker so generate_seed cannot starve ping.
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hextile-mcp")
