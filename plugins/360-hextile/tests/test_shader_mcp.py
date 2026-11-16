@@ -792,7 +792,8 @@ def test_shader_authoring_actions_have_closed_named_transport(monkeypatch) -> No
     assert not any(path.endswith("/live-context") for _, path, *_ in calls)
     owner = {"owner_id": "owner", "owner_generation": 1, "viewer_generation": 2, "source_epoch": 3}
     step_schema = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_step_frame")["inputSchema"]
-    assert "owner" in step_schema["required"] and step_schema["additionalProperties"] is False
+    assert "owner" not in step_schema["required"] and step_schema["additionalProperties"] is False
+    assert client.step_shader_frame({**playback, "direction": 1})["state"] == "applied"
     assert client.step_shader_frame({**playback, "direction": 1, "owner": owner})["state"] == "applied"
     assert calls[-2][0] == "GET" and calls[-2][1] == "/api/agent/live-context"
     assert "view" not in calls[-2][3]["params"]
@@ -1752,6 +1753,16 @@ def test_shape_mismatch_names_the_side_to_update(monkeypatch) -> None:
     caps["agent_plugin_version"] = SERVER_VERSION
     same = json.loads(server.call_tool("get_live_context", {"view": "shader"})["content"][0]["text"])
     assert same["kind"] == "unsupported"
+    caps["agent_plugin_version"] = None
+    unknown = json.loads(server.call_tool("get_live_context", {"view": "shader"})["content"][0]["text"])
+    assert unknown["kind"] == "unsupported"
+    caps["agent_plugin_version"] = "999.0.0-rc1"
+    suffixed = json.loads(server.call_tool("get_live_context", {"view": "shader"})["content"][0]["text"])
+    assert suffixed["kind"] == "version_mismatch"
+    local = HextileClientError("Malformed seen evidence", kind="other", status_code=422)
+    assert server._version_mismatch(local) is local
+    reply = HextileClientError("Malformed Shader edit result", kind="other")
+    assert server._version_mismatch(reply).kind == "version_mismatch"
 
 
 def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkeypatch) -> None:
@@ -2661,3 +2672,13 @@ def test_refusal_keeps_bounded_diagnostics_and_edit_result_accepts_compile() -> 
     assert _edit_result(dict(saved))["compile"]["revision"] == 2
     with pytest.raises(HextileClientError):
         _edit_result({**saved, "compile": {"revision": 2}})
+
+
+def test_edit_result_carries_skip_reasons_and_an_unchanged_save() -> None:
+    from hextile_client import _edit_result
+    row = {"op": "set", "address": ["values", "gain"], "outcome": "skipped", "reason": "Not valid: min must be less than max"}
+    partial = {"save": "saved", "results": [row], "commit": 3, "revision": 3, "warning": "1 edit(s) were not applied"}
+    assert _edit_result(partial)["results"][0]["reason"].startswith("Not valid")
+    assert _edit_result({"save": "unchanged", "changed": False, "results": [], "commit": 3, "revision": 3})["save"] == "unchanged"
+    with pytest.raises(HextileClientError):
+        _edit_result({**partial, "results": [{**row, "reason": 7}]})

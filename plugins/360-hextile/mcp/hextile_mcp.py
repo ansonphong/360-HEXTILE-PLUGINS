@@ -44,7 +44,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.8"
+SERVER_VERSION = "0.6.9"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 
@@ -481,10 +481,14 @@ def _annotations(name: str) -> dict[str, bool]:
     return {"readOnlyHint": False, "destructiveHint": False}
 
 
+_NO_STUDIO = ("No document is open in 360 Hextile. Ask the user to open one (or the Shader Workshop), "
+              "then try once. Do not poll.")
+
+
 def _map_apply_live_refuse(exc: HextileClientError) -> str:
     blob = f"{exc.body or ''} {exc}"
     if "studio_not_present" in blob:
-        return "Studio isn't present. Open 360 Hextile with a document."
+        return _NO_STUDIO
 
     if "stale_snapshot" in blob:
         return "The open file changed. Call get_live_context again and retry."
@@ -3117,13 +3121,13 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_step_frame", "Deliver one forward or backward frame step to the mounted v2 Shader Workshop. Delivery is session transport, not a saved edit; inspect the Workshop if a reply is lost.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "direction": {"enum": [-1, 1]},
-               "owner": _shader_closed({
+               "owner": {**_shader_closed({
                    "owner_id": {"type": "string", "minLength": 1, "maxLength": 128},
                    "owner_generation": {"type": "integer", "minimum": 0},
                    "viewer_generation": {"type": "integer", "minimum": 0},
                    "source_epoch": {"type": "integer", "minimum": 0},
-               })},
-              ["shader", "project_context_witness", "request_id", "direction", "owner"]),
+               }), "description": "Optional. Omit to step the preview owner mounted now."}},
+              ["shader", "project_context_witness", "request_id", "direction"]),
 ]
 
 next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_open_asset")["inputSchema"]["allOf"] = [
@@ -4720,21 +4724,30 @@ class HextileMcpServer:
             route_missing = exc.status_code == 404 and json.loads(exc.body or "{}").get("detail") == "Not Found"
         except (ValueError, AttributeError):
             route_missing = False
+        # "Malformed" is a version hint only for a server reply shape check (no status).
+        # A local argument check such as a 422 "Malformed seen evidence" keeps its own error.
         if not (route_missing or exc.kind in {"upgrade", "unsupported"}
-                or exc.kind == "other" and str(exc).startswith("Malformed")):
+                or exc.kind == "other" and exc.status_code is None and str(exc).startswith("Malformed")):
             return exc
         try:
             caps = self.client.get_capabilities()
         except Exception:  # noqa: BLE001
             return exc
-        app_version = caps.get("agent_plugin_version") if isinstance(caps, dict) else None
+        if not isinstance(caps, dict):
+            return exc
 
         def parts(value: Any) -> Optional[tuple[int, ...]]:
-            if type(value) is not str or re.fullmatch(r"\d+(\.\d+)*", value) is None:
-                return None
-            return tuple(int(part) for part in value.split("."))
+            # Leading numeric parts, so 0.6.9-rc1 reads as 0.6.9.
+            match = re.match(r"\d+(?:\.\d+)*", value) if type(value) is str else None
+            return tuple(int(part) for part in match.group(0).split(".")) if match else None
 
-        ours, theirs = parts(SERVER_VERSION), parts(app_version)
+        ours = parts(SERVER_VERSION)
+        if "agent_plugin_version" not in caps:
+            theirs = None  # An APP from before the field: older than this plugin.
+        else:
+            theirs = parts(caps["agent_plugin_version"])
+            if theirs is None or ours is None:
+                return exc
         if theirs is not None and theirs == ours:
             return exc
         if theirs is not None and theirs > ours:
@@ -4748,7 +4761,12 @@ class HextileMcpServer:
     def _get_shader_parameters(self, args: dict[str, Any]) -> Any:
         if args:
             raise HextileClientError("Expected no Shader parameter discovery arguments", kind="other", status_code=422)
-        return self.client.get_shader_parameters(session_id=self._ensure_session_id())
+        try:
+            return self.client.get_shader_parameters(session_id=self._ensure_session_id())
+        except HextileClientError as exc:
+            if exc.status_code == 403 and "studio_not_present" in (exc.body or ""):
+                raise HextileClientError(_NO_STUDIO, status_code=403, body=exc.body, kind="http") from exc
+            raise
 
     def _shader_edit(self, args: dict[str, Any]) -> Any:
         validate_shader_workspace("edit", args)
@@ -4985,7 +5003,7 @@ class HextileMcpServer:
             body = exc.body or ""
             if exc.status_code == 403 and "studio_not_present" in body:
                 raise HextileClientError(
-                    "Studio isn't present. Open 360 Hextile with a document.",
+                    _NO_STUDIO,
                     status_code=403,
                     body=body,
                     kind="http",
@@ -5657,28 +5675,6 @@ def _write_message(stdout, msg: dict[str, Any]) -> None:
         stdout.flush()
 
 
-def _exit_with_parent() -> None:
-    """Exit when the launching process is gone, so a dead agent host leaves no orphan."""
-    parent = os.getppid()
-    if os.name == "nt":
-        import ctypes
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.restype = ctypes.c_void_p
-        handle = kernel32.OpenProcess(0x00100000, False, parent)  # SYNCHRONIZE; immune to PID reuse
-        if not handle:
-            return
-
-        def wait() -> None:
-            kernel32.WaitForSingleObject(ctypes.c_void_p(handle), 0xFFFFFFFF)
-            os._exit(0)
-    else:
-        def wait() -> None:
-            while os.getppid() == parent:
-                time.sleep(5)
-            os._exit(0)
-    threading.Thread(target=wait, name="hextile-mcp-parent", daemon=True).start()
-
-
 def main() -> int:
     # Keep process alive even if app is down — tools return clean errors.
     server = HextileMcpServer()
@@ -5692,7 +5688,6 @@ def main() -> int:
     except Exception:
         pass
     server.notify = lambda msg: _write_message(stdout, msg)
-    _exit_with_parent()
 
     # tools/call on one worker so generate_seed cannot starve ping.
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hextile-mcp")

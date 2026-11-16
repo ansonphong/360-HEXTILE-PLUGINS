@@ -1112,7 +1112,12 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     }
     required, optional = fields[operation]
     if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
-        raise HextileClientError("Expected closed Shader output arguments", status_code=422, kind="other")
+        missing = sorted(required - args.keys()) if isinstance(args, Mapping) else []
+        extra = sorted(set(args) - required - optional) if isinstance(args, Mapping) else []
+        named = "; ".join(part for part in (missing and "missing " + ", ".join(missing),
+                                            extra and "unknown " + ", ".join(extra)) if part)
+        raise HextileClientError("Expected closed Shader output arguments" + (f" ({named})" if named else ""),
+                                 status_code=422, kind="other")
     if "render_route" in args and not _checked_render_route(args["render_route"]):
         raise HextileClientError("Expected a closed render_route", status_code=422, kind="other")
     _native_shader_args("state", {key: args[key] for key in ("shader", "project_context_witness")})
@@ -2255,7 +2260,7 @@ def _valid_shader_connection(result: Any) -> bool:
     """The v2 live Shader description. Unknown shapes never become compact success."""
     required = {"view", "stack", "connected", "shader", "lease", "commit", "revision", "mcp_enabled"}
     optional = {"title", "writable", "project_context_witness", "studio_surface_id", "agent_open",
-                "saved_base"}
+                "saved_base", "next"}
     if (type(result) is not dict or not required <= set(result) <= required | optional
             or result["view"] != "shader" or result["stack"] not in {"v1", "v2"}
             or type(result["connected"]) is not bool or type(result["mcp_enabled"]) is not bool):
@@ -2265,6 +2270,8 @@ def _valid_shader_connection(result: Any) -> bool:
             or len(result["title"]) > 256):
         return False
     if "writable" in result and type(result["writable"]) is not bool:
+        return False
+    if "next" in result and (type(result["next"]) is not str or not 0 < len(result["next"]) <= 300):
         return False
     if "agent_open" in result and result["agent_open"] is not None:
         policy = result["agent_open"]
@@ -2937,7 +2944,9 @@ def _merge_rows(value: Any) -> list:
         if (type(row) is not dict or row.get("op") not in {"set", "create", "reshape", "delete"}
                 or row.get("outcome") not in _MERGE_OUTCOMES
                 or not _shader_address(row.get("address"))
-                or set(row) - {"op", "address", "outcome", "before", "value", "human"}):
+                or set(row) - {"op", "address", "outcome", "before", "value", "human", "reason"}):
+            _malformed("Malformed Shader merge report")
+        if "reason" in row and (type(row["reason"]) is not str or not 0 < len(row["reason"]) <= 400):
             _malformed("Malformed Shader merge report")
         if "human" in row and (type(row["human"]) is not int or row["human"] < 0):
             _malformed("Malformed Shader merge report")
@@ -3043,9 +3052,11 @@ def _saved_result(value: Any) -> dict:
 
 
 def _edit_result(value: Any) -> dict:
-    if (type(value) is not dict or value.get("save") != "saved"
+    if (type(value) is not dict or value.get("save") not in {"saved", "unchanged"}
             or not {"save", "results", "commit", "revision"} <= set(value)
-            or set(value) - {"save", "results", "commit", "revision", "compile"}
+            or set(value) - {"save", "results", "commit", "revision", "compile", "changed", "warning"}
+            or ("changed" in value and type(value["changed"]) is not bool)
+            or ("warning" in value and (type(value["warning"]) is not str or len(value["warning"]) > 300))
             or type(value.get("commit")) is not int or value["commit"] < 0
             or type(value.get("revision")) is not int or value["revision"] < 0):
         _malformed("Malformed Shader edit result")
@@ -3311,7 +3322,8 @@ class Client:
                     "hotkey_conflict": "Inspect conflicts and resolve each action explicitly.",
                     "hotkeys_app_unavailable": "Open the app and read the profile again.",
                     "unsupported_hotkey_profile": "Only an explicitly approved reset can replace a future profile.",
-                }.get(code, "Read or inspect Hotkeys before another edit.")
+                }.get(code, "Read or inspect Hotkeys before another edit." if mutating
+                      else "The app did not answer this read. Make sure 360 Hextile is open, then read once more.")
                 raise HextileClientError(
                     f"{code}: {recovery}", status_code=exc.status_code, kind=exc.kind,
                     receipt={key: detail[key] for key in ("code", "conflicts", "request_id") if key in detail},
@@ -4829,9 +4841,7 @@ class Client:
     def _shader_playback(self, args: Mapping[str, Any], operation: str) -> dict:
         step = operation == "shader_step_frame"
         required = {"shader", "project_context_witness", "request_id", "direction" if step else "action"}
-        if step:
-            required = required | {"owner"}
-        allowed = required | (set() if step else {"time"})
+        allowed = required | ({"owner"} if step else {"time"})
         if not isinstance(args, Mapping) or not required <= set(args) or set(args) - allowed:
             raise HextileClientError("Invalid Shader playback action", kind="other", status_code=422)
         _native_read_args({key: args[key] for key in ("shader", "project_context_witness")},
@@ -4845,11 +4855,11 @@ class Client:
         owner = args.get("owner") if step else None
         if (not valid_id or action not in {"play", "pause", "seek", "step"}
                 or (step and (type(args["direction"]) is not int or args["direction"] not in {-1, 1}
-                    or type(owner) is not dict
+                    or owner is not None and (type(owner) is not dict
                     or set(owner) != {"owner_id", "owner_generation", "viewer_generation", "source_epoch"}
                     or type(owner["owner_id"]) is not str or not 1 <= len(owner["owner_id"]) <= 128
                     or any(type(owner[key]) is not int or owner[key] < 0
-                           for key in ("owner_generation", "viewer_generation", "source_epoch"))))
+                           for key in ("owner_generation", "viewer_generation", "source_epoch")))))
                 or (not step and ((action == "seek") != ("time" in args)
                     or "time" in args and (type(args["time"]) not in {int, float}
                                                or not math.isfinite(args["time"]) or args["time"] < 0)))):
@@ -4866,7 +4876,8 @@ class Client:
                     and isinstance(mounted, dict)
                     and mounted.get("origin") == ref.get("origin")
                     and mounted.get("shaderId") == ref.get("shaderId")
-                    and all(surface.get(key) == owner[key] for key in owner_keys))
+                    # An omitted owner steps the preview owner mounted now.
+                    and (owner is None or all(surface.get(key) == owner[key] for key in owner_keys)))
             if not same:
                 message = "The mounted Shader preview owner changed. Read the current surface before stepping."
                 raise HextileClientError(message, kind="other", status_code=409, receipt={
@@ -5430,6 +5441,9 @@ class Client:
         if view == "shader" and not _valid_shader_connection(result):
             raise HextileClientError("Compact Shader discovery is unavailable or invalid. Update 360 Hextile; no compact result was verified.",
                                      kind="unsupported", status_code=503)
+        if view == "shader" and (result["connected"] is not True or result["shader"] is None) and "next" not in result:
+            result["next"] = ("No Shader is open in the Workshop. Ask the user to open it, then read once. Do not poll. "
+                              "shader_list_assets and shader_edit by shader_id work without it.")
         return result
 
     def save_workflow(
