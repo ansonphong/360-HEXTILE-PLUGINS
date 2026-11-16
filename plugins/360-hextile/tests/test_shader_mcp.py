@@ -1101,6 +1101,14 @@ def test_checkpoint_retention_and_history_match_seal_on_demand(monkeypatch):
     assert sent[-1]["request_id"] == request_id
     rows = client.get_shader_history({"shader": shader, "project_context_witness": "wit"})["entries"]
     assert [row["seal"] and row["seal"]["reason"] for row in rows] == ["agent_handoff", None]
+    for bad in ({"reason": "autosave", "actor": "agent", "at": "t"}, {"reason": "output", "actor": "agent"},
+                {"reason": "output", "actor": "agent", "at": "t", "extra": 1}, {"reason": "output", "actor": 1, "at": "t"},
+                {"reason": "output", "actor": "a" * 65, "at": "t"}, "output"):
+        monkeypatch.setattr(client, "request_json", lambda *_a, bad=bad, **_k: {
+            "schema": 1, "shader": shader, "project_context_witness": "wit", "kind": "revisions",
+            "entries": [{"document_ref": "rev:3", "seal": bad}], "next_cursor": None})
+        with pytest.raises(HextileClientError):
+            client.get_shader_history({"shader": shader, "project_context_witness": "wit"})
 
 
 def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypatch) -> None:

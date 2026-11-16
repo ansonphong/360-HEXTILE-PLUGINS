@@ -1417,6 +1417,16 @@ def _valid_compact_inputs(value: Any) -> bool:
     return True
 
 
+_SEAL_REASONS = {"create", "checkpoint", "output", "agent_handoff", "restore", "legacy"}
+
+
+def _history_seal(seal: Any) -> bool:
+    """A history row's seal: null, or exactly {reason, actor, at} with a known reason."""
+    return seal is None or (type(seal) is dict and set(seal) == {"reason", "actor", "at"}
+                            and seal["reason"] in _SEAL_REASONS
+                            and all(type(seal[key]) is str and 0 < len(seal[key]) <= 64 for key in ("actor", "at")))
+
+
 def _native_read_result(data: Any, *, kind: str, entries: int | None = None, limit: int = 32768) -> dict:
     try:
         size = len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
@@ -1485,6 +1495,8 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None, lim
                                       any(type(row) is not dict or set(row) - entry_allowed
                                           for row in data["entries"]))) or
             (kind == "history" and "total" in data and (type(data["total"]) is not int or data["total"] < 0)) or
+            (kind == "history" and any(not _history_seal(row.get("seal")) for row in data.get("entries") or []
+                                       if type(row) is dict and "seal" in row)) or
             (kind == "conventions" and (type(data.get("profiles")) is not list or
                                          len(data["profiles"]) > 8)) or
             ("next_cursor" in data and data["next_cursor"] is not None and

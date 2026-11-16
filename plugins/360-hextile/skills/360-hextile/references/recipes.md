@@ -25,7 +25,7 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 
 ## Saving
 
-`shader_edit` autosaves each accepted batch to the working copy (no new revision; `shader_checkpoint` cuts one) and returns `commit` and `revision`. Do not call `register_shader_update` or a Save after it. Read each `results[].outcome`: `skipped` changed nothing even when `save` says `saved`. A repaired edit uses a new request id. Read merge rows for what was kept.
+`shader_edit` autosaves each accepted batch to the working copy (no new revision; `shader_checkpoint`, an output or the first agent edit after the human cuts one) and returns `commit` and `revision`. Do not call `register_shader_update` or a Save after it. Read each `results[].outcome`: `skipped` changed nothing even when `save` says `saved`. A repaired edit uses a new request id. Read merge rows for what was kept.
 
 ## Find what's open
 
