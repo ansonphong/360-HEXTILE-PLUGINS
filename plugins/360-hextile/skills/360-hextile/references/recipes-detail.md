@@ -4,44 +4,47 @@ Index with placeholders (`W`, `B`, `S`, `U`, `L`) and the common one-liners: `ge
 
 ## More Shader one-liners
 
-- Attach an image input → `shader_stage_resource` then `shader_set_resource` with `W` and `B` (schema only).
-- Modulator, driver, controls channel or binding → `create` on `["modulators","<id>"]`, `["drivers","<param>"]`, `["controls","channels","<id>"]` (schema only; Recipes I and J).
-- Suggest credits → `shader_get_credits {"shader":S,"project_context_witness":W}` (on screen) for `provenance_hash`, then `shader_propose_credits` — a person applies it.
-- Put another Shader on screen → `shader_open_asset {"project_context_witness":W,"request_id":U,"target":{"origin":"user","shaderId":"<id>"},"shader":S_current,"studio_surface_id":"<sid>"}`, then `shader_get_operation {"request_id":U,"project_context_witness":W,"scope":"asset","shader":S_current}` — the user is asked; never retry a dismissed request. Not needed to edit.
+- Attach an image input → `shader_stage_resource` (Shader on screen, else 403 `authority`), then `shader_set_resource` `action:"attach"`, `slot_id:"input1"` with `W` and `B`. The slot needs no creation step; `shader_edit` create on `["inputs","input1"]` fails.
+- Modulator, driver, controls channel or binding → `create` on `["modulators","mod_<24 hex>"]` (`["modulators","wave1"]` is 400 `invalid_address`), `["drivers","<param>"]`, `["controls","channels","<id>"]` (Recipes I and J). On a Shader with no `controls`, a channel alone is 400 `invalid_value`; send one batch in this order: `set ["controls","camera"]` null; `set ["controls","profile"]` `{"id":"x/1","revision":1,"label":"X"}`; `set ["controls","instructions"]` text; `create` the channel; `create` the modulator.
+- Suggest credits → `shader_get_credits {"shader":S,"project_context_witness":W}` (on screen; 403 off screen) for `provenance_hash`, then `shader_propose_credits` — a person applies it.
+- Put another Shader on screen → `shader_open_asset {"project_context_witness":W,"request_id":U,"target":{"origin":"user","shaderId":"<id>"},"shader":S_current,"studio_surface_id":"<sid>"}`, then `shader_get_operation {"request_id":U,"project_context_witness":W,"scope":"asset","shader":S_current}` — the user is asked; never retry a dismissed request. Not needed to edit (off-screen Shaders need no `get_live_context` before `shader_edit`; only on-screen work does).
 - Check the MCP build and render contract → `get_capabilities {}`.
 - Read a Shader's parameter help, labels or GLSL when it is not on screen → `shader_get_asset_state {..,"include":["parameters","source"]}` (see the index).
 
 ## Shader library
 
 - To duplicate → `shader_duplicate_asset {"request_id":U,"project_context_witness":W,"shader":S,"base":B,"destination_origin":"user","title":"Copy"}` — returns the new `shaderId`; the copy is not opened.
-- To rename (Library title) → `shader_rename_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,"title":"New"}` (`base` required here; owner fields filled) — `origin:"user"` only; the id does not change.
+- To rename (Library title) → `shader_rename_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,"title":"New"}` (`base` required here; owner fields filled) — `origin:"user"` only; the id does not change. Look rename needs only `name` (or `look_id`) plus `title`; Look delete only `name` (or `look_id`); no base or confirmation scope.
 - To delete → `shader_delete_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,<saved-shelf fields, operation "delete">}` — `origin:"user"` only.
-- To export a .hexshader → `shader_export_bundle {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U,"base":B,"expected_looks":[..from shader_get_looks..],"expected_provenance_hash":"<from shader_get_credits>","output_path":"<abs>"}` — on screen, My Library only; `expected_looks` is `[]` with no Looks.
+- To export a .hexshader → `shader_export_bundle {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U,"base":B,"expected_looks":[..from shader_get_looks..],"expected_provenance_hash":"<from shader_get_credits>","output_path":"<abs>"}` — on screen only, My Library only (`shader_get_credits` is 403 off screen, so there is no hash); `expected_looks` is `[]` with no Looks.
 - Create, paste and fork replies return a saved receipt with the new `base`; if the reply is lost, `shader_get_operation` with `scope:"creation"` and the request id finds it. Writes whose reply is lost recover via `scope:"asset"` (a restore replay with the same id is a 409 `request_conflict`).
 - To make a new Shader → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"new","template_id":"hx_starter","space":"direction_360"}`; pasted GLSL: `"action":"paste","source":"<GLSL>","title":"T"` (schema only).
-- To Save As → `shader_save_as {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U,"title":"Copy"}` — on screen (schema only).
+- To Save As → `shader_save_as {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U,"title":"Copy"}` — on screen. It replies `pending` and the Workshop switches to the copy. `shader_get_operation` may say unknown or 404 even though the copy exists: confirm with `shader_list_assets`. To go back use `shader_open_asset` (asks the user).
 - To fork a revision → `shader_fork_asset {"shader":S,"project_context_witness":W,"request_id":U,"action":"fork","expected_document_hash":".."}` (schema only).
-- To import a bundle → `shader_import_bundle {"request_id":U,"project_context_witness":W,"input_path":"<abs>.hexshader","collision_intent":"fork"}` (schema only).
+- To copy a revision as a new Shader (random id) → `shader_copy_revision {"shader":S,"project_context_witness":W,"request_id":U,"base":B,"destination_origin":"user","target":{"document_ref":"rev:34","document_hash":".."},"library_intent":"saved","confirmation_scope":{"operation":"shader_copy_revision"}}`; `target` comes from `shader_get_history`.
+- To preview history compaction → `shader_history_retention {..,"action":"preview","mode":"current"|"checkpoints"}`.
+- To import a bundle → `shader_import_bundle {"request_id":U,"project_context_witness":W,"input_path":"<abs>.hexshader","collision_intent":"fork"}` — the new shaderId comes from the file name, not the title.
 - To copy into a Project → `shader_export_to_project {..,"destination_project":"<name>"}` (schema only).
-- To move into a folder → `shader_get_library_organization` for the revision, then `shader_organize_library` (schema only).
+- To move into a folder → `shader_get_library_organization {"project_context_witness":W,"origin":"user"}` for `revision`, then `shader_organize_library {"request_id":U,"project_context_witness":W,"origin":"user","library_session_id":"<UUID>","expected_revision":"<revision>","command":{"kind":"moveShader","shaderId":"<id>","folderId":"<folder>"}}`; `folderId:null` moves it back to the root.
 
 ## Playback (on screen, not saved)
 
 - To play, pause or seek → `shader_control_clock {"shader":S,"project_context_witness":W,"request_id":U,"action":"play"|"pause"|"seek","time":2.5}`.
 - To step one frame → `shader_step_frame {"shader":S,"project_context_witness":W,"request_id":U,"direction":1}` — `owner` is optional; omit it to step the Shader on screen.
-- To read the frame preview → `shader_request_preview`, `shader_get_preview`, `shader_release_preview` (schema only).
+- To read the frame preview → `shader_request_preview {..,"studio_surface_id":"<sid>","request_id":U,"base":B,"mode":"still","width":512,"height":256,"output":{..}}`, then poll `shader_get_preview` with the same `request_id` (a 512x256 frame took ~12 s), then `shader_release_preview`.
+- To stop an export → `shader_stop_output_job` with the export `request_id` (U2), not the preflight id. It can return 404 `output_job_unknown` in the first seconds, and small stills finish before a stop lands; a stopped export reports 409 `dome_stopped` on the export call.
 
 ## Studio and render extras
 
 - To change the open document's prompt → `apply_config_delta {"config_partial":{"prompt":{"global":".."}},"doc_generation":"<from get_live_context>"}`.
-- To make a seed image → `list_360_loras`, `get_seed_memory_advice`, `generate_seed`, `get_seed_job` (Recipe B).
+- To make a seed image → `list_360_loras`, `get_seed_memory_advice` (needs `lora_path`, `width`, `height`), `generate_seed`, `get_seed_job` (Recipe B).
 - To upscale a still or folder → `run_workflow` builtin `upres-still` (Recipe E); folder or video: Recipe F; saved sequence: `inspect_sequence_upscale` then `upscale_sequence`.
 - To describe an image → `describe_image {"source":"render_node","render_id":..,"node_id":..}`.
-- To export a render file → `preflight_file_export {"render_id":..,"source_node_id":..,"folder_path":"<abs>","output_name":"x","projection":"equirectangular","encoding":"png"}`, then `export_render_file`.
+- To export a render file → `preflight_file_export {"render_id":..,"source_node_id":..,"folder_path":"<abs>","output_name":"x.png","projection":"equirectangular","encoding":"png"}`, then `export_render_file`. `output_name` includes the extension; `source_node_id` is the render row's `head`.
 - To list Batch jobs → `list_batches {}` — 409 `batch_unavailable` until Batch is enabled in the APP.
 
 
-- Read the frame preview → `shader_request_preview`, `shader_get_preview`, `shader_release_preview` (schema only). GPU Doctor → `request_shader_doctor` then `get_shader_doctor`.
+- Read the frame preview → `shader_request_preview`, `shader_get_preview`, `shader_release_preview` (schema only). GPU Doctor → `request_shader_doctor {"request_id":U,"origin":"user","shader_id":"<id>","project_context_witness":W,"studio_surface_id":"<sid>"}` (flat, no `shader` object) then `get_shader_doctor`.
 
 ## Fractal (open Fractal first)
 
@@ -56,13 +59,13 @@ All writes copy the `witness` block from `get_fractal_context` unchanged and add
 
 ## Library, settings, docs
 
-- To list renders → `list_runs {}` (large reply); prompts → `search_library_prompts {"query":"neon"}`; sequences → `list_sequences {}`.
+- To list renders → `list_runs {}` (no `limit`; returns every render, a large reply); prompts → `search_library_prompts {"query":"neon"}`; sequences → `list_sequences {}`.
 - To rename, favorite, duplicate or trash a render → `call_hextile_api {"method":"PATCH","path":"/api/renders/<id>/name","body":{"name":".."}}`, `POST /api/renders/<id>/favorite`, `POST /api/renders/<id>/duplicate`, `DELETE /api/renders/<id>` (schema only).
 - To export to Unreal → `get_unreal_export_catalog`, `preflight_unreal_export`, `export_to_unreal_project`.
 - To read app preferences → `get_app_preferences {}`; change → `update_app_preferences {"changes":{..}}`; MCP status → `get_local_access_status {}`.
 - To list hotkeys → `list_hotkeys {}`; write → `set_hotkey_bindings {"id":..,"bindings":[..],"revision":N}` after a fresh read.
 - To see storage, cache, GPU, models, license → `get_storage_summary`, `get_cache_buckets`, `get_gpu_diagnostics` (slow, ~30 s), `get_model_readiness`, `list_installed_models {"pipeline_id":"flux"}`, `get_license_status`.
-- To read a guide or the docs → `get_guide {"name":"recipes"}`; `search_docs {"query":".."}` then `read_doc`.
+- To read a guide or the docs → `get_guide {"name":"recipes"}` (names: `workflow-schema`, `best-practices`, `website-index`, `recipes`, `recipes-detail`, `shader-cookbook`, `index`); `search_docs {"query":".."}` then `read_doc`.
 
 ## No tool yet
 
@@ -151,7 +154,7 @@ Keep the returned `attempt_id` and `transaction_fingerprint`. Submit `export_sha
 
 ## Shader package layout
 
-The package folder holds `shader.json` (authored data), `source.glsl`, `modules/**/*.glsl`, `provenance.json`, `resources/`, `originals/` and an optional cover. A helper such as `modules/lib/noise.glsl` is included from `source.glsl` with `#include "lib/noise.glsl"`; include paths are relative to the including file. Keep unused helpers. `shader_edit` cannot write `provenance.json`. Git commit, checkout or export never replaces a save. Human detail: https://360hextile.com/docs/create/shader.
+The package folder holds `shader.json` (authored data), `source.glsl`, `modules/**/*.glsl`, `provenance.json`, `resources/`, `originals/` and an optional cover. A helper such as `modules/lib/noise.glsl` is included from `source.glsl` with `#include "modules/lib/noise.glsl"`; use the full declared path (`"lib/noise.glsl"` fails: "Include target is not an exact declared module"). Keep unused helpers. `shader_edit` cannot write `provenance.json`. Git commit, checkout or export never replaces a save. Human detail: https://360hextile.com/docs/create/shader.
 
 ## A — Prompt-only scout from a builtin
 

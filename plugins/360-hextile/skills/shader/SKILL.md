@@ -7,7 +7,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 
 ## How to work fast
 
-- Orient with one read: `get_live_context(view="shader")`.
+- Orient with one read: `get_live_context(view="shader")` (on-screen work only; off-screen Shaders need none before `shader_edit`).
 - Act by `shader_id` with `shader_edit` (one call can batch several edits), no open step, no Save; it saves itself.
 - 403 `No document is open` or `connected: false`: never poll it; ask the user to open a document or the Shader Workshop.
 - Lost reply: resend the same request with the same `request_id`.
@@ -20,11 +20,11 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 2. Rename dropdown options → `{"op":"set","address":["parameters","<id>","option_labels"],"value":{"0":"A","1":"B"}}` — ids and option values from `get_shader_parameters`.
 3. Change a label, range, default, step or help → `["parameters","<id>","label"|"min"|"max"|"default"|"step"|"help"]` — send min and max together.
 4. Set a value → `{"op":"set","address":["values","<id>"],"value":0.7}`.
-5. Edit the code → read every file with `shader_get_asset_state {..,"include":["source"]}`, then `["code"]` with every file and top-level `"lease":L` — a compile error returns `file:line:col` and saves nothing.
+5. Edit the code (helper include: `#include "modules/lib/noise.glsl"`, full declared path) → read every file with `shader_get_asset_state {..,"include":["source"]}`, then `["code"]` with every file and top-level `"lease":L` — a compile error returns `file:line:col` and saves nothing.
 6. Add a slider → with `"lease":L`: `create ["parameters","glow"]` plus a `["code"]` entry using `hxParam_glow`.
 7. Remove a parameter → with `"lease":L`: `delete ["parameters","<id>"]` plus `["code"]` without `hxParam_<id>`, in one call.
 8. Rename a Shader → `shader_rename_asset` with `W`, `B` — My Library only.
-9. Duplicate → `shader_duplicate_asset {"shader":S,"base":B,"destination_origin":"user","title":"Copy",..}`.
+9. Duplicate → `shader_duplicate_asset {"shader":S,"base":B,"destination_origin":"user","title":"Copy",..}`; `shader_save_as` (on screen) replies `pending` and the Workshop switches to the copy — confirm with `shader_list_assets`.
 10. Delete → `shader_delete_asset` with `W`, `B` — My Library only.
 11. Play, pause, jump to 3 s → `shader_control_clock {"action":"play"|"pause"|"seek","time":3,..}` — on screen.
 12. Save or apply a Look → `shader_save_look {..,"title":"Warm"}`; `shader_apply_look {..,"name":"Warm"}` — no base, owner fields or hash needed.

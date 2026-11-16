@@ -62,7 +62,7 @@ Append one truthful adaptation for a meaningful accepted change. Reuse that entr
 
 ## Code
 
-`source.glsl` is the entry and owns `hxMain`. Helpers live at declared relative paths under `modules/`. At most 31 modules plus the entry. GLSL is at most 64 KiB in total. Include depth is at most 16. A path is at most 256 bytes. `#include` resolves from the including file against declared files only and must not escape the package.
+`source.glsl` is the entry and owns `hxMain`. Helpers live at declared paths under `modules/`, included by the full path: `#include "modules/lib/noise.glsl"` (`"lib/noise.glsl"` fails: "Include target is not an exact declared module"). At most 31 modules plus the entry. GLSL is at most 64 KiB in total. Include depth is at most 16. A path is at most 256 bytes. `#include` matches declared files exactly and must not escape the package.
 
 `while` and `do` are refused. A `for` is accepted only when its trip count is a proven constant: one fresh scalar `int` in the initializer, compared with `<`, `<=`, `>` or `>=` to an integer constant, stepped by `++`, `--`, `+=` or `-=` of a nonzero integer constant, with no later write to that name. `for (int i = 0; i < 3; ++i)` is that shape. A uniform, parameter or other non-constant bound is not proven. Repair the loop and edit again.
 
@@ -70,7 +70,7 @@ The code lease owns the shape. Label, default, min, max, step, clamp, control, o
 
 ## Discover and open
 
-1. `get_live_context(view="shader")` once. The compact reply names `shader.origin`, `shader.shaderId` (the same value as `shader.shader_id`), `title`, `writable`, `project_context_witness`, `studio_surface_id`, `lease`, `commit`, `revision`, `saved_base` and `agent_open`. `connected: false` or `shader: null` means the Workshop is empty; ask the user to open one and do not poll. `shader_list_assets` finds any other Shader and returns the witness.
+1. `get_live_context(view="shader")` once (on-screen work only; an off-screen Shader needs no `get_live_context` before `shader_edit`). The compact reply names `shader.origin`, `shader.shaderId` (the same value as `shader.shader_id`), `title`, `writable`, `project_context_witness`, `studio_surface_id`, `lease`, `commit`, `revision`, `saved_base` and `agent_open`. `connected: false` or `shader: null` means the Workshop is empty; ask the user to open one and do not poll. `shader_list_assets` finds any other Shader and returns the witness.
 2. Call `shader_edit` or the typed tools with that `shader_id`. No open step is needed and the user's view does not change. `shader_edit` saves each accepted batch.
 3. My Library Shaders are writable. A Built-in is written in place only when the APP is in dev mode (`writable: true`); otherwise `read_only` says to duplicate it into My Library and edit the copy. Project Shaders are read-only to agents ("Project Shaders cannot be edited here yet."); copy them into My Library with `shader_save_as` or `shader_duplicate_asset`. `shader_duplicate_asset` does not open the copy; read a lost reply with `shader_get_operation` and the original request id.
 4. `shader_open_asset` only asks the user to put another Shader on screen; poll its request id and never retry a dismissed request. Use force only when the user asked for an agent-driven session.

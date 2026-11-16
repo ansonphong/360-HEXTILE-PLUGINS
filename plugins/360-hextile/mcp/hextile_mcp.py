@@ -1572,7 +1572,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "list_runs",
-        "Use to find renders in the library when you have no run_id. Optional lifecycle_status filter. "
+        "Use to find renders in the library when you have no run_id. Optional lifecycle_status filter; no limit, returns every render. "
         "Each row in data.renders[] has status, progress and output_path.",
         {
             "lifecycle_status": {
@@ -1824,8 +1824,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_guide",
-        "Use to read bundled agent guides (config schema, best practices, website index, recipes, shader "
-        "cookbook). Pass name to read one, or omit it to list them. Read this before unfamiliar work.",
+        "Use to read bundled agent guides (config schema, best practices, website index, recipes, recipes-detail, shader cookbook, index). Pass name to read one, or omit it to list them. Read this before unfamiliar work.",
         {
             "name": {
                 "type": "string",
@@ -2319,7 +2318,7 @@ TOOLS: list[dict[str, Any]] = [
         "preflight_file_export",
         "Use to check exporting a render node to an image file in a folder. Pass render_id, "
         "source_node_id, folder_path, output_name, projection and encoding. Returns source_revision, "
-        "output_fingerprint, exact paths and blockers for export_render_file. Writes nothing.",
+        "output_fingerprint, exact paths and blockers for export_render_file. output_name includes the extension (x.png); source_node_id is the render row's head. Writes nothing.",
         _FILE_EXPORT_PROPERTIES,
         required=list(_FILE_EXPORT_REQUIRED),
     ),
@@ -2902,7 +2901,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_request_preview", "Use to render a full-size preview of a saved Shader and inspect it. Pass shader, "
                                         "project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
                                         "studio_surface_id, a fresh request_id, base, mode (\"still\" or \"sequence\"), width, height and "
-                                        "output. Uses the saved revision, not unsaved edits. Read the result with shader_get_preview "
+                                        "output (an object). Uses the saved revision, not unsaved edits. A 512x256 frame took about 12 s: poll shader_get_preview, then shader_release_preview. Read the result with shader_get_preview "
                                         "using the same request_id; never repost under a new id. Absent render_route means native "
                                         "rendering; this tool does not produce WebGL frames.",
               {**_OUTPUT_OWNER, "output": _PREVIEW_OUTPUT, "mode": {"enum": ["still", "sequence"]},
@@ -2956,13 +2955,13 @@ SHADER_EXTENSION_TOOLS = [
                                        "the preflight id, which returns 404 output_job_unknown). Starts no GPU work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
-    _tool_def("shader_stop_output_job", "Use to stop a running Shader still export. Pass shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), profile and the export's request_id.",
+    _tool_def("shader_stop_output_job", "Use to stop a running Shader still export. Pass shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), profile and the export's request_id (not the preflight id). 404 output_job_unknown is possible in the first seconds; small stills finish before a stop lands; a stopped export reports 409 dome_stopped.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
     _tool_def("shader_export_bundle", "Use to export a saved Shader as a .hexshader file (with its Looks and credits). Pass shader, "
                                       "project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
                                       "studio_surface_id, request_id, base, expected_looks and expected_provenance_hash (from "
-                                      "shader_get_looks and shader_get_credits), plus optional absolute output_path (default: the app "
+                                      "shader_get_looks and shader_get_credits; on-screen Shader only, credits are 403 off screen), plus optional absolute output_path (default: the app "
                                       "output folder).",
               {**_OUTPUT_OWNER, "output_path": _ABS_PATH,
                "expected_looks": {"type": "array", "maxItems": 32, "items": _shader_closed({
@@ -3062,7 +3061,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_copy_revision", "Use to save an old revision or checkpoint as a separate new Shader (keeps credits, Looks, "
                                       "resources). Pass shader, project_context_witness (freshness token, from "
                                       "get_live_context(view=\"shader\")), base, request_id, destination_origin (\"user\" or \"project\"), "
-                                      "target or checkpoint_id, optional title. Library Shader: library_intent \"saved\" and "
+                                      "target (from shader_get_history) or checkpoint_id, optional title; creates a Shader with a random id. Library Shader: library_intent \"saved\" and "
                                       "confirmation_scope {operation:\"shader_copy_revision\"}. Recover with shader_get_operation scope "
                                       "\"asset\" and the source Shader. Omit expected_working_digest: it defaults to base.document_hash "
                                       "from shader_get_asset_state/shader_list_assets.",
@@ -3087,7 +3086,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_get_project_conventions", "Use to read the Project's Shader conventions (convention profiles) and their digest. Pass project_context_witness (freshness token, from get_live_context(view=\"shader\")).",
               {"project_context_witness": _SHADER_TEXT}, ["project_context_witness"]),
     _tool_def("shader_stage_resource", "Use to prepare an image, video, folder or frame sequence for a Shader input (step 1 of 2; step 2 "
-                                       "is shader_set_resource). Pass shader, project_context_witness (freshness token, from "
+                                       "is shader_set_resource; the Shader must be on screen). Pass shader, project_context_witness (freshness token, from "
                                        "get_live_context(view=\"shader\")), base and source (a Render node, a Sequence range, or absolute "
                                        "local file, folder or ordered frame paths). Either every frame is kept or the stage fails. "
                                        "Returns the staged token for shader_set_resource. Omit expected_working_digest: it defaults to "
@@ -3113,7 +3112,7 @@ SHADER_EXTENSION_TOOLS = [
                                      "request_id, action and slot_id; attach, replace and locate also need staged_token from "
                                      "shader_stage_resource. Library Shader: library_intent \"saved\" and confirmation_scope "
                                      "{operation:\"shader_set_resource\", shader}. After a lost reply recover with the original "
-                                     "request_id. To create the slot itself use shader_edit [\"inputs\",\"<slot>\"]. Omit "
+                                     "request_id. Attach to input1 needs no slot-creation step. Omit "
                                      "expected_working_digest: it defaults to base.document_hash from "
                                      "shader_get_asset_state/shader_list_assets.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
@@ -3267,7 +3266,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_save_as", "Use to save a copy of the open Shader as a new Library Shader (keeps Looks, credits and "
                                 "resources; unsaved edits are included). Pass shader, project_context_witness (freshness token, "
                                 "from get_live_context(view=\"shader\")), studio_surface_id, request_id and optional title. The "
-                                "copy becomes selected only after the app confirms.",
+                                "copy becomes selected only after the app confirms. Replies pending; the Workshop switches to the copy; confirm with shader_list_assets (shader_get_operation may say unknown); go back with shader_open_asset.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
     _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" makes one from the hx_starter template (optional space; "
@@ -3303,7 +3302,7 @@ SHADER_EXTENSION_TOOLS = [
               ["request_id", "project_context_witness", "shader", "base"]),
     _tool_def("shader_import_bundle", "Use to import a .hexshader file as a new Shader. Pass request_id, project_context_witness "
                                       "(freshness token, from get_live_context(view=\"shader\")), input_path (absolute) and "
-                                      "collision_intent \"fork\"; optional bundle_sha256 as an expected digest. After a lost reply "
+                                      "collision_intent \"fork\"; the new shaderId comes from the file name; optional bundle_sha256 as an expected digest. After a lost reply "
                                       "recover with the same request_id.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "project_context_witness": _SHADER_TEXT,
                "input_path": _ABS_PATH, "bundle_sha256": _SHADER_DIGEST,

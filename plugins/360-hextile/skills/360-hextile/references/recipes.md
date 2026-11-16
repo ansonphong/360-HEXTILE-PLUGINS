@@ -5,7 +5,7 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 ## How to work fast
 
 - Shader on screen (or "this Shader"): orient with one read, `get_live_context {"view":"shader"}`. A Shader named by title: skip it and start with `shader_list_assets`. On screen: (`shaderId`, `writable`, witness, `studio_surface_id`, `lease`, `revision`, `saved_base`).
-- Act by id: `shader_edit {"shader_id":..}` edits a Shader with no window and no open step, and saves itself. One call per edit; put related entries (min with max, create with code) in one `edits` list.
+- Act by id: `shader_edit {"shader_id":..}` edits a Shader with no window and no open step, and saves itself; no `get_live_context` first for an off-screen Shader. One call per edit; put related entries (min with max, create with code) in one `edits` list.
 - 403 `No document is open` or `connected:false`: do not poll. Ask the user to open a document or the Workshop, then try once.
 - Lost reply: send the same request with the same `request_id`; it returns the recorded result; `request_expired` (409) means the record is gone, so check state, then use a new id. Use a new id for a new or repaired edit.
 
@@ -49,32 +49,32 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 - Change type or options → with `lease`: `reshape` `["parameters","<id>"]` value `{"type":"enum","options":[0,1,2],"default":0}`.
 - Tags / title → `["meta","tags"|"title"]`; clock → `["clock","bpm"|"speed"]`; size → `["output","width"|"height"]`; `["view","fov"]`; `["capture","seed"]`.
 - Loop or timeline on a Shader with no timeline yet: send all three in one call (a lone `loop` is `skipped`): `["timeline","start"]` `[0,1]`, `["timeline","end"]` `[4,1]`, `["timeline","loop"]` `true`. Times are `[numerator, denominator]` seconds: `[4,1]` = 4 s, `[1,2]` = 0.5 s. After that one field works.
-- Modulators, drivers, channels, image inputs, credits: recipes-detail.
+- Modulators (`mod_<24 hex>`), drivers, channels, image inputs, credits: recipes-detail. No `controls` yet: one ordered batch, recipes-detail.
 
 ## Shader code
 
 - Edit the GLSL → read every file with `shader_get_asset_state {"shader":S,"project_context_witness":W,"include":["source"]}` (one call), then `shader_edit` with top-level `lease` and `{"op":"set","address":["code"],"value":{"source.glsl":"<full>","modules/x.glsl":"<full>"}}` — the value holds every file; an incomplete map is `skipped`.
-- Helper module → add `"modules/lib/noise.glsl"` to the map; `#include "lib/noise.glsl"` in `source.glsl`.
+- Helper module → add `"modules/lib/noise.glsl"` to the map; `#include "modules/lib/noise.glsl"` in `source.glsl` (full declared path).
 - Compile error → `prepare_failed` with `file:line:col`, nothing saved; fix, new request id.
 
 ## Looks and history
 
 - Save a Look at a value → `shader_edit` the value, then `shader_save_look` (it saves the current values). `shader_list_assets` gives `S` and `W`; one `shader_get_asset_state` gives the parameter ids. Chain each reply; do not re-read between steps.
 - Save a Look → `shader_save_look {"shader":S,"project_context_witness":W,"request_id":U,"title":"Warm"}` (on screen add `studio_surface_id`). It creates a revision.
-- Apply a Look → `shader_apply_look {"shader":S,"project_context_witness":W,"request_id":U,"name":"Warm"}`; `shader_get_looks` rows (`id`, `envelope_hash`) also work as `look_id`/`id`, hash optional. Rename / delete: same shape.
+- Apply a Look → `shader_apply_look {"shader":S,"project_context_witness":W,"request_id":U,"name":"Warm"}`; `shader_get_looks` rows (`id`, `envelope_hash`) also work as `look_id`/`id`, hash optional. Rename / delete: same shape; rename needs only `name` (or `look_id`) plus `title`.
 - History → `shader_get_history {"shader":S,"project_context_witness":W,"kind":"revisions","newest":true,"limit":5}`.
-- Previous version → `shader_restore_revision {"shader":S,"project_context_witness":W,"request_id":U,"steps_back":1}` (2 calls with the edit); or a `target` `{"document_ref":"rev:34","document_hash":".."}` from history. Writes a new revision.
+- Previous version → `shader_restore_revision {"shader":S,"project_context_witness":W,"request_id":U,"steps_back":1}` (2 calls with the edit); `shader_copy_revision` makes a new Shader; or a `target` `{"document_ref":"rev:34","document_hash":".."}` from history. Writes a new revision.
 
 ## Render and export
 
 - Still → `shader_preflight_still_export {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U1,"base":B,"profile":"shader-raster-still/1","output":{"projection":"equirectangular","encoding":"png","width":8192,"height":4096,"supersampling":2,"output_path":"<abs>.png"}}`, then `shader_export_still {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","base":B,"request_id":U2,"preflight_request_id":U1,"profile":"shader-raster-still/1"}` (no `output`; it comes from the preflight). On screen. Sizes are 2:1: 2K = 2048x1024, 4K = 4096x2048, 8K = 8192x4096. The folder must exist (it is not created for you; a missing one is named in the refusal). The reply usually says `completed`; only if it says running, read `shader_get_output_job {"shader":S,"project_context_witness":W,"profile":"shader-raster-still/1","request_id":U2}`.
 - Frame sequence → `preflight_shader_sequence` then `render_shader_sequence` with one identical body (example in recipes-detail), poll `get_shader_sequence`. Needs `native-render/1` and `seed`; the folder must exist.
-- Stop → `control_shader_sequence {"sequence_id":"seq_..","action":"stop","run_id":"<render_observation.run_id>"}`.
+- Stop → `control_shader_sequence {"sequence_id":"seq_..","action":"stop","run_id":"<render_observation.run_id from get_shader_sequence>"}`; resume needs no `run_id`. More: recipes-detail.
 
 ## Studio workflows
 
 - List / read → `list_workflows {}`; `get_workflow {"origin":"builtin","id":"quick-scout"}`.
-- Validate → `validate_config {"workflow_id":"quick-scout","origin":"builtin","overrides":{"prompt":{"global":"a neon city"},"input":{"path":"<abs seed image>","source":"file"}}}`. quick-scout needs an input image or a seed (`generate_seed`), else validation fails.
+- Validate → `validate_config {"workflow_id":"quick-scout","origin":"builtin","overrides":{"prompt":{"global":"a neon city"},"input":{"path":"<abs seed image>","source":"file"}}}`. quick-scout without an input image validates `ok:true` but warns `run_workflow` would refuse; give it an input image or a seed (`generate_seed`).
 - Run → `run_workflow {..same..}`, then `get_status {"run_id":..}`.
 - Seed image → `list_360_loras`, `generate_seed`, `get_seed_job`.
 - Upscale, layers, Fractal, library, settings, docs: recipes-detail.
