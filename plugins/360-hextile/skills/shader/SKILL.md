@@ -28,7 +28,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 10. Delete → `shader_delete_asset` with `W`, `B` — My Library only.
 11. Play, pause, jump to 3 s → `shader_control_clock {"action":"play"|"pause"|"seek","time":3,..}` — on screen.
 12. Set a value, save it as a Look, change it, apply the Look (4 calls) → `shader_list_assets {"search":"<title>"}` for `S`, `W`; `shader_edit {"shader_id":"<id>","request_id":"a","edits":[{"op":"set","address":["values","travel_speed"],"value":0.4},{"op":"create","address":["looks","warm"],"value":{"name":"Warm","values":{"travel_speed":0.4}}}]}`; `shader_edit` the new value; `shader_apply_look {"shader":S,"project_context_witness":W,"request_id":U,"name":"Warm"}`. Parameter id = the label in snake_case ("Travel speed" → `travel_speed`); don't look it up first (a wrong id is 400 `unknown_id`, nothing saved). Current values only: `shader_save_look {"shader":S,"project_context_witness":W,"request_id":U,"title":"Warm"}`.
-13. Go back a version → `shader_restore_revision {..,"steps_back":1}` (or a history row's `document_ref` and `document_hash`).
+13. Go back a restore point → `shader_restore_revision {..,"steps_back":1}` steps back one restore point (one agent session, or one sealed point). Undoing a single edit means sending the inverse shader_edit. Or use a history row's `document_ref` and `document_hash`.
 14. Render a still → `shader_preflight_still_export` then `shader_export_still` — on screen (below).
 15. Render a sequence → `preflight_shader_sequence` then `render_shader_sequence` (below).
 16. Edit a Built-in → `shader_edit` by its id when `writable` is true (dev mode); a `read_only` reply means duplicate it and edit the copy.

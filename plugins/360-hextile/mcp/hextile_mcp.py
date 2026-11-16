@@ -3053,8 +3053,9 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness", "request_id", "action"]),
     _tool_def("shader_restore_revision", "Use to go back to an older revision or checkpoint; it is saved as the next revision. Pass "
                                          "shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
-                                         "request_id and one of steps_back (1 = the revision before the current one: \"undo my last "
-                                         "change\"), target {document_ref, document_hash} from shader_get_history, or checkpoint_id. base is "
+                                         "request_id and one of steps_back (steps back one restore point: one agent session, or one "
+                                         "sealed point; undoing a single edit means sending the inverse shader_edit), target "
+                                         "{document_ref, document_hash} from shader_get_history, or checkpoint_id. base is "
                                          "optional (omitted = the saved head; the person's edits still win). Library Shader: "
                                          "library_intent and confirmation_scope are filled for you. The reply's base feeds the next write. "
                                          "After a lost reply read shader_get_operation (scope \"asset\") with the same request_id.",
