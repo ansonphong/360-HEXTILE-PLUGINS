@@ -30,7 +30,7 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 ## Find what's open
 
 - Which Shader is open → `get_live_context {"view":"shader"}`.
-- Find by name → `shader_list_assets {"search":"beam"}`; returns `W`, `S`, `base`.
+- Find by name → `shader_list_assets {"search":"beam"}` (searches titles, not ids); returns `W`, `S`, `base`.
 - Another Shader's title, tags, saved values → `shader_get_asset_state {"shader":S,"project_context_witness":W}`.
 - On-screen parameters → `get_shader_parameters {}` (ids, values, label, type, help, min, max, step, options).
 - Read GLSL and parameter help/labels/options, any Shader (off-screen Built-ins too) → `shader_get_asset_state {"shader":S,"project_context_witness":W,"include":["source","parameters"]}` — one call.
@@ -59,6 +59,7 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 
 ## Looks and history
 
+- Save a Look at a value → `shader_edit` the value, then `shader_save_look` (it saves the current values). `shader_list_assets` gives `S` and `W`; one `shader_get_asset_state` gives the parameter ids. Chain each reply; do not re-read between steps.
 - Save a Look → `shader_save_look {"shader":S,"project_context_witness":W,"request_id":U,"title":"Warm"}` (on screen add `studio_surface_id`). It creates a revision.
 - Apply a Look → `shader_apply_look {"shader":S,"project_context_witness":W,"request_id":U,"name":"Warm"}`; `shader_get_looks` rows (`id`, `envelope_hash`) also work as `look_id`/`id`, hash optional. Rename / delete: same shape.
 - History → `shader_get_history {"shader":S,"project_context_witness":W,"kind":"revisions","newest":true,"limit":5}`.
@@ -66,7 +67,7 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 
 ## Render and export
 
-- Still → `shader_preflight_still_export {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U1,"base":B,"profile":"shader-raster-still/1","output":{"projection":"equirectangular","encoding":"png","width":8192,"height":4096,"supersampling":2,"output_path":"<abs>.png"}}`, then `shader_export_still {..same ids..,"request_id":U2,"preflight_request_id":U1,"profile":"shader-raster-still/1"}`. On screen. A missing folder is named in the refusal; create it. Poll `shader_get_output_job` with `U2`.
+- Still → `shader_preflight_still_export {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U1,"base":B,"profile":"shader-raster-still/1","output":{"projection":"equirectangular","encoding":"png","width":8192,"height":4096,"supersampling":2,"output_path":"<abs>.png"}}`, then `shader_export_still {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","base":B,"request_id":U2,"preflight_request_id":U1,"profile":"shader-raster-still/1"}` (no `output`; it comes from the preflight). On screen. A missing folder is named in the refusal; create it. The reply usually says `completed`; only if it says running, read `shader_get_output_job {"shader":S,"project_context_witness":W,"profile":"shader-raster-still/1","request_id":U2}`.
 - Frame sequence → `preflight_shader_sequence` then `render_shader_sequence` with one identical body (example in recipes-detail), poll `get_shader_sequence`. Needs `native-render/1` and `seed`; the folder must exist.
 - Stop → `control_shader_sequence {"sequence_id":"seq_..","action":"stop","run_id":"<render_observation.run_id>"}`.
 
