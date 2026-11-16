@@ -20,7 +20,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 2. Rename dropdown options → `{"op":"set","address":["parameters","<id>","option_labels"],"value":{"0":"A","1":"B"}}` — ids and option values from `get_shader_parameters`.
 3. Change a label, range, default, step or help → `["parameters","<id>","label"|"min"|"max"|"default"|"step"|"help"]` — send min and max together.
 4. Set a value → `{"op":"set","address":["values","<id>"],"value":0.7}`.
-5. Edit the code → read `revisions/<NNNNNN>/` (recipes, "read the GLSL"), then `["code"]` with every file and top-level `"lease":L` — a compile error returns `file:line:col` and saves nothing.
+5. Edit the code → read every file with `shader_get_asset_state {..,"include":["source"]}`, then `["code"]` with every file and top-level `"lease":L` — a compile error returns `file:line:col` and saves nothing.
 6. Add a slider → with `"lease":L`: `create ["parameters","glow"]` plus a `["code"]` entry using `hxParam_glow`.
 7. Remove a parameter → with `"lease":L`: `delete ["parameters","<id>"]` plus `["code"]` without `hxParam_<id>`, in one call.
 8. Rename a Shader → `shader_rename_asset` with `W`, `B` — My Library only.
@@ -32,7 +32,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 14. Render a still → `shader_preflight_still_export` then `shader_export_still` — on screen (below).
 15. Render a sequence → `preflight_shader_sequence` then `render_shader_sequence` (below).
 16. Edit a Built-in → `shader_edit` by its id when `writable` is true (dev mode); a `read_only` reply means duplicate it and edit the copy.
-17. New Shader from the starter or pasted GLSL → `shader_create_asset`.
+17. New Shader from pasted GLSL → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"paste","title":"..","source":"<glsl>"}`; from the starter → `"action":"new"` (W also comes from `shader_list_assets`).
 18. Clock or timeline → `["clock","bpm"|"speed"]`; first timeline edit sets `["timeline","start"]`, `["timeline","end"]` and `["timeline","loop"]` in one call.
 19. Generate a 360 from a prompt → `validate_config` then `run_workflow` and `get_status` (hub skill).
 20. Change a Fractal value or play its timeline → `fractal` skill; `get_fractal_context` fails until a Fractal scene is open.

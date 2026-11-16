@@ -3272,7 +3272,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" makes one from the hx_starter template (optional space; "
                                      "no title), action \"paste\" saves source you supply as an unmodified original with unknown licence "
                                      "(optional title; never reads local files). Pass request_id and project_context_witness "
-                                     "(freshness token, from get_live_context(view=\"shader\")). Returns the new Shader and its "
+                                     "(freshness token, from get_live_context(view=\"shader\") or shader_list_assets). Returns the new Shader and its "
                                      "base. It is not opened; use shader_open_asset. Recover a lost reply with shader_get_operation "
                                      "scope \"creation\" and the same request_id.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID,

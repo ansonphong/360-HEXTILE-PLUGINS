@@ -48,12 +48,12 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 - Remove a parameter → with `lease`: `delete` `["parameters","<id>"]` plus a `["code"]` entry without `hxParam_<id>`, in one call.
 - Change type or options → with `lease`: `reshape` `["parameters","<id>"]` value `{"type":"enum","options":[0,1,2],"default":0}`.
 - Tags / title → `["meta","tags"|"title"]`; clock → `["clock","bpm"|"speed"]`; size → `["output","width"|"height"]`; `["view","fov"]`; `["capture","seed"]`.
-- Timeline, first time, all three in one call: `["timeline","start"]` `[0,1]`, `["timeline","end"]` `[4,1]`, `["timeline","loop"]` `true`. Times are `[numerator, denominator]` seconds: `[4,1]` = 4 s, `[1,2]` = 0.5 s. After that one field works.
+- Loop or timeline on a Shader with no timeline yet: send all three in one call (a lone `loop` is `skipped`): `["timeline","start"]` `[0,1]`, `["timeline","end"]` `[4,1]`, `["timeline","loop"]` `true`. Times are `[numerator, denominator]` seconds: `[4,1]` = 4 s, `[1,2]` = 0.5 s. After that one field works.
 - Modulators, drivers, channels, image inputs, credits: recipes-detail.
 
 ## Shader code
 
-- Edit the GLSL → read the saved `revisions/<NNNNNN>/` files (above), then `shader_edit` with top-level `lease` and `{"op":"set","address":["code"],"value":{"source.glsl":"<full>","modules/x.glsl":"<full>"}}` — the value holds every file; an incomplete map is `skipped`.
+- Edit the GLSL → read every file with `shader_get_asset_state {"shader":S,"project_context_witness":W,"include":["source"]}` (one call), then `shader_edit` with top-level `lease` and `{"op":"set","address":["code"],"value":{"source.glsl":"<full>","modules/x.glsl":"<full>"}}` — the value holds every file; an incomplete map is `skipped`.
 - Helper module → add `"modules/lib/noise.glsl"` to the map; `#include "lib/noise.glsl"` in `source.glsl`.
 - Compile error → `prepare_failed` with `file:line:col`, nothing saved; fix, new request id.
 
