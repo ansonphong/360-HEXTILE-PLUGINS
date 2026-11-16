@@ -7,16 +7,16 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 - Orient with one read: `get_live_context {"view":"shader"}` (`shaderId`, `writable`, witness, `studio_surface_id`, `lease`, `revision`, `saved_base`).
 - Act by id: `shader_edit {"shader_id":..}` edits a Shader with no window and no open step, and saves itself. One call per edit; put related entries (min with max, create with code) in one `edits` list.
 - 403 `No document is open` or `connected:false`: do not poll. Ask the user to open a document or the Workshop, then try once.
-- Lost reply: send the same request with the same `request_id`; it returns the recorded result. Use a new id only for a new or repaired edit.
+- Lost reply: send the same request with the same `request_id`; it returns the recorded result; `request_expired` (409) means the record is gone, so check state, then use a new id. Use a new id for a new or repaired edit.
 
 ## Placeholders
 
-- `W` = `project_context_witness`. `B` = `base` (`{"kind":"saved","working_revision":N,"document_hash":..,"source_hash":..}`). `S` = `{"origin":"user","shaderId":"<id>"}`. `U` = a fresh UUIDv4.
+- `W` = `project_context_witness`. `B` = `base` (`{"kind":"saved","working_revision":N,"document_hash":..,"source_hash":..}`). Every write reply returns the next `base`: chain with it, no re-reads. Looks, checkpoint and restore may omit `base`. `S` = `{"origin":"user","shaderId":"<id>"}`. `U` = a fresh UUIDv4.
 - `L` = the lease `{"holder":"agent","generation":0}`. Copy `lease` from `get_live_context {"view":"shader"}` (on screen) or from the `open_shader_workspace` reply (any Shader); a new Shader starts at agent generation 0. It goes at the top level of `shader_edit`, never inside an edit:
   `{"shader_id":"S","request_id":"U","lease":{"holder":"agent","generation":0},"edits":[{"op":"set","address":["code"],"value":{"source.glsl":"<full file>"}}]}`
-- On-screen Shader: `W` and `B` (= `saved_base`) come from `get_live_context {"view":"shader"}`. Any other Shader (or when `get_live_context` shows a different Shader than the one you edit): `shader_list_assets {"search":"<name>"}` gives `W`, `S` and `base`; send that row's `base` as-is as `B` (not `saved_base`).
+- On-screen Shader: `W` and `B` (= `saved_base`) come from `get_live_context {"view":"shader"}`. Any other Shader (or `get_live_context` shows a different one): `shader_list_assets {"search":"<name>"}` gives `W`, `S`, `base`; send the row's `base` as-is (not `saved_base`).
 - Every `shader_*` write except `shader_edit` takes a UUIDv4 `request_id`. `shader_edit` takes any unique string.
-- Saved-shelf writes (rename, delete, Look, restore) add `"library_intent":"saved","confirmation_scope":{"operation":"<op>","shader":S}` and no `studio_surface_id`.
+- Library `library_intent` and `confirmation_scope` are filled for you on Looks, history tools and rename; send them only for delete (`"library_intent":"saved","confirmation_scope":{"operation":"delete","shader":S}`).
 - "On screen" = mounted in the Workshop, else 403 `authority`.
 
 ## Who can be edited
@@ -33,8 +33,8 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 - Find by name → `shader_list_assets {"search":"beam"}`; returns `W`, `S`, `base`.
 - Another Shader's title, tags, saved values → `shader_get_asset_state {"shader":S,"project_context_witness":W}`.
 - On-screen parameters → `get_shader_parameters {}` (ids, values, label, type, help, min, max, step, options).
-- Read the GLSL and `shader.json` → `open_shader_workspace {"shader_id":"<id>","request_id":"w1"}` returns `workspace_path` (`<dir>/workspace`). `workspace/` can be stale; read the sibling `<dir>/revisions/<revision as 6 digits>/` (`shader.json`, `source.glsl`, `modules/*.glsl`) — that is the current saved copy.
-- A Shader's parameter help or labels when it is not on screen → `shader_get_asset_state` (saved values only for now; an `include` flag for parameter definitions and source is coming — until then use the workspace read above).
+- Read GLSL and parameter help/labels/options, any Shader (off-screen Built-ins too) → `shader_get_asset_state {"shader":S,"project_context_witness":W,"include":["source","parameters"]}` — one call.
+- Package files on disk (`shader.json`, `source.glsl`, `modules/*.glsl`) → `open_shader_workspace` (file flow only; the sibling `revisions/<NNNNNN>/` of `workspace_path` is the saved copy).
 
 ## Shader parameters
 
@@ -59,16 +59,15 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 
 ## Looks and history
 
-- Save a Look → `shader_save_look {"shader":S,"project_context_witness":W,"base":B,"request_id":U,"title":"Warm",<saved-shelf fields, operation "shader_save_look">}` (on screen: `studio_surface_id` instead). It creates a new revision.
-- List Looks → `shader_get_looks {"shader":S,"project_context_witness":W}`; rows have `id` and `envelope_hash`.
-- Apply a Look → `shader_apply_look {..,"look_id":<row id>,"expected_look_envelope_hash":<row envelope_hash>}`.
+- Save a Look → `shader_save_look {"shader":S,"project_context_witness":W,"request_id":U,"title":"Warm"}` (on screen add `studio_surface_id`). It creates a revision.
+- Apply a Look → `shader_apply_look {"shader":S,"project_context_witness":W,"request_id":U,"name":"Warm"}`; `shader_get_looks` rows (`id`, `envelope_hash`) also work as `look_id`/`id`, hash optional. Rename / delete: same shape.
 - History → `shader_get_history {"shader":S,"project_context_witness":W,"kind":"revisions","newest":true,"limit":5}`.
-- Go back to the previous version → in that list take the entry right after the current head (the head is `working_revision` of `B`; "previous" is the next-older revision) → `shader_restore_revision {..,"base":B,"request_id":U,<saved-shelf fields>,"target":{"document_ref":"rev:34","document_hash":".."}}` using that entry's ref and hash; it writes a new revision.
+- Previous version → `shader_restore_revision {"shader":S,"project_context_witness":W,"request_id":U,"steps_back":1}` (2 calls with the edit); or a `target` `{"document_ref":"rev:34","document_hash":".."}` from history. Writes a new revision.
 
 ## Render and export
 
-- Still → `shader_preflight_still_export {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U1,"base":B,"profile":"shader-raster-still/1","output":{"projection":"equirectangular","encoding":"png","width":8192,"height":4096,"supersampling":2,"output_path":"<abs>.png"}}`, then `shader_export_still {..same ids..,"request_id":U2,"preflight_request_id":U1,"profile":"shader-raster-still/1"}`. On screen. The output folder must already exist. Poll `shader_get_output_job` with `U2`.
-- Frame sequence → `preflight_shader_sequence` then `render_shader_sequence` with one identical body (example in recipes-detail), poll `get_shader_sequence`. Needs `native-render/1` and `seed`; the destination folder must already exist.
+- Still → `shader_preflight_still_export {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U1,"base":B,"profile":"shader-raster-still/1","output":{"projection":"equirectangular","encoding":"png","width":8192,"height":4096,"supersampling":2,"output_path":"<abs>.png"}}`, then `shader_export_still {..same ids..,"request_id":U2,"preflight_request_id":U1,"profile":"shader-raster-still/1"}`. On screen. A missing folder is named in the refusal; create it. Poll `shader_get_output_job` with `U2`.
+- Frame sequence → `preflight_shader_sequence` then `render_shader_sequence` with one identical body (example in recipes-detail), poll `get_shader_sequence`. Needs `native-render/1` and `seed`; the folder must exist.
 - Stop → `control_shader_sequence {"sequence_id":"seq_..","action":"stop","run_id":"<render_observation.run_id>"}`.
 
 ## Studio workflows

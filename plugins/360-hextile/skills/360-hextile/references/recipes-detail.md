@@ -9,14 +9,15 @@ Index with placeholders (`W`, `B`, `S`, `U`, `L`) and the common one-liners: `ge
 - Suggest credits → `shader_get_credits {"shader":S,"project_context_witness":W}` (on screen) for `provenance_hash`, then `shader_propose_credits` — a person applies it.
 - Put another Shader on screen → `shader_open_asset {"project_context_witness":W,"request_id":U,"target":{"origin":"user","shaderId":"<id>"},"shader":S_current,"studio_surface_id":"<sid>"}`, then `shader_get_operation {"request_id":U,"project_context_witness":W,"scope":"asset","shader":S_current}` — the user is asked; never retry a dismissed request. Not needed to edit.
 - Check the MCP build and render contract → `get_capabilities {}`.
-- Read a Shader's parameter help or labels when it is not on screen → `shader_get_asset_state` (saved values only until its `include` flag lands; until then use `open_shader_workspace` and read `revisions/<NNNNNN>/shader.json`).
+- Read a Shader's parameter help, labels or GLSL when it is not on screen → `shader_get_asset_state {..,"include":["parameters","source"]}` (see the index).
 
 ## Shader library
 
 - To duplicate → `shader_duplicate_asset {"request_id":U,"project_context_witness":W,"shader":S,"base":B,"destination_origin":"user","title":"Copy"}` — returns the new `shaderId`; the copy is not opened.
-- To rename (Library title) → `shader_rename_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,"title":"New",<saved-shelf fields, operation "rename">}` — `origin:"user"` only; the id does not change.
+- To rename (Library title) → `shader_rename_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,"title":"New"}` (`base` required here; owner fields filled) — `origin:"user"` only; the id does not change.
 - To delete → `shader_delete_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,<saved-shelf fields, operation "delete">}` — `origin:"user"` only.
 - To export a .hexshader → `shader_export_bundle {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U,"base":B,"expected_looks":[..from shader_get_looks..],"expected_provenance_hash":"<from shader_get_credits>","output_path":"<abs>"}` — on screen, My Library only; `expected_looks` is `[]` with no Looks.
+- Create, paste and fork replies return a saved receipt with the new `base`; if the reply is lost, `shader_get_operation` with `scope:"creation"` and the request id finds it. Writes whose reply is lost recover via `scope:"asset"` (a restore replay with the same id is a 409 `request_conflict`).
 - To make a new Shader → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"new","template_id":"hx_starter","space":"direction_360"}`; pasted GLSL: `"action":"paste","source":"<GLSL>","title":"T"` (schema only).
 - To Save As → `shader_save_as {"shader":S,"project_context_witness":W,"studio_surface_id":"<sid>","request_id":U,"title":"Copy"}` — on screen (schema only).
 - To fork a revision → `shader_fork_asset {"shader":S,"project_context_witness":W,"request_id":U,"action":"fork","expected_document_hash":".."}` (schema only).
@@ -97,7 +98,7 @@ Edit values, clock and timeline with the `shader_edit` addresses in the index ab
 After confirmed native Apply and Save, read the fresh source hashes/revision and
 Project witness. Require `get_capabilities.native_render.contract:"native-render/1"`
 and a native-replayable source. Replace every sample identity below with that
-same acknowledged saved source and choose a folder on the APP machine that already exists (nothing creates it yet).
+same acknowledged saved source and choose a folder on the APP machine that already exists (a missing folder is named in the refusal).
 This example is24FPS over[0,2),48frames, final2048×1024, JPG90 and1.25spatial
 supersampling. Use the byte-identical intent for preflight and submit.
 
@@ -114,7 +115,7 @@ an uncertain submission must be recovered by its original sequence ID/key.
 {"shader_ref":{"origin":"project","id":"aurora"},"project_context_witness":"project-witness","working_revision":2,"document_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_hash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","resource_manifest_hash":null,"selected_resource_frames":[],"idempotency_key":"aurora-direct-001","name":"Aurora direct","frame_rate":{"num":24,"den":1},"frame_count":48,"start_time":{"num":"0","den":"1"},"end_time":{"num":"2","den":"1"},"width":2048,"height":1024,"seed":7,"supersampling":1.25,"output":{"projection":"equirectangular","pan":0,"tilt":0,"roll":0},"folder_export":{"destination_folder":"D:\\Renders\\Aurora","format":"JPG","quality_if_jpg":90}}
 ```
 
-Fields: `shader_ref` is `{"origin":"user","id":"<shaderId>"}` (the same `origin` and id as `S`); `working_revision`, `document_hash` and `source_hash` are the Shader's `base` fields (send the flat fields; a nested `base` object is not accepted yet); `resource_manifest_hash` is null unless the Shader has staged resources.
+Fields: `shader_ref` is `{"origin":"user","id":"<shaderId>"}` (the same `origin` and id as `S`); `working_revision`, `document_hash` and `source_hash` are the Shader's `base` fields: send them flat or as one nested `base` object (from `shader_get_asset_state` or the last write reply); `resource_manifest_hash` is null unless the Shader has staged resources.
 
 `preflight_shader_sequence` returns the known ID/request hash before admission;
 `render_shader_sequence` uses that exact body/key. Poll `get_shader_sequence` for

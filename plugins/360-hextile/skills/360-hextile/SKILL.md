@@ -182,7 +182,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `control_shader_sequence` | Continue an inspected request, Stop the observed run, resume an admitted job, or control the exact publication attempt; reconcile unknown replies | **yes** |
 | `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG, JPG, or EXR; retain the fingerprint and attempt ID | no |
 | `export_shader_sequence` | Publish only that exact preflighted folder intent; GET the known ID/attempt after an uncertain reply | **yes** |
-| `open_shader_workspace` | File-workspace flow or reading package files. Send shader_id and request_id only. Returns the lease, commit, revision and `workspace_path` (`<dir>/workspace`); read saved files from the sibling `<dir>/revisions/<NNNNNN>/`, the current saved copy | **yes** |
+| `open_shader_workspace` | File-workspace flow (to only read code or parameter help, use `shader_get_asset_state` with `include:["source","parameters"]`). Send shader_id and request_id only. Returns the lease, commit, revision and `workspace_path` (`<dir>/workspace`); read saved files from the sibling `<dir>/revisions/<NNNNNN>/`, the current saved copy | **yes** |
 | `register_shader_update` | File-workspace flow only: register the package digest and save. Never after `shader_edit`. Send the lease and seen | **yes** |
 | `get_shader_update` | Read the recorded save for one request_id: merge, compile, commit and revision | no |
 | `request_shader_doctor` | Start one on-demand GPU Doctor pass for the clean, previewed Builtin, My Library or Project Shader with its actual private captured frame; keep the UUID for polling | **yes** |

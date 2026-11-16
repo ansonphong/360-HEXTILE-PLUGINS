@@ -27,8 +27,8 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 9. Duplicate → `shader_duplicate_asset {"shader":S,"base":B,"destination_origin":"user","title":"Copy",..}`.
 10. Delete → `shader_delete_asset` with `W`, `B` — My Library only.
 11. Play, pause, jump to 3 s → `shader_control_clock {"action":"play"|"pause"|"seek","time":3,..}` — on screen.
-12. Save or apply a Look → `shader_save_look`; `shader_get_looks` then `shader_apply_look`.
-13. Go back a version → `shader_get_history` then `shader_restore_revision` with that row's `document_ref` and `document_hash`.
+12. Save or apply a Look → `shader_save_look {..,"title":"Warm"}`; `shader_apply_look {..,"name":"Warm"}` — no base, owner fields or hash needed.
+13. Go back a version → `shader_restore_revision {..,"steps_back":1}` (or a history row's `document_ref` and `document_hash`).
 14. Render a still → `shader_preflight_still_export` then `shader_export_still` — on screen (below).
 15. Render a sequence → `preflight_shader_sequence` then `render_shader_sequence` (below).
 16. Edit a Built-in → `shader_edit` by its id when `writable` is true (dev mode); a `read_only` reply means duplicate it and edit the copy.
@@ -59,7 +59,7 @@ asked for an agent-driven session. Editing another Shader needs no open.
 
 ## Export 8K equirect PNG at 2×
 
-Keep `studio_surface_id`, the witness and `saved_base` from the one live read. To edit a Shader other than the one on screen, take `base` from its `shader_list_assets` row, not `saved_base`.
+Keep `studio_surface_id`, the witness and `saved_base` from the one live read. To edit a Shader other than the one on screen, take `base` from its `shader_list_assets` row, not `saved_base`. Every write reply returns the next `base`; chain with it instead of re-reading. Read GLSL and parameter help of any Shader with `shader_get_asset_state {..,"include":["source","parameters"]}`.
 Every still needs that surface id, including App – High precision. Then
 `shader_preflight_still_export`, then `shader_export_still` with that preflight
 id. No preview is needed first.
