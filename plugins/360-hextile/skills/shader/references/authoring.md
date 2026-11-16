@@ -14,7 +14,7 @@ originals/<sha256>.glsl   imported third-party source, immutable
 cover.jpg                 optional browsing picture, not part of identity
 ```
 
-A package must contain `shader.json`, `source.glsl` and `provenance.json`. Text files are UTF-8 without a byte-order mark, and writers use LF. The package digest is `sha256:` plus the hex SHA-256 of the member bytes framed as `hexshader-package-1`. Register sends that digest.
+A package must contain `shader.json`, `source.glsl` and `provenance.json`. Text files are UTF-8 without a byte-order mark, and writers use LF. The package digest is `sha256:` plus the hex SHA-256 of the member bytes framed as `hexshader-package-1`. Only the file-workspace register sends that digest.
 
 The frame does not include the file bytes. It is the ASCII header `hexshader-package-1` plus a newline, then one ASCII record per path sorted by the path's UTF-8 bytes: the path, a newline, the decimal byte length, a newline, the lowercase hex SHA-256 of the raw bytes (no `sha256:` prefix), and a newline. `code_digest` uses the same records with header `hexshader-code-1` and only `source.glsl` plus `modules/**/*.glsl`.
 
@@ -36,17 +36,13 @@ The register digest covers only `shader.json`, `provenance.json`, `source.glsl`,
 
 An address is a list of strings, never a dotted path. `["drivers", "tint.r"]` is the driver whose target is `tint.r`. An edit is one of `set`, `create`, `reshape` or `delete`, and it names one unit. Do not replace a parent object.
 
-Examples. A parameter value is `{"op":"set","address":["values","<parameter id>"],"value":0.5}`; read the ids from `get_shader_parameters` or `shader_get_asset_state` (`saved_values`). A parameter definition field is `["parameters","<parameter id>","<field>"]` with `set` or `delete`; the field is one of `label`, `default`, `min`, `max`, `step`, `clamp`, `control`, `group`, `help`, `semantic`, `option_labels` or `animatable`. `type`, `options` and `interpolation` change only by `reshape` of `["parameters","<parameter id>"]` with the lease. Rename enum option labels in one call: `{"op":"set","address":["parameters","style","option_labels"],"value":{"0":"Girders","1":"Rods"}}`; `get_shader_parameters` shows each enum's `options` and `option_labels`. Source is the single code unit `["code"]`, set with a map of every file: `{"op":"set","address":["code"],"value":{"source.glsl":"...","<module path>":"..."}}` (module paths as in the package, e.g. `modules/x.glsl`). Never address `["source.glsl"]` alone. Package tags are `["meta","tags"]`. Personal Library tags are a different system: `shader_set_tags` needs an existing tag id, and no Shader tool lists them, so ask the user which tag; an unknown id returns `tag_not_found`.
+Examples. A parameter value is `{"op":"set","address":["values","<parameter id>"],"value":0.5}`; read the ids from `get_shader_parameters` or `shader_get_asset_state` (`saved_values`). A parameter definition field is `["parameters","<parameter id>","<field>"]` with `set` or `delete`; the field is one of `label`, `default`, `min`, `max`, `step`, `clamp`, `control`, `group`, `help`, `semantic`, `option_labels` or `animatable`. `type`, `options` and `interpolation` change only by `reshape` of `["parameters","<parameter id>"]` with the lease. Rename enum option labels in one call: `{"op":"set","address":["parameters","style","option_labels"],"value":{"0":"Girders","1":"Rods"}}`; `get_shader_parameters` shows each enum's `options` and `option_labels`. Every address with a worked example is in `get_guide(name="recipes")`. Source is the single code unit `["code"]`, set with a map of every file: `{"op":"set","address":["code"],"value":{"source.glsl":"...","<module path>":"..."}}` (module paths as in the package, e.g. `modules/x.glsl`). Never address `["source.glsl"]` alone. Package tags are `["meta","tags"]`. Personal Library tags are a different system: `shader_set_tags` needs an existing tag id, and no Shader tool lists them, so ask the user which tag; an unknown id returns `tag_not_found`.
 
-`shader_edit` posts one batch of those edits and returns its own saved commit immediately. Register saves file-workspace changes. A `["code"]` edit is checked before saving. If the check fails nothing is saved and the reply is refused `prepare_failed` with diagnostics (file:line:col); fix the code and edit again with a new `request_id`. `get_shader_update` also reads a `shader_edit` request id. `shader_edit` cannot write `provenance.json`. Typed tools (clock and timeline settings, Looks, tags, resources, capture) are the same engine. Send `seen` for every unit a human has edited: `{address, human}` from a read. A unit no human has edited needs none. The same `request_id` returns that saved commit.
-
-Open takes `shader_id` and `request_id` only. Send no other fields. It returns the lease, commit and revision, and `workspace_path` or `workspace_paths` when the reply includes them. A workspace with no snapshot also returns `not_adopted`. Register takes the package digest, the lease and `seen`, and saves. Read `merge`. Watch `compile`. A profile with `ok: null` and status `pending` means compile pending; poll `get_shader_update`. Status `not_observed` means that profile was not compiled. `passed` has `ok: true` and `failed` has `ok: false`. Null `ok` is only `pending` or `not_observed`. Prepare failure returns `prepare: failed` and diagnostics; fix the package and register again with a new request id. `get_shader_update` reads the recorded save. Only `compile` may still change.
-
-Register saves. Read merge to see what was kept. Watch compile; if it fails, fix and register again. A field the human has edited carries a human number wherever you read it. To change such a field, send that pair in seen with your edit. If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Send your edit again with it only if you still mean it.
+`shader_edit` posts one batch of those edits and saves it as one revision; it needs no register and no Save. Check each result's `outcome`: `skipped` changed nothing even when `save` says `saved`. A `["code"]` edit is checked before saving. If the check fails nothing is saved and the reply is refused `prepare_failed` with diagnostics (file:line:col); fix the code and edit again with a new `request_id`. `get_shader_update` also reads a `shader_edit` request id. `shader_edit` cannot write `provenance.json`. Typed tools (clock and timeline settings, Looks, tags, resources, capture) are the same engine. Send `seen` for every unit a human has edited: `{address, human}` from a read. A unit no human has edited needs none. The same `request_id` returns that saved commit.
 
 A merge row is `{op, address, outcome, before, value, human}`. Outcomes are `kept`, `clamped`, `fell_back`, `disabled`, `removed`, `rewritten`, `skipped` and `lost_to_human`. Unchanged `kept` rows are omitted; their number is `kept_count`. A changed `kept` row stays, with its address, outcome and human generation. Source bodies in `before` and `value` are replaced with `path`, `sha256` and `bytes` on applied rows. `skipped` and `lost_to_human` rows keep their source. `before` and `value` are omitted when the unit is absent. `human` is omitted when no human has edited that unit. `not_adopted` is a separate list, not a merge outcome.
 
-Send `lease` when the edit touches a leased unit: `source.glsl` and the modules together (`[code]`), `space`, `passes`, parameter existence and shape, and input-slot existence and shape. The lease is `{holder, generation}`. `holder` is `human` or `agent`. A new Shader starts with the agent at generation 0. A `stale_lease` result means the lease moved. Only the human moves the lease, with Take control or Hand back. While the human holds the code, register is refused: the human holds the code and can hand it back. Hand the code back, then register again. No MCP tool moves the lease.
+Send `lease` when the edit touches a leased unit: `source.glsl` and the modules together (`[code]`), `space`, `passes`, parameter existence and shape, and input-slot existence and shape. The lease is `{holder, generation}`. `holder` is `human` or `agent`. A new Shader starts with the agent at generation 0. A `stale_lease` result means the lease moved. Only the human moves the lease, with Take control or Hand back. While the human holds the code, a code edit is refused; ask the human to hand it back, then edit again. No MCP tool moves the lease.
 
 A modulator or control-channel alias the code still names cannot be renamed or removed; such an edit comes back skipped (format.md P12, T4B.3) — change the code in the same batch to drop the name.
 
@@ -68,20 +64,24 @@ Append one truthful adaptation for a meaningful accepted change. Reuse that entr
 
 `source.glsl` is the entry and owns `hxMain`. Helpers live at declared relative paths under `modules/`. At most 31 modules plus the entry. GLSL is at most 64 KiB in total. Include depth is at most 16. A path is at most 256 bytes. `#include` resolves from the including file against declared files only and must not escape the package.
 
-`while` and `do` are refused. A `for` is accepted only when its trip count is a proven constant: one fresh scalar `int` in the initializer, compared with `<`, `<=`, `>` or `>=` to an integer constant, stepped by `++`, `--`, `+=` or `-=` of a nonzero integer constant, with no later write to that name. `for (int i = 0; i < 3; ++i)` is that shape. A uniform, parameter or other non-constant bound is not proven. Repair the loop and register again.
+`while` and `do` are refused. A `for` is accepted only when its trip count is a proven constant: one fresh scalar `int` in the initializer, compared with `<`, `<=`, `>` or `>=` to an integer constant, stepped by `++`, `--`, `+=` or `-=` of a nonzero integer constant, with no later write to that name. `for (int i = 0; i < 3; ++i)` is that shape. A uniform, parameter or other non-constant bound is not proven. Repair the loop and edit again.
 
 The code lease owns the shape. Label, default, min, max, step, clamp, control, option labels, group, help, values, images and sampling are per unit, and the human wins those unless `seen` covers the human number.
 
 ## Discover and open
 
-Ask politely. Call `shader_open_asset` only when the user wants another Shader on screen. It asks the user; poll the request_id; never retry a dismissed request; ask in chat instead. Use force only when the user asked for an agent-driven session. To change another Shader without switching the view, edit it by id with `shader_edit` (or `open_shader_workspace` for the file workspace).
+1. `get_live_context(view="shader")` once. The compact reply names `shader.origin`, `shader.shaderId` (the same value as `shader.shader_id`), `title`, `writable`, `project_context_witness`, `studio_surface_id`, `lease`, `commit`, `revision`, `saved_base` and `agent_open`. `connected: false` or `shader: null` means the Workshop is empty; ask the user to open one and do not poll. `shader_list_assets` finds any other Shader and returns the witness.
+2. Call `shader_edit` or the typed tools with that `shader_id`. No open step is needed and the user's view does not change. `shader_edit` saves each accepted batch.
+3. My Library Shaders are writable. A Built-in is written in place only when the APP is in dev mode (`writable: true`); otherwise `read_only` says to duplicate it into My Library and edit the copy. Project Shaders are read-only to agents ("Project Shaders cannot be edited here yet."); copy them into My Library with `shader_save_as` or `shader_duplicate_asset`. `shader_duplicate_asset` does not open the copy; read a lost reply with `shader_get_operation` and the original request id.
+4. `shader_open_asset` only asks the user to put another Shader on screen; poll its request id and never retry a dismissed request. Use force only when the user asked for an agent-driven session.
 
-1. `get_live_context(view="shader")` once. The compact reply names `shader.origin`, `shader.shaderId` (the same value as `shader.shader_id`), `title`, `writable`, `project_context_witness`, `studio_surface_id`, `lease`, `commit`, `revision` and `agent_open` (`policy`, `allow_force_open`, `blocked_for_session`). `connected: false` or `shader: null` means the Workshop is empty. Call `shader_list_assets` with the `project_context_witness` from that context. The list returns that witness on `project_context_witness`. Built-ins are writable when the APP is in dev mode (`writable: true` in `get_live_context`); otherwise duplicate into My Library or a Project first. `shader_duplicate_asset` copies one exact saved Shader. Keep the original request id and read a lost reply with `shader_get_operation`. Duplicate does not open the copy.
-2. Call `shader_edit` or the typed tools with that `shader_id`. No open step is needed. `shader_edit` returns its own saved commit immediately.
-3. File workspace only: to edit the package files themselves, call `open_shader_workspace` with that `shader_id` and one new `request_id` (no other fields; it does not switch the user's view; the same request id returns the recorded open). Change those files, not `.local/`, recompute the package digest from the member bytes, and register.
-4. `register_shader_update` saves file-workspace changes. Send the digest, the lease you were given, and `seen`. Then read `merge` and `compile`. A `shader_edit` batch already returned its commit.
+## File workspace only
 
-An unknown register reply is read with `get_shader_update` for that same request id. Do not mint a second id for the same save. A repair after `prepare: failed` is a new request id.
+Use this flow only to edit package files on disk; `shader_edit` is the normal path and needs none of it. `open_shader_workspace` returns `workspace_path` or `workspace_paths`; `workspace/` can be a stale snapshot, so read the saved files from `<parent of workspace_path>/revisions/<revision as 6 digits>/`. Change files, not `.local/`, recompute the package digest from the member bytes, and call `register_shader_update` with the digest, the lease and `seen`.
+
+Open takes `shader_id` and `request_id` only. Send no other fields. It returns the lease, commit and revision, and `workspace_path` or `workspace_paths` when the reply includes them. A workspace with no snapshot also returns `not_adopted`. Register takes the package digest, the lease and `seen`, and saves. Read `merge`. Watch `compile`. A profile with `ok: null` and status `pending` means compile pending; poll `get_shader_update`. Status `not_observed` means that profile was not compiled. `passed` has `ok: true` and `failed` has `ok: false`. Null `ok` is only `pending` or `not_observed`. Prepare failure returns `prepare: failed` and diagnostics; fix the package and register again with a new request id. `get_shader_update` reads the recorded save. Only `compile` may still change.
+
+Register saves. Read merge to see what was kept. Watch compile; if it fails, fix and register again. A field the human has edited carries a human number wherever you read it. To change such a field, send that pair in seen with your edit. If a result says lost_to_human, the human changed it after the number you sent; the result shows their value and the new number. Send your edit again with it only if you still mean it.
 
 ## Arguments
 
@@ -90,7 +90,7 @@ Accept the requested change as natural language. Resolve identity from fresh dis
 ## Prerequisites
 
 - The installed `hextile` MCP connector must reach the running localhost APP.
-- A Project or My Library Shader must be open in the Workshop before a mounted control edit. Source edits of a package use `shader_id` and do not require the Workshop to be the writer.
+- Playback, preview, still and bundle export and the Credits read need the Shader on screen. `shader_edit` works by `shader_id` with no window.
 - Invoke the installed skill named `shader`. Claude may show `/360-hextile:shader`. Check the host's own slash syntax.
 
 If APP is down, say **Launch 360 Hextile, then retry**. For missing MCP, point at the package README. Do not install, restart APP or change host permissions on the user's behalf.
@@ -112,19 +112,15 @@ Native Git diff/commit/checkout/push runs only on the user's explicit instructio
 
 | Result | What to do |
 |---|---|
-| `stale_lease` | Only the human moves the lease (Take control / Hand back). Hand the code back, then register again. |
+| `stale_lease` | Only the human moves the lease (Take control / Hand back). Ask the human to hand the code back, then edit again. |
 | `human_only` | Propose credits for the Credits card. Do not write `provenance.json`. |
-| `prepare: failed` | Read the diagnostics, fix the package, register again with a new request id. |
+| `prepare: failed` | Read the diagnostics, fix the code, edit again with a new request id. |
 | `lost_to_human` | The row has their value and the new human number. Send the edit again with that pair only if you still mean it. |
 | `skipped` | The edit was not adopted. An alias the code still names is the P12 case above. |
 | Unknown transport | Read `get_shader_update` for the original request id. Do not assume nothing changed. |
 | APP missing the route | Upgrade 360 Hextile, then retry. |
 
 Preserve files on every refusal. Do not install software, change host permissions or claim that a failed call left the package untouched.
-
-## Reading another Shader
-
-Edit that Shader by its own id with `shader_edit` (or `open_shader_workspace` for the file workspace). Those do not switch the user's view. Do not use the working Shader's lease on another package. Ask politely. Call `shader_open_asset` only when the user wants another Shader on screen. It asks the user; poll the request_id; never retry a dismissed request; ask in chat instead. Use force only when the user asked for an agent-driven session.
 
 ## Native rendering and exact destination output
 

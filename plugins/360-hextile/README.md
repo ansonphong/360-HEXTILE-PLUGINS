@@ -14,8 +14,8 @@ All merge, validation, and render logic stay in the running app. The client read
 Ask “connect—what Shader is open?” The Shader skill uses one
 `get_live_context(view="shader")` call. The reply names `shader.origin`,
 `shader.shader_id`, the lease holder and generation, `commit` and `revision`.
-Detailed source editing instructions load only when needed. A builtin is readable
-and must be duplicated before a source edit. Unknown metadata stays unknown.
+Detailed source editing instructions load only when needed. A Built-in is writable
+only in APP dev mode; Project Shaders are read-only to agents. Unknown metadata stays unknown.
 Connection is not a save. Both the running APP and the installed connector must
 support this view. Updating this repository does not update an installed plugin
 cache; update through the host's plugin flow and start a new host session.
@@ -29,7 +29,7 @@ The connected MCP tool inventory still showed the original 16 Shader tools; new 
 A Shader package is a folder. `shader.json` holds the authored data (`"hexshader": 1`),
 `source.glsl` is the entry, modules live under `modules/`, and `provenance.json` holds
 credits. A `.hexshader` file is a zip of that same folder. `shader_edit` changes one
-address at a time. Register saves the package digest.
+address at a time and saves each accepted batch.
 
 Source checkout does not establish an installed plugin or a live picture. Update the
 installed host package and reconnect when you are ready to try the running APP.
@@ -198,11 +198,11 @@ A temporary installer destination does not prove an installed host.
 
 ### Shader authoring in your coding host
 
-The `shader` skill edits a package with `shader_edit`. `register_shader_update` saves the digest. Read merge. Watch compile. Only the human moves the lease, with Take control or Hand back. A remote connector alone is insufficient: the running APP and the installed host both have to be present. The host controls its own filesystem permissions. Reasoning belongs to your host account or provider and may incur charges or quota limits.
+The `shader` skill edits a package with `shader_edit`, which saves each accepted batch. Read merge. Watch compile. Only the human moves the lease, with Take control or Hand back. A remote connector alone is insufficient: the running APP and the installed host both have to be present. The host controls its own filesystem permissions. Reasoning belongs to your host account or provider and may incur charges or quota limits.
 
 Claude prefixes plugin skills with the plugin name: `/360-hextile:360-hextile` (hub), `/360-hextile:shader`, `/360-hextile:fractal`, `/360-hextile:upres`. Codex uses separately installed sibling skill directories (`360-hextile`, `shader`, `fractal`, `upres`): confirm them in the installed picker. Check actual Codex/Grok invocation syntax on the installed client; source layout does not prove an installed host.
 
-Open a clean Project or My Library Shader in Workshop, enable MCP, then invoke the installed skill with your requested change. If open acknowledgement is unknown, preserve files and reconnect; never edit presumed paths. Timeout or exhausted repairs includes the last exact receipt and instructions to re-enter this same host skill. A prepare failure returns diagnostics; fix the package and register again with a new request id. An unknown reply is recovered with `get_shader_update` and the original request id. That recovery cannot wake an idle coding host. Playable and input-adapter guidance is conditional on observed executable support, not merely document declarations. Neither compiler pass nor a preview certifies physical input behavior or saving.
+Enable MCP, then invoke the installed skill with your requested change; it edits a My Library Shader by id (a Built-in only in dev mode). If open acknowledgement is unknown, preserve files and reconnect; never edit presumed paths. Timeout or exhausted repairs includes the last exact receipt and instructions to re-enter this same host skill. A prepare failure returns diagnostics; fix the code and edit again with a new request id. An unknown reply is recovered with `get_shader_update` and the original request id. That recovery cannot wake an idle coding host. Playable and input-adapter guidance is conditional on observed executable support, not merely document declarations. Neither compiler pass nor a preview certifies physical input behavior or saving.
 
 ### Native Shader and Fractal output
 

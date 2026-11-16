@@ -2,13 +2,40 @@
 
 # 360 Hextile — Agent Skill
 
+## How to work fast
+
+- Orient with one read: `get_live_context(view="shader")` for the Shader Workshop, `get_live_context` for the Studio, `get_fractal_context` for Fractal.
+- Edit a Shader by `shader_id` with `shader_edit`: one call per edit, no open step, no Save; it saves itself.
+- 403 `Studio isn't present` or `connected:false`: no document is open. Never poll it; ask the user to open a document, then try once.
+- Lost reply: resend the same request with the same `request_id`; it returns the recorded result.
+
+## Top recipes
+
+Full one-line index with arguments: `get_guide(name="recipes")`. Shader specifics: the `shader` skill's Top 20.
+
+1. What Shader is open → `get_live_context(view="shader")`.
+2. Change a Shader parameter, value, clock or timeline → `shader_edit {"shader_id":..,"request_id":..,"edits":[{"op":"set","address":["parameters","<id>","label"],"value":".."}]}` (addresses in the recipes guide).
+3. Edit Shader code, add or remove a slider → `shader_edit` `["code"]` with every file and the lease (`shader` skill).
+4. Rename, duplicate or delete a Shader → `shader_rename_asset` / `shader_duplicate_asset` / `shader_delete_asset` (My Library only).
+5. Play, pause or seek the Shader → `shader_control_clock` (on screen).
+6. Render a Shader still → `shader_preflight_still_export` then `shader_export_still` (on screen).
+7. Render a Shader sequence → `preflight_shader_sequence` then `render_shader_sequence`, poll `get_shader_sequence`.
+8. Generate a 360 from a prompt → `validate_config` then `run_workflow` and `get_status`.
+9. Make a seed image → `list_360_loras`, `get_seed_memory_advice`, `generate_seed`, `get_seed_job`.
+10. Upscale a still → `run_workflow` builtin `upres-still`; folder or video → `upres` skill.
+11. Change the open Studio document's prompt → `apply_config_delta` with `doc_generation` from `get_live_context`.
+12. Change a Fractal value or play its timeline → `get_fractal_context` then `apply_fractal_edits` / `control_fractal_timeline` (`fractal` skill; open Fractal first).
+13. Find renders or prompts → `list_runs`, `search_library_prompts`, `list_sequences`.
+14. Export a render file → `preflight_file_export` then `export_render_file`.
+15. Settings, GPU, models, license → `get_app_preferences`, `get_gpu_diagnostics`, `get_model_readiness`, `get_license_status`.
+
 Drive **360 Hextile** (desktop app) while it is running on this machine. Tools talk to `http://127.0.0.1:8000` through the `hextile` MCP server. **The server owns config authority** — merge, `HextileConfig` validation, and queueing happen in the app, not in this plugin.
 
 Install id: **`360-hextile@360-hextile`**. Marketplace `360-hextile`. Skill `360-hextile`. MCP token `hextile`. Do not install `hextile@360-hextile`.
 
 See `references/agent-lexicon.md` for locked words, the complementarity card, and `REFUSE_*` strings.
 
-For Project Shader coding, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the package: `shader.json`, `source.glsl`, `modules/**/*.glsl`, `provenance.json`, resources, originals and an optional cover. Edit with `shader_edit`. `register_shader_update` saves the package digest. Read merge. Watch compile. Send `seen` for a unit a human has edited. Only the human moves the lease, with Take control or Hand back. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page does not prove the running APP or an installed host. Git CLI actions need a separate user instruction; MCP supplies no Git tool. For Playable Shaders, one Enter-blast request creates the parameter, the GLSL term, the gate channel, the key binding, the BLAST envelope and the driver together in `shader.json`. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
+For Shader work, invoke the installed **`shader`** skill (`/360-hextile:shader` on Claude) using this host's observed syntax. It owns the package: `shader.json`, `source.glsl`, `modules/**/*.glsl`, `provenance.json`, resources, originals and an optional cover. Edit My Library Shaders (and Built-ins in dev mode) with `shader_edit`; it saves each accepted batch. Project Shaders are read-only to agents; edit a My Library copy. Read each outcome. Watch compile. Send `seen` for a unit a human has edited. Only the human moves the lease, with Take control or Hand back. Read `get_guide` `best-practices`, `recipes`, `workflow-schema` and `website-index`, and the human page https://360hextile.com/docs/create/shader. A docs page does not prove the running APP or an installed host. Git CLI actions need a separate user instruction; MCP supplies no Git tool. For Playable Shaders, one Enter-blast request creates the parameter, the GLSL term, the gate channel, the key binding, the BLAST envelope and the driver together in `shader.json`. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. This hub remains the general Workflow automation entry.
 
 For Fractal Workshop, invoke the installed **`fractal`** skill. It owns fresh context, actual current renderer ownership, closed edits, session transport, Save and Save As, and native sequence or folder publication. Shader and Fractal keep their native validation and saved receipts.
 
@@ -152,8 +179,8 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `control_shader_sequence` | Continue an inspected request, Stop the observed run, resume an admitted job, or control the exact publication attempt; reconcile unknown replies | **yes** |
 | `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG, JPG, or EXR; retain the fingerprint and attempt ID | no |
 | `export_shader_sequence` | Publish only that exact preflighted folder intent; GET the known ID/attempt after an uncertain reply | **yes** |
-| `open_shader_workspace` | Open one Shader workspace. Send shader_id and request_id only. Returns the lease, commit and revision. The same request_id returns the recorded result | **yes** |
-| `register_shader_update` | Register the package digest and save. Read merge. Watch compile. Send the lease and seen. The same request_id returns the recorded result | **yes** |
+| `open_shader_workspace` | File-workspace flow or reading package files. Send shader_id and request_id only. Returns the lease, commit, revision and workspace path; read saved files from `revisions/<NNNNNN>/` | **yes** |
+| `register_shader_update` | File-workspace flow only: register the package digest and save. Never after `shader_edit`. Send the lease and seen | **yes** |
 | `get_shader_update` | Read the recorded save for one request_id: merge, compile, commit and revision | no |
 | `request_shader_doctor` | Start one on-demand GPU Doctor pass for the clean, previewed Builtin, My Library or Project Shader with its actual private captured frame; keep the UUID for polling | **yes** |
 | `get_shader_doctor` | Poll the exact Doctor request UUID and witness for bounded diagnostics without source, pixels or overlay mask | no |
@@ -219,7 +246,7 @@ The proxy forwards only to APP loopback and supplies `X-Hextile-Mcp-Session`. Do
 
 ### Selection guide
 
-For saved Shader animation, register the package and read merge and compile,
+For saved Shader animation, after `shader_edit` read each outcome and compile,
 then reread the saved identity/hashes and Project witness. Require
 `get_capabilities.native_render.contract:"native-render/1"`. Preflight and submit
 the same exact request/key using `preflight_shader_sequence` →

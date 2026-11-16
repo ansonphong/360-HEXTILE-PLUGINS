@@ -1,56 +1,76 @@
 ---
 name: shader
-description: "Connect to the open Shader and inspect its lease, or edit a Shader package through shader_edit and register."
+description: "Connect to the open Shader and inspect it, or edit a My Library Shader (or a Built-in in dev mode) by id with shader_edit, which saves each edit."
 ---
 
 # 360 Hextile — Shader
 
+## How to work fast
+
+- Orient with one read: `get_live_context(view="shader")`.
+- Act by `shader_id` with `shader_edit`: one call per edit, no open step, no Save; it saves itself.
+- 403 `Studio isn't present` or `connected: false`: no document is open. Never poll it; ask the user to open a document or the Shader Workshop.
+- Lost reply: resend the same request with the same `request_id`.
+
+## Top 20
+
+`W`, `B`, `S`, `U` and `L` are defined in `get_guide(name="recipes")`, which has every other recipe. Edits are `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[..]}`.
+
+1. What Shader is open → `get_live_context(view="shader")`.
+2. Rename dropdown options → `{"op":"set","address":["parameters","<id>","option_labels"],"value":{"0":"A","1":"B"}}` — ids and option values from `get_shader_parameters`.
+3. Change a label, range, default, step or help → `["parameters","<id>","label"|"min"|"max"|"default"|"step"|"help"]` — send min and max together.
+4. Set a value → `{"op":"set","address":["values","<id>"],"value":0.7}`.
+5. Edit the code → read `revisions/<NNNNNN>/` (recipes, "read the GLSL"), then `["code"]` with every file and `"lease":L` — a compile error returns `file:line:col` and saves nothing.
+6. Add a slider → with `"lease":L`: `create ["parameters","glow"]` plus a `["code"]` entry using `hxParam_glow`.
+7. Remove a parameter → with `"lease":L`: `delete ["parameters","<id>"]` plus `["code"]` without `hxParam_<id>`, in one call.
+8. Rename a Shader → `shader_rename_asset` with `W`, `B` — My Library only.
+9. Duplicate → `shader_duplicate_asset {"shader":S,"base":B,"destination_origin":"user","title":"Copy",..}`.
+10. Delete → `shader_delete_asset` with `W`, `B` — My Library only.
+11. Play, pause, jump to 3 s → `shader_control_clock {"action":"play"|"pause"|"seek","time":3,..}` — on screen.
+12. Save or apply a Look → `shader_save_look`; `shader_get_looks` then `shader_apply_look`.
+13. Go back a version → `shader_get_history` then `shader_restore_revision` with that row's `document_ref` and `document_hash`.
+14. Render a still → `shader_preflight_still_export` then `shader_export_still` — on screen (below).
+15. Render a sequence → `preflight_shader_sequence` then `render_shader_sequence` (below).
+16. Edit a Built-in → `shader_edit` by its id when `writable` is true (dev mode); a `read_only` reply means duplicate it and edit the copy.
+17. New Shader from the starter or pasted GLSL → `shader_create_asset`.
+18. Clock or timeline → `["clock","bpm"|"speed"]`; first timeline edit sets `["timeline","start"]`, `["timeline","end"]` and `["timeline","loop"]` in one call.
+19. Generate a 360 from a prompt → `validate_config` then `run_workflow` and `get_status` (hub skill).
+20. Change a Fractal value or play its timeline → `fractal` skill; `get_fractal_context` fails until a Fractal scene is open.
+
+Project Shaders are read-only to agents ("Project Shaders cannot be edited here yet."); make a My Library copy with `shader_save_as` or `shader_duplicate_asset`. Each `results[].outcome` must be checked: `skipped` changed nothing even when `save` says `saved`.
+
 ## Connect / what Shader is open?
 
-For a read-only connection or current-Shader question, first check that the
-registered tool accepts `view`. If missing, report that the host tool registration
-needs refresh/reconnect; do not send an unsupported field or call the full view.
-Otherwise call `get_live_context(view="shader")` once. This read needs no
-`get_capabilities` handshake. Use the tools already exposed by the host; do not
-print the whole catalog or inspect DevTools just to discover the Shader.
+If the registered `get_live_context` does not accept `view`, report that the host
+tool registration needs a refresh/reconnect. This read needs no
+`get_capabilities` handshake, catalog dump or DevTools.
 
-The reply is the compact live Shader: `shader.origin`, `shader.shaderId`
-(the same value as `shader.shader_id`), `title`, `writable`,
-`project_context_witness`, `studio_surface_id`, `lease` (`holder` and
-`generation`), `commit`, `revision`, `connected`, `mcp_enabled` and
-`agent_open` (`policy`, `allow_force_open`, `blocked_for_session`). Report
-those. `title` is the saved package title. Ask politely. Call
-`shader_open_asset` only when the user wants another Shader on screen. It asks
-the user; poll the request_id; never retry a dismissed request; ask in chat
-instead. Use force only when the user asked for an agent-driven session. To
-change another Shader without switching the view, edit it by id with
-`shader_edit` (or `open_shader_workspace` for the file workspace). A missing Shader means none is open. `connected: false` or
-`shader: null` means the Workshop is empty. Call `shader_list_assets` with the
-`project_context_witness` from that context. The list returns that witness.
-APP down: “Launch 360 Hextile, then retry.” MCP disabled: enable MCP in APP Settings.
+The reply names `shader.origin`, `shader.shaderId` (the same value as
+`shader.shader_id`), `title` (the saved package title), `writable`,
+`project_context_witness`, `studio_surface_id`, `lease` (`holder`,
+`generation`), `commit`, `revision`, `saved_base`, `connected`, `mcp_enabled`
+and `agent_open`. `connected: false` or `shader: null` means the Workshop is
+empty. APP down: “Launch 360 Hextile, then retry.” MCP disabled: enable MCP in
+APP Settings. A connection is not a save and not permission to write.
 
-`open_shader_workspace` takes `shader_id` and `request_id` only; send no other
-fields. The package digest layout is in
-[the authoring procedure](references/authoring.md). `shader_capture_sequence_input`
-is optional for a Shader with no sequence input.
-
-A successful connection is not a save and not permission to write. Only use
-DevTools when the request needs visual or DOM inspection. Discovery does not
-navigate, duplicate, edit, register, render or take screenshots.
+`shader_open_asset` only asks the user to put another Shader on screen; poll its
+request id and never retry a dismissed request. Use force only when the user
+asked for an agent-driven session. Editing another Shader needs no open.
 
 ## Export 8K equirect PNG at 2×
 
-Call `get_live_context(view="shader")` once and keep `studio_surface_id`, the
-witness, and the saved base. Every still needs that surface id, including
-App – High precision. Then `shader_preflight_still_export`, then
-`shader_export_still` with that preflight id.
+Keep `studio_surface_id`, the witness and `saved_base` from the one live read.
+Every still needs that surface id, including App – High precision. Then
+`shader_preflight_still_export`, then `shader_export_still` with that preflight
+id. No preview is needed first.
 
 Profile `shader-raster-still/1`. Output: `projection` `equirectangular`,
 `encoding` `png`, `width` `8192`, `height` `4096`, `supersampling` `2`,
 `output_path` the absolute PNG file. A still writes a file. A sequence writes
 a folder: `preflight_shader_sequence` then `render_shader_sequence`, with
-top-level `width`, `height`, `supersampling`, and
-`folder_export.destination_folder`.
+top-level `width`, `height`, `supersampling`, `seed` and
+`folder_export.destination_folder`. `shader_capture_sequence_input` is optional
+for a Shader with no sequence input.
 
 Omit `render_route` for App – High precision. Otherwise send
 `{profile: "shader-render-route/1", route}` using
@@ -62,35 +82,15 @@ from 0.50 to 1.00, or `{format: "exr"}`. Equirect EXR uses profile
 are 1, 1.5, and 2. Any finite scale of at least 1 is sent through. Viewer –
 High precision sequences are EXR.
 
-## Edit, controls, diagnostics or output
+## Edit rules
 
-Before any Shader change, read
-[the authoring procedure](references/authoring.md). A package is `shader.json`,
-`source.glsl`, `modules/**/*.glsl`, `provenance.json`, the referenced
-`resources/` and `originals/` files, and an optional `cover.jpg`. `hexshader`
-is 1.
-
-`shader_edit` and the typed tools change one unit at a time.
-`register_shader_update` saves the package digest. Read `merge`. Watch
-`compile`. Send `seen` for a unit a human has edited. Only the human moves the
-lease (Take control / Hand back). A `stale_lease` result means the human holds
-the code, or the generation you sent is no longer current.
-
-A Shader technique question is `get_guide(name="shader-cookbook")` and does not
-open a Shader. Load only the guides the procedure names.
-
-`shader_edit` addresses: a parameter is `["values","<parameter id>"]`, source is
-`["code"]` with value `{"source.glsl":"...","<module path>":"..."}` (all files).
-A `["code"]` edit is checked before saving: on failure nothing is saved and the reply is
-refused `prepare_failed` with diagnostics (file:line:col); fix the code and edit again.
-`get_shader_update` also reads a `shader_edit` request id.
-Personal tags for `shader_set_tags` are user-owned and no tool lists them; ask the
-user. Write tools take `expected_working_digest` = `base.document_hash` (from
-`shader_get_asset_state`); it defaults to that when omitted. A Sequence render
-requires `seed`. Still export needs the Shader mounted; use `shader_open_asset` first.
-
-Playback (`shader_control_clock` and `shader_step_frame`) is not an edit.
-Changing bpm, speed, start, end or loop is an edit.
+[The authoring procedure](references/authoring.md) has the package layout,
+merge outcomes, lease and credits rules. Send `seen` for a unit a human has
+edited. Only the human moves the lease (Take control / Hand back); a
+`stale_lease` result means the human holds the code or the generation you sent
+is old. Read `compile` after a code edit. Personal Library tags for
+`shader_set_tags` have no list tool; ask the user. A Shader technique question
+is `get_guide(name="shader-cookbook")` and does not open a Shader.
 
 Never auto-install, restart or change host permissions. After an update, observe
 the installed package, the registered tools and the running APP. A source checkout

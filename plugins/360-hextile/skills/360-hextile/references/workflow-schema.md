@@ -242,7 +242,7 @@ Use the existing status, cancellation and original-request recovery tools.
 
 Mounted Shader parameter controls are live session values, not Workflow fields and not proof of a saved package. `get_shader_parameters` returns current IDs, values, optional human revisions, commit and revision without source. Structural edits use `shader_edit`.
 
-`shader.json` is not a `.hextile.json` Workflow. It holds the authored data. `source.glsl` and `modules/**/*.glsl` hold the code. No GLSL bodies belong in durable JSON. Include unused helpers. `shader.json` is at most 2 MiB. GLSL is at most 64 KiB in total, with at most 31 modules plus the entry, include depth at most 16, and a path of at most 256 bytes. Register saves. Read merge. Watch compile. See the installed `shader` skill and https://360hextile.com/docs/create/shader.
+`shader.json` is not a `.hextile.json` Workflow. It holds the authored data. `source.glsl` and `modules/**/*.glsl` hold the code. No GLSL bodies belong in durable JSON. Include unused helpers. `shader.json` is at most 2 MiB. GLSL is at most 64 KiB in total, with at most 31 modules plus the entry, include depth at most 16, and a path of at most 256 bytes. `shader_edit` saves each accepted batch; Register saves only in the file-workspace flow. Read merge. Watch compile. See the installed `shader` skill and https://360hextile.com/docs/create/shader.
 
 ## Saved Sequence upscale
 
@@ -258,7 +258,7 @@ Scene-linear EXR supersampling uses the same strict CPU float resolve for native
 
 Before editing, use the installed Shader skill and its `references/authoring.md`.
 
-`open_shader_workspace` takes `shader_id` and `request_id` only and returns the lease, commit and revision. `shader_edit` sends set, create, reshape or delete on one address, plus `seen` and `lease` when the edit needs them. `register_shader_update` sends the package digest and saves. Read merge. Watch compile. Prepare failure is `prepare: failed` plus diagnostics. A repair uses a new request id. The same request id returns the recorded result.
+`open_shader_workspace` takes `shader_id` and `request_id` only and returns the lease, commit and revision. `shader_edit` sends set, create, reshape or delete on one address, plus `seen` and `lease` when the edit needs them, and saves each accepted batch. `register_shader_update` is only for the file-workspace flow. Read merge. Watch compile. Prepare failure is `prepare: failed` plus diagnostics. A repair uses a new request id. The same request id returns the recorded result.
 
 For Playable Shaders, read recipes and best-practices. `conventions/1` and `modulation/2` name the fly camera and the envelope recipe. Read `available` and `executable_capabilities`, and observe `execution_ready` independently of the saved package. Camera helpers are `vec3 hxCameraPosition`, `mat3 hxCameraRotation`, `vec3 hxCameraDirection(vec3 canonicalDirection)`. A null camera is identity. Fly GLSL uses `ro=hxCameraPosition` and `rd=hxCameraDirection(hx.direction)`. Portable conventions/1 sources remain keyboard/mouse. MIDI/OSC/gamepad adapters stay unsupported unless APP reports them. Control authoring never arms Interact, presses keys, changes live pose or writes Project presets. `frame-accumulation/1` is executable only when listed in `executable_capabilities`. Do not add a pass graph, a history file, or a new tool.
 
@@ -308,6 +308,6 @@ render admission, use normal native status and Stop with its observed `run_id`.
 
 ### Shader code lease
 
-The lease is `{holder, generation}`. `holder` is `human` or `agent`. Only the human moves the lease, with Take control or Hand back. No MCP tool moves the lease. A `stale_lease` result means the lease moved. While the human holds the code, register is refused: the human holds the code and can hand it back. Hand the code back, then register again.
+The lease is `{holder, generation}`. `holder` is `human` or `agent`. Only the human moves the lease, with Take control or Hand back. No MCP tool moves the lease. A `stale_lease` result means the lease moved. While the human holds the code, a code edit is refused; ask the human to hand it back, then edit again.
 
-Send `seen` as `{address, human}` for every unit a human has edited. A `lost_to_human` row kept their value and returns the new number. Resend a lost register unit with `shader_edit` and that pair only if you still mean it. Stop cancels work. It does not move the lease.
+Send `seen` as `{address, human}` for every unit a human has edited. A `lost_to_human` row kept their value and returns the new number. Resend a lost unit with `shader_edit` and that pair only if you still mean it. Stop cancels work. It does not move the lease.
