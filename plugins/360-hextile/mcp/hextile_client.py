@@ -1360,7 +1360,12 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Invalid Shader history request_id", status_code=422, kind="other")
     saved = args.get("library_intent") == "saved"
     if saved:
-        if (args.get("confirmation_scope") != {"operation": operation if operation != "shader_history_preview"
+        scope = args.get("confirmation_scope")
+        # The tool documents confirmation operation shader_history_retention for preview and compact.
+        if (operation == "shader_history_compact" and isinstance(scope, Mapping)
+                and scope.get("operation") == "shader_history_retention"):
+            scope = {**dict(scope), "operation": operation}
+        if (scope != {"operation": operation if operation != "shader_history_preview"
                 else "shader_history_retention", "shader": dict(args["shader"])}
                 or any(key in args for key in ("studio_surface_id", "lease_id", "expected_edit_sequence"))):
             raise HextileClientError("Invalid saved history confirmation", status_code=422, kind="other")
@@ -4820,6 +4825,11 @@ class Client:
                     or len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 32768):
                 raise HextileClientError("Invalid Shader history preview", kind="other")
             return result
+        if "preview_operation" in args:
+            # Shared schema const. Compact builds history_compact itself and does not read this field.
+            if args.get("preview_operation") != "compact":
+                raise HextileClientError("Invalid recoverable history preview", status_code=422, kind="other")
+            args = {key: value for key, value in args.items() if key != "preview_operation"}
         return self._shader_history_write(args, "shader_history_" + action,
                                           "/api/shaders/agent-operations/history-retention")
 

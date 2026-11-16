@@ -1119,6 +1119,43 @@ def test_checkpoint_retention_and_history_match_seal_on_demand(monkeypatch):
         client.get_shader_history({"shader": shader, "project_context_witness": "wit"})
 
 
+def test_library_history_compact_accepts_documented_confirmation(monkeypatch):
+    """A library compact that follows the tool text and schema reaches history-retention."""
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    tool = next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == "shader_history_retention")
+    assert 'confirmation_scope {operation:"shader_history_retention"}' in tool["description"]
+    assert "ignored on compact" in tool["description"]
+    assert tool["inputSchema"]["properties"]["preview_operation"]["const"] == "compact"
+
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    shader = {"origin": "user", "shaderId": "aurora"}
+    base = {"kind": "saved", "working_revision": 2,
+            "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64}
+    preview_token = "sha256:" + "d" * 64
+    documented = {
+        "shader": shader, "project_context_witness": "wit", "base": base,
+        "action": "compact", "mode": "current", "request_id": request_id,
+        "preview_token": preview_token, "preview_operation": "compact",
+        "library_intent": "saved",
+        "confirmation_scope": {"operation": "shader_history_retention", "shader": shader},
+    }
+    sent = []
+
+    def reply(method, path, body=None, **kwargs):
+        sent.append((method, path, body))
+        return {"request_id": request_id, "operation": "shader_history_compact", "state": "saved"}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    assert client.shader_history_retention(documented)["state"] == "saved"
+    expected = {key: value for key, value in documented.items() if key != "preview_operation"}
+    expected["expected_working_digest"] = base["document_hash"]
+    assert sent == [("POST", "/api/shaders/agent-operations/history-retention", expected)]
+    internal = {**expected, "confirmation_scope": {"operation": "shader_history_compact", "shader": shader}}
+    assert client.shader_history_retention(internal)["state"] == "saved"
+    assert sent[-1][2]["confirmation_scope"]["operation"] == "shader_history_compact"
+
+
 def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
