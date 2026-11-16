@@ -92,7 +92,7 @@ If B is inaccessible, keep its row `license_status:"unknown"`, with `evidence:{"
 
 ## Shader scalar expression and timeline
 
-Edit values, clock and timeline with the `shader_edit` addresses in the index above; each accepted batch is saved. Read the new revision and each outcome before rendering. Playback (`shader_control_clock`, `shader_step_frame`) does not save; changing `bpm`, `speed`, `start`, `end` or `loop` is a saved edit.
+Edit values, clock and timeline with the `shader_edit` addresses in the index above; each accepted batch autosaves. Read each outcome before rendering. Playback (`shader_control_clock`, `shader_step_frame`) does not save; changing `bpm`, `speed`, `start`, `end` or `loop` is a saved edit.
 
 ## Saved Shader native sequence
 

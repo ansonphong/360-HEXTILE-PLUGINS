@@ -1063,6 +1063,46 @@ def test_named_history_client_forwards_closed_intent_and_keeps_unknown_request(m
         client.shader_checkpoint({**args, "mutation": {"kind": "checkpoint_save"}})
 
 
+def test_checkpoint_retention_and_history_match_seal_on_demand(monkeypatch):
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+    tools = {tool["name"]: tool for tool in SHADER_EXTENSION_TOOLS}
+    checkpoint, retention = tools["shader_checkpoint"], tools["shader_history_retention"]
+    assert ("Seals the current version as a named restore point; edits otherwise autosave without new "
+            "revisions.") in checkpoint["description"]
+    assert "title" not in checkpoint["inputSchema"]["required"]
+    assert "target" not in checkpoint["inputSchema"]["required"]
+    assert "Built-ins in developer mode" in retention["description"]
+    assert {"request_id", "studio_surface_id"} <= set(retention["inputSchema"]["properties"])
+    assert "seal" in tools["shader_get_history"]["description"]
+    authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
+    assert ("`shader_edit` autosaves to the working copy. A revision is cut only by a checkpoint, an output, "
+            "or your first edit after the human (saved as 'Before agent edit').") in authoring
+
+    client = Client("http://127.0.0.1:9")
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    shader = {"origin": "builtin", "shaderId": "aurora"}
+    sent = []
+    monkeypatch.setattr(client, "request_json", lambda method, path, body=None, **kwargs: sent.append(body) or (
+        {"schema": 1, "shader": shader, "project_context_witness": "wit", "kind": "revisions",
+         "entries": [{"document_ref": "rev:3", "seal": {"reason": "agent_handoff", "actor": "agent",
+                                                       "at": "2026-11-16T00:00:00Z"}},
+                     {"document_ref": "rev:4", "seal": None}], "next_cursor": None}
+        if path.endswith("/history") else
+        {"preview_token": "sha256:" + "d" * 64} if body.get("action") == "preview" else
+        {"request_id": request_id, "operation": body["confirmation_scope"]["operation"], "state": "saved"}))
+    head = {"request_id": request_id, "shader": shader, "project_context_witness": "wit", "action": "save"}
+    assert client.shader_checkpoint(head)["state"] == "saved"
+    assert "title" not in sent[-1] and "target" not in sent[-1]
+    preview = {"request_id": request_id, "shader": shader, "project_context_witness": "wit",
+               "base": {"kind": "saved", "working_revision": 2,
+                        "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64},
+               "action": "preview", "mode": "checkpoints"}
+    assert client.shader_history_retention(preview)["preview_token"]
+    assert sent[-1]["request_id"] == request_id
+    rows = client.get_shader_history({"shader": shader, "project_context_witness": "wit"})["entries"]
+    assert [row["seal"] and row["seal"]["reason"] for row in rows] == ["agent_handoff", None]
+
+
 def test_delete_shader_asset_forwards_exact_intent_and_recovers_unknown(monkeypatch) -> None:
     client = Client("http://127.0.0.1:9")
     request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"

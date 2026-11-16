@@ -1315,12 +1315,12 @@ def _native_history_args(operation: str, args: Mapping[str, Any]) -> None:
         "shader_apply_look": ({"look_id", "expected_look_envelope_hash"}, set()),
         "shader_rename_look": ({"look_id", "expected_look_envelope_hash", "title"}, set()),
         "shader_delete_look": ({"look_id", "expected_look_envelope_hash"}, set()),
-        "shader_checkpoint_save": ({"title"}, {"target"}),
+        "shader_checkpoint_save": (set(), {"title", "target"}),
         "shader_checkpoint_rename": ({"checkpoint_id", "expected_name", "title"}, set()),
         "shader_checkpoint_remove": ({"checkpoint_id", "expected_name"}, set()),
         "shader_restore_revision": (set(), {"target", "checkpoint_id"}),
         "shader_copy_revision": ({"destination_origin"}, {"target", "checkpoint_id", "title"}),
-        "shader_history_preview": ({"mode"}, {"preview_operation"}),
+        "shader_history_preview": ({"mode"}, {"preview_operation", "request_id"}),
         "shader_history_compact": ({"mode", "preview_token"}, set()),
     }
     if operation not in fields or not isinstance(args, Mapping):
@@ -1447,7 +1447,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None, lim
         "assets": {"shader", "title", "status", "reasons", "base"},
         "history": {"document_ref", "document_hash", "ordinal", "integrity", "publication",
                     "schema", "timestamp", "hash_suffix", "restore_eligible", "copy_eligible",
-                    "eligibility_reason", "id", "name", "actor", "error", "target_family"},
+                    "eligibility_reason", "id", "name", "actor", "error", "target_family", "seal"},
         "looks": {"id", "title", "revision", "content_hash", "envelope_hash", "manifest_hash",
                   "frozen_document_revision", "frozen_document_hash"},
     }.get(kind)

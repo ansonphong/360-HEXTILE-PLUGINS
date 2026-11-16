@@ -2975,7 +2975,9 @@ SHADER_EXTENSION_TOOLS = [
               {**_OUTPUT_OWNER, "destination_project": _ABS_PATH}, _OUTPUT_OWNER_REQUIRED),
     _tool_def("shader_get_history", "Use to list a Shader's saved revisions or checkpoints. Pass shader and project_context_witness "
                                     "(freshness token, from get_live_context(view=\"shader\")); optional kind, limit, cursor, "
-                                    "newest:true (newest first, with total). Restart without cursor if it goes stale.",
+                                    "newest:true (newest first, with total). Each row has seal ({reason, actor, at} or null; "
+                                    "reason create, checkpoint, output, agent_handoff, restore or legacy). Restart without "
+                                    "cursor if it goes stale.",
               {**_NATIVE_SHADER_TARGET, "kind": {"enum": ["revisions", "checkpoints"]},
                "cursor": {"type": "string", "maxLength": 8192},
                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
@@ -3035,10 +3037,12 @@ SHADER_EXTENSION_TOOLS = [
                "envelope_hash": {**_SHADER_DIGEST, "description": "Same as expected_look_envelope_hash."},
                "seen": _SEEN},
               ["shader", "project_context_witness", "request_id"]),
-    _tool_def("shader_checkpoint", "Use to save, rename or remove a named checkpoint (a bookmark in history). Pass shader, "
+    _tool_def("shader_checkpoint", "Seals the current version as a named restore point; edits otherwise autosave without new "
+                                   "revisions. Use to save, rename or remove a named checkpoint. Pass shader, "
                                    "project_context_witness (freshness token, from get_live_context(view=\"shader\")), base, "
                                    "request_id and action (\"save\", \"rename\" or \"remove\"), plus title, checkpoint_id or expected_name "
-                                   "as the action needs. base is optional (omitted = the saved head). Library Shader: "
+                                   "as the action needs. Save: target (from shader_get_history) is optional (omitted = the head); "
+                                   "title is optional (omitted = \"Checkpoint {n}\"). base is optional (omitted = the saved head). Library Shader: "
                                    "library_intent and confirmation_scope are filled for you. Open Shader: studio_surface_id.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["save", "rename", "remove"]},
@@ -3072,9 +3076,12 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness", "base", "request_id",
                "destination_origin"]),
     _tool_def("shader_history_retention", "Use to preview or compact a Shader's history to save space (recoverable; permanent purge is "
-                                          "human only). Pass shader, project_context_witness (freshness token, from "
+                                          "human only; works on Built-ins in developer mode). Compact keeps the head, named "
+                                          "checkpoints, the newest 20 automatic seals and a Built-in's revision 1. Pass shader, project_context_witness (freshness token, from "
                                           "get_live_context(view=\"shader\")), base, action (\"preview\" or \"compact\") and mode (\"current\" or "
-                                          "\"checkpoints\"). Compact uses the preview_token from preview. Library Shader: library_intent "
+                                          "\"checkpoints\"), plus request_id (optional on preview; the idempotency key on "
+                                          "compact). Compact uses the preview_token from preview. Open Shader: "
+                                          "studio_surface_id. Library Shader: library_intent "
                                           "\"saved\" and confirmation_scope {operation:\"shader_history_retention\"}. Omit "
                                           "expected_working_digest: it defaults to base.document_hash from "
                                           "shader_get_asset_state/shader_list_assets.",
