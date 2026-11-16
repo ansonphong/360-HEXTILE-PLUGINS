@@ -2725,3 +2725,22 @@ def test_look_by_name_fills_owner_and_hash_and_sequence_takes_nested_base(monkey
         "name": "n", "working_revision": 3, "document_hash": digest, "source_hash": digest}
     with pytest.raises(HextileClientError, match="disagrees with base"):
         _flat_sequence_base({"base": base, "working_revision": 2})
+
+
+def test_look_resolution_refuses_a_name_and_look_id_that_disagree(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    entries = [{"id": "look_1", "title": "Dusk", "envelope_hash": "sha256:" + "1" * 64},
+               {"id": "look_2", "title": "Dawn", "envelope_hash": "sha256:" + "2" * 64},
+               {"id": "look_3", "title": "Dawn", "envelope_hash": "sha256:" + "3" * 64}]
+    monkeypatch.setattr(client, "get_shader_looks", lambda _args: {"entries": entries})
+    base = {"shader": {"origin": "user", "shaderId": "aurora"}, "project_context_witness": "wit"}
+    ok = client._resolve_look({**base, "look_id": "look_1", "name": "Dusk"})
+    assert ok["look_id"] == "look_1" and ok["expected_look_envelope_hash"] == entries[0]["envelope_hash"]
+    for bad, status in (({"look_id": "look_1", "name": "Dawn"}, 409),
+                        ({"look_id": "look_2", "name": "Dawn"}, 409),
+                        ({"look_id": "look_1", "name": "Nowhere"}, 409)):
+        with pytest.raises(HextileClientError) as caught:
+            client._resolve_look({**base, **bad})
+        assert caught.value.status_code == status
+    with pytest.raises(HextileClientError, match="send look_id"):
+        client._resolve_look({**base, "name": "Dawn"})

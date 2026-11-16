@@ -4705,12 +4705,23 @@ class Client:
                                      status_code=422, kind="other")
         looks = self.get_shader_looks({key: args[key] for key in ("shader", "project_context_witness") if key in args})
         rows = [row for row in looks.get("entries", []) if isinstance(row, Mapping)]
-        if "look_id" in args:
-            found = [row for row in rows if row.get("id") == args["look_id"]]
-        else:
-            found = [row for row in rows if row.get("title") == name] or [
+        named: list = []
+        if name is not None:
+            named = [row for row in rows if row.get("title") == name] or [
                 row for row in rows if isinstance(row.get("title"), str)
                 and row["title"].casefold() == name.strip().casefold()]
+        if "look_id" in args:
+            found = [row for row in rows if row.get("id") == args["look_id"]]
+            if name is not None and found:
+                if len(named) > 1:
+                    raise HextileClientError(f"{len(named)} Looks are named {json.dumps(name)}; send look_id only",
+                                             status_code=409, kind="other")
+                if not named or named[0].get("id") != found[0].get("id"):
+                    raise HextileClientError(
+                        f"look_id {json.dumps(args['look_id'])} is not the Look named {json.dumps(name)}; "
+                        "send one of them or matching values", status_code=409, kind="other")
+        else:
+            found = named
         titles = ", ".join(json.dumps(row.get("title")) for row in rows[:20]) or "none"
         if not found:
             raise HextileClientError(f"No Look {json.dumps(name or args['look_id'])} on this Shader. Looks: {titles}",
