@@ -434,3 +434,32 @@ def test_request_marker_is_unoverridable_and_private_token_is_backend_checked() 
     assert denied["isError"] is True
     assert seen[-1][1]["x-hextile-copilot-token"] == "fake"
     assert seen[-1][1]["x-hextile-agent"] == "mcp"
+
+
+def test_heartbeat_is_queued_off_the_stdio_thread() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    from hextile_mcp import HextileMcpServer
+
+    posted: list[dict] = []
+
+    class SlowClient:
+        def post_activity(self, envelope):  # noqa: ANN001, ANN201
+            time.sleep(0.5)
+            posted.append(envelope)
+
+    server = HextileMcpServer(client=SlowClient(), child_token="")
+    server.internal_mode = False
+    server.start_activity_sender()
+    started = time.monotonic()
+    server._emit_heartbeat()
+    assert time.monotonic() - started < 0.2  # The reply is not held by the activity post.
+    server.flush_activity()
+    assert [row["kind"] for row in posted] == ["heartbeat"]
+
+
+def test_recorded_unchanged_edit_recovers_through_get_shader_update() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_client
+
+    value = {"save": "unchanged", "results": [], "commit": 1, "revision": 1, "changed": False}
+    assert hextile_client._saved_result(dict(value))["save"] == "unchanged"

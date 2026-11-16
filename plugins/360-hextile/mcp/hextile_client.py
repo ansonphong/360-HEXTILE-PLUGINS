@@ -3090,6 +3090,8 @@ def _open_result(value: Any) -> dict:
 
 
 def _saved_result(value: Any) -> dict:
+    if type(value) is dict and value.get("save") == "unchanged":
+        return _edit_result(value)  # A recorded shader_edit that changed nothing (no commit).
     if type(value) is dict and value.get("prepare") == "failed":
         if set(value) != {"prepare", "diagnostics"} or type(value.get("diagnostics")) is not list:
             _malformed("Malformed prepare failure")

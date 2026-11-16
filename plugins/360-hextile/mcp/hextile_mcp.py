@@ -4357,6 +4357,9 @@ class HextileMcpServer:
         }
         if self.client_version:
             envelope["client_version"] = self.client_version
+        if self._activity_queue is not None:  # Off the stdio thread, in order with tool activity.
+            self._activity_queue.put(envelope)
+            return
         try:
             self.client.post_activity(envelope)
         except Exception:
