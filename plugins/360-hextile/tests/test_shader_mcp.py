@@ -2228,7 +2228,7 @@ _SHIPPED_HEADER = re.compile(r"/\*@hextile-shader\n.*?\*/\n", re.S)
 
 
 def _playable_recipe() -> tuple[list[str], dict[str, Any]]:
-    guide = (ROOT / "skills/360-hextile/references/recipes.md").read_text(encoding="utf-8")
+    guide = (ROOT / "skills/360-hextile/references/recipes-detail.md").read_text(encoding="utf-8")
     playable = guide.split("## Recipe I — Playable Shaders:", 1)[1]
     playable = playable.split("\n# Inspect an exact full-quality", 1)[0]
     sources = re.findall(r"```glsl\n(.*?)```", playable, re.S)

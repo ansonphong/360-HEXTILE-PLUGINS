@@ -104,7 +104,7 @@ def test_install_writes_agents_skills_and_codex_mcp_table(tmp_path: Path) -> Non
     practices = (references / "best-practices.md").read_text(encoding="utf-8")
     assert "shader.json" in recipes
     assert "shader_edit" in recipes
-    assert "oneshot" in recipes
+    assert "oneshot" in (references / "recipes-detail.md").read_text(encoding="utf-8")
     assert "shader.json" in practices
     assert "provenance.json" in practices
     assert "stale_lease" in practices

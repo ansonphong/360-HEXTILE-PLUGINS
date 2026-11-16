@@ -325,7 +325,7 @@ def test_shader_render_export_mcp_tool_chain() -> None:
                 {**body, "start_time": {"num": "1", "den": "2"}}):
         with pytest.raises(HextileClientError):
             Client().render_shader_sequence(bad)
-    guide = (ROOT / "skills" / "360-hextile" / "references" / "recipes.md").read_text(encoding="utf-8")
+    guide = (ROOT / "skills" / "360-hextile" / "references" / "recipes-detail.md").read_text(encoding="utf-8")
     import re
     example = json.loads(re.search(r"## Saved Shader native sequence.*?```json\n(.*?)\n```", guide, re.S).group(1))
     jsonschema.validate(example, tools["render_shader_sequence"]["inputSchema"])

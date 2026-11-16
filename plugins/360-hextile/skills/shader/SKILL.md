@@ -14,13 +14,13 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 
 ## Top 20
 
-`W`, `B`, `S`, `U` and `L` are defined in `get_guide(name="recipes")`, which has every other recipe. Edits are `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[..]}`.
+`W`, `B`, `S`, `U` and `L` are defined in `get_guide(name="recipes")` (longer examples: `recipes-detail`). Edits are `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[..]}`; when an edit needs the lease, `lease` is a top-level field next to `edits`, never inside an edit: `{"shader_id":"S","request_id":"U","lease":{"holder":"agent","generation":0},"edits":[..]}`. Copy `lease` from `get_live_context` (on screen) or `open_shader_workspace` (any Shader).
 
 1. What Shader is open → `get_live_context(view="shader")`.
 2. Rename dropdown options → `{"op":"set","address":["parameters","<id>","option_labels"],"value":{"0":"A","1":"B"}}` — ids and option values from `get_shader_parameters`.
 3. Change a label, range, default, step or help → `["parameters","<id>","label"|"min"|"max"|"default"|"step"|"help"]` — send min and max together.
 4. Set a value → `{"op":"set","address":["values","<id>"],"value":0.7}`.
-5. Edit the code → read `revisions/<NNNNNN>/` (recipes, "read the GLSL"), then `["code"]` with every file and `"lease":L` — a compile error returns `file:line:col` and saves nothing.
+5. Edit the code → read `revisions/<NNNNNN>/` (recipes, "read the GLSL"), then `["code"]` with every file and top-level `"lease":L` — a compile error returns `file:line:col` and saves nothing.
 6. Add a slider → with `"lease":L`: `create ["parameters","glow"]` plus a `["code"]` entry using `hxParam_glow`.
 7. Remove a parameter → with `"lease":L`: `delete ["parameters","<id>"]` plus `["code"]` without `hxParam_<id>`, in one call.
 8. Rename a Shader → `shader_rename_asset` with `W`, `B` — My Library only.
@@ -59,7 +59,7 @@ asked for an agent-driven session. Editing another Shader needs no open.
 
 ## Export 8K equirect PNG at 2×
 
-Keep `studio_surface_id`, the witness and `saved_base` from the one live read.
+Keep `studio_surface_id`, the witness and `saved_base` from the one live read. To edit a Shader other than the one on screen, take `base` from its `shader_list_assets` row, not `saved_base`.
 Every still needs that surface id, including App – High precision. Then
 `shader_preflight_still_export`, then `shader_export_still` with that preflight
 id. No preview is needed first.

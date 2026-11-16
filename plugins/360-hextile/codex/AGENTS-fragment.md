@@ -11,7 +11,7 @@
 
 ## Top recipes
 
-Full one-line index with arguments: `get_guide(name="recipes")`. Shader specifics: the `shader` skill's Top 20.
+Full one-line index with arguments: `get_guide(name="recipes")`; long examples: `get_guide(name="recipes-detail")`. Shader specifics: the `shader` skill's Top 20.
 
 1. What Shader is open → `get_live_context(view="shader")`.
 2. Change a Shader parameter, value, clock or timeline → `shader_edit {"shader_id":..,"request_id":..,"edits":[{"op":"set","address":["parameters","<id>","label"],"value":".."}]}` (addresses in the recipes guide).
@@ -179,7 +179,7 @@ There is **no** separate workflow-envelope format — only `.hextile.json`. Pref
 | `control_shader_sequence` | Continue an inspected request, Stop the observed run, resume an admitted job, or control the exact publication attempt; reconcile unknown replies | **yes** |
 | `preflight_shader_sequence_export` | Check verified masters and an explicitly chosen existing local folder, PNG, JPG, or EXR; retain the fingerprint and attempt ID | no |
 | `export_shader_sequence` | Publish only that exact preflighted folder intent; GET the known ID/attempt after an uncertain reply | **yes** |
-| `open_shader_workspace` | File-workspace flow or reading package files. Send shader_id and request_id only. Returns the lease, commit, revision and workspace path; read saved files from `revisions/<NNNNNN>/` | **yes** |
+| `open_shader_workspace` | File-workspace flow or reading package files. Send shader_id and request_id only. Returns the lease, commit, revision and `workspace_path` (`<dir>/workspace`); read saved files from the sibling `<dir>/revisions/<NNNNNN>/`, the current saved copy | **yes** |
 | `register_shader_update` | File-workspace flow only: register the package digest and save. Never after `shader_edit`. Send the lease and seen | **yes** |
 | `get_shader_update` | Read the recorded save for one request_id: merge, compile, commit and revision | no |
 | `request_shader_doctor` | Start one on-demand GPU Doctor pass for the clean, previewed Builtin, My Library or Project Shader with its actual private captured frame; keep the UUID for polling | **yes** |
@@ -262,7 +262,7 @@ After an uncertain reply, reconcile the original known ID/key/hash/run, never a
 new mutation. A known-ID404 remains unknown. Report committed saved count and
 contiguous cursor separately; checking/replay and last-reported restart counts
 are not newly rendered frames. Generic `create_sequence`/`start_sequence` remain
-folder upres. See the direct and explicit-deferred examples in `get_guide(name="recipes")`.
+folder upres. See the direct and explicit-deferred examples in `get_guide(name="recipes-detail")`; the output folder must already exist.
 
 1. **Handshake** → `get_capabilities` then `get_live_context` before compose.
 2. **Learn** → `get_guide` (`best-practices` then `workflow-schema`).
@@ -380,7 +380,7 @@ get_capabilities
 → get_guide(name="best-practices")
 → list_workflows
 → get_workflow(origin="builtin", id="quick-scout")
-→ validate_config(workflow_id="quick-scout", overrides={...})
+→ validate_config(workflow_id="quick-scout", overrides={...})  # quick-scout needs overrides.input.path (an existing image) or a generate_seed result
 → run_workflow(workflow_id="quick-scout", overrides={...})
 → get_status(run_id=...)  # poll until terminal
 ```
