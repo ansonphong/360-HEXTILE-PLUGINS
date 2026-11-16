@@ -1072,6 +1072,8 @@ def test_checkpoint_retention_and_history_match_seal_on_demand(monkeypatch):
     assert "title" not in checkpoint["inputSchema"]["required"]
     assert "target" not in checkpoint["inputSchema"]["required"]
     assert "Built-ins in developer mode" in retention["description"]
+    assert "not recoverable" in retention["description"]
+    assert "deletes" in retention["description"]
     assert {"request_id", "studio_surface_id"} <= set(retention["inputSchema"]["properties"])
     assert "seal" in tools["shader_get_history"]["description"]
     authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")

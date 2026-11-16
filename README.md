@@ -213,7 +213,7 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `shader_checkpoint` | Save, rename or remove one exact checkpoint name through the bound native history action. |
 | `shader_restore_revision` | Restore one exact retained revision or checkpoint as the next revision; an uncertain result requires original request ID recovery. |
 | `shader_copy_revision` | Save an independent copy of one exact retained revision or checkpoint, preserving credits, Looks and resources. |
-| `shader_history_retention` | Preview, compact or uncompact recoverable history. |
+| `shader_history_retention` | Preview or compact Shader history. Compact deletes unpinned revision folders and is not recoverable. |
 | `shader_get_project_conventions` | Read bounded Project Shader convention profiles and digest. |
 | `shader_stage_resource` | Stage an exact Render node, complete Sequence range, or absolute local file/folder/ordered frame paths. |
 | `shader_set_resource` | Attach, replace, locate, remove, or change typed settings of one exact Shader input through the native CAS writer. |

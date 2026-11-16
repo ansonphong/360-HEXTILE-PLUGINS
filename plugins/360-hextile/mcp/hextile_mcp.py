@@ -3075,8 +3075,8 @@ SHADER_EXTENSION_TOOLS = [
                "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               ["shader", "project_context_witness", "base", "request_id",
                "destination_origin"]),
-    _tool_def("shader_history_retention", "Use to preview or compact a Shader's history to save space (recoverable; permanent purge is "
-                                          "human only; works on Built-ins in developer mode). Compact keeps the head, named "
+    _tool_def("shader_history_retention", "Use to preview or compact a Shader's history to save space (compact deletes "
+                                          "unpinned revision folders and is not recoverable; works on Built-ins in developer mode). Compact keeps the head, named "
                                           "checkpoints, the newest 20 automatic seals and a Built-in's revision 1. Pass shader, project_context_witness (freshness token, from "
                                           "get_live_context(view=\"shader\")), base, action (\"preview\" or \"compact\") and mode (\"current\" or "
                                           "\"checkpoints\"), plus request_id (optional on preview; the idempotency key on "
