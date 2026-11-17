@@ -2497,7 +2497,8 @@ TOOLS: list[dict[str, Any]] = [
                     "and base {kind, working_revision, document_hash, source_hash} (from shader_get_asset_state or a write "
                     "reply; the flat working_revision/document_hash/source_hash fields also work), plus "
                     "idempotency_key, name, frame_rate, frame_count, start_time, end_time (exact fractions), width, "
-                    "height, seed and output. Returns a deterministic sequence_id and request_hash; keep them to "
+                    "height, seed and output. A Shader with image inputs also needs resource_manifest_hash, copied "
+                    "from shader_get_asset_state. Returns a deterministic sequence_id and request_hash; keep them to "
                     "recover a lost render reply. PNG/JPG/EXR direct output uses folder_export (destination_folder is "
                     "the sequence folder); deferred output keeps a managed master. supersampling is at least 1 "
                     "(window presets 1, 1.5, 2). Viewer - High precision sequences are EXR. Absent render_route is "
@@ -2891,7 +2892,8 @@ SHADER_EXTENSION_TOOLS = [
                            "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}}),
     _tool_def("shader_get_asset_state", "Use to read a Shader's saved values and its saved base (working_revision, document_hash, "
                                         "source_hash: the exact saved version, needed by most write tools), plus title, tags, writable "
-                                        "and inputs. Pass shader {origin, shaderId} and project_context_witness. Any shelf, open or not "
+                                        "and inputs, plus resource_manifest_hash (null without inputs; send it with a sequence "
+                                        "render). Pass shader {origin, shaderId} and project_context_witness. Any shelf, open or not "
                                         "(Built-ins too). include [\"parameters\"] adds every parameter definition (label, help, group, "
                                         "range, options); include [\"source\"] adds the saved GLSL as {\"source.glsl\": text, "
                                         "\"modules/x.glsl\": text} (up to 192 KB).",
