@@ -127,6 +127,21 @@ No intermediate PNG image sequence or automatic final copy is requested by this
 direct flow. For PNG or EXR use that format and null JPG quality. Temporal/input/
 resource or supersampling refusals remain native; never silently downgrade.
 
+Still and sequence preflight report the native CPU source policy result and
+the available route and codec choices for the requested output on the current
+host. Driver compilation happens during rendering. A source-policy refusal
+can name the logical Shader file and line. Correct the source and preflight
+the new saved revision. If a route is unqualified, read the reason before
+deciding whether to select another route and preflight again.
+
+Read `shader_get_output_job` with the original still export request ID and
+profile, or use `get_shader_sequence` with the preflight sequence ID and match
+the request hash. Report the current state, last confirmed phase, verified
+output count or its unknown state, and the next action. A managed sequence
+can finish rendering while its folder export fails. A diagnostic ID points
+to the local backend log. Use the original handle after a lost reply, poll
+the same handle while active, and stop polling a stopped attempt.
+
 For existing output, `inspect_shader_sequence_output({request:<same intent>})`
 reports new/unfinished/completed/unavailable/conflict without checking pixels.
 Only a matching unfinished result can Continue with the exact request plus its

@@ -2504,7 +2504,7 @@ TOOLS: list[dict[str, Any]] = [
                     "recover a lost render reply. PNG/JPG/EXR direct output uses folder_export (destination_folder is "
                     "the sequence folder); deferred output keeps a managed master. supersampling is at least 1 "
                     "(window presets 1, 1.5, 2). Viewer - High precision sequences are EXR. Absent render_route is "
-                    "native. Queues nothing.",
+                    "native. Reports native CPU source checks and the host-qualified route and codec choices for this request. Queues nothing.",
      "inputSchema": _SHADER_SEQUENCE_REQUEST,
      "annotations": _annotations("preflight_shader_sequence")},
     {"name": "inspect_shader_sequence_output",
@@ -2523,8 +2523,8 @@ TOOLS: list[dict[str, Any]] = [
     _tool_def("get_shader_sequence",
         "Use to check a Shader sequence by its sequence_id (no source or paths). After a lost render "
         "reply compare request_hash from the preflight; a missing id does not prove the render failed. A "
-        "sequence the user stopped reads status incomplete, producer_state stopped, stopped_by_user true: "
-        "it is Stopped, not failed. Resume or Continue it, or leave it.",
+        "diagnostic reports the last confirmed phase, output verification, known reason and next action. "
+        "Stop polling a stopped attempt. Inspect existing output before Continue, using the original request and inspection fingerprint.",
         {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}},
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
@@ -2941,7 +2941,8 @@ SHADER_EXTENSION_TOOLS = [
                                                "webgl-browser-encode-desktop, webgl-browser-encode-backend or webgl-raw-float; browser routes "
                                                "also need browser_codec png, jpeg with jpeg_quality 0.50-1.00, or exr). EXR uses profile "
                                                "shader-linear-rgba-exr/1 and no projection. Supersampling is at least 1. studio_surface_id is "
-                                               "from get_live_context(view=\"shader\"). No GPU is started.",
+                                               "from get_live_context(view=\"shader\"). Reports native CPU source checks and host-qualified "
+                                               "route and codec choices for the requested output. No GPU is started.",
               {**_OUTPUT_OWNER, "profile": _OUTPUT_PROFILE, "output": _STILL_OUTPUT,
                "allow_unpreviewed_revision": {"type": "boolean"}, "render_route": _RENDER_ROUTE},
               _OUTPUT_OWNER_REQUIRED + ["profile", "output"]),
@@ -2955,7 +2956,8 @@ SHADER_EXTENSION_TOOLS = [
               _OUTPUT_OWNER_REQUIRED + ["preflight_request_id", "profile"]),
     _tool_def("shader_get_output_job", "Use to check a still export job. Pass shader, project_context_witness (freshness token, from "
                                        "get_live_context(view=\"shader\")), profile and the request_id you gave shader_export_still (not "
-                                       "the preflight id, which returns 404 output_job_unknown). Starts no GPU work.",
+                                       "the preflight id, which returns 404 output_job_unknown). The optional diagnostic reports the "
+                                       "confirmed phase, verified output, cause and one next action. Starts no GPU work.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
     _tool_def("shader_stop_output_job", "Use to stop a running Shader still export. Pass shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), profile and the export's request_id (not the preflight id). 404 output_job_unknown is possible in the first seconds; small stills finish before a stop lands; a stopped export reports 409 dome_stopped.",

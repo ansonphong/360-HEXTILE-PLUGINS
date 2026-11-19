@@ -91,6 +91,13 @@ from 0.50 to 1.00, or `{format: "exr"}`. Equirect EXR uses profile
 are 1, 1.5, and 2. Any finite scale of at least 1 is sent through. Viewer –
 High precision sequences are EXR.
 
+Preflight checks the native CPU source policy and lists currently qualified
+route and codec choices for the requested output. Read a still's status using
+the original export request ID and profile. Read a sequence's status using
+the preflight sequence ID and match its request hash. Use the reported cause,
+phase, verified output and next action. For a source-policy refusal, open the
+reported file and line, then preflight the corrected saved revision.
+
 ## Edit rules
 
 [The authoring procedure](references/authoring.md) has the package layout,
