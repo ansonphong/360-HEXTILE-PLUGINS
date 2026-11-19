@@ -571,7 +571,7 @@ def test_malformed_discovery_success_is_not_a_schema() -> None:
 
 def test_shader_parameter_discovery_pages_use_one_checked_reader() -> None:
     path = "/api/agent/shader-parameters"
-    first = {"count": 1024, "max_parameters": 1024, "next_cursor": "v1-token:1.32",
+    first = {"commit": 4, "revision": 2, "count": 1024, "max_parameters": 1024, "next_cursor": "v1-token:1.32",
              "parameters": [{"id": "mode", "options": list(range(32)), "option_count": 400}]}
     last = {**first, "next_cursor": None, "parameters": [{"id": "mode", "options": [32], "option_offset": 32}]}
     server, _client, calls = _server({
@@ -589,3 +589,23 @@ def test_shader_parameter_discovery_pages_use_one_checked_reader() -> None:
             handler(invalid)
         assert error.value.status_code == 422
     assert len(_native_calls(calls)) == 2
+
+
+def test_explicit_parameter_pages_require_a_paging_capable_app() -> None:
+    legacy = {"stack": "v2", "shader": {"origin": "user", "shader_id": "aurora"},
+              "parameters": [{"id": f"p{i}", "value": i} for i in range(32)], "commit": 4, "revision": 2}
+    path = "/api/agent/shader-parameters"
+    server, _client, calls = _server({("GET", path): (200, json.dumps(legacy).encode()),
+                                     ("GET", "/api/workflows/capabilities"): (200, b"{}")})
+    read = lambda args: server.call_tool("get_shader_parameters", args)
+    assert json.loads(read({})["content"][0]["text"]) == legacy
+    for args in ({"limit": 1}, {"cursor": "v1-token:1"}):
+        result = read(args)
+        assert result["isError"] is True
+        error = json.loads(result["content"][0]["text"])
+        assert error["kind"] in {"unsupported", "version_mismatch"} and "Update" in error["error"]
+    assert sum(call[1] == path for call in calls) == 3
+    too_large = {**legacy, "parameters": [{"id": "mode", "label": "z" * 65536}]}
+    server, _client, _calls = _server({("GET", path): (200, json.dumps(too_large).encode())})
+    result = server.call_tool("get_shader_parameters", {"limit": 1})
+    assert result["isError"] and json.loads(result["content"][0]["text"])["status_code"] == 413

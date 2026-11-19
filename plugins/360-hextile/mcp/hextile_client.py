@@ -4497,8 +4497,26 @@ class Client:
         if "cursor" in page and (type(page["cursor"]) is not str or not 1 <= len(page["cursor"]) <= 160):
             raise HextileClientError("Invalid parameter page cursor", kind="other", status_code=422)
         try:
-            return self.get_json("/api/agent/shader-parameters", params=page or None,
-                                 headers=self._shader_parameter_headers(session_id))
+            result = self.get_json("/api/agent/shader-parameters", params=page or None,
+                                   headers=self._shader_parameter_headers(session_id),
+                                   max_bytes=64 * 1024 if page else None, too_large_code="parameter_page_too_large")
+            if not page:
+                return result
+            # Older APPs accept unknown query parameters and return the whole
+            # legacy collection. An explicit limit or cursor must be honored.
+            if not isinstance(result, dict) or not {"count", "max_parameters", "next_cursor"} <= result.keys():
+                raise HextileClientError("Update 360 Hextile to read bounded Shader parameter pages.",
+                                         kind="unsupported", status_code=409)
+            rows, count, maximum = result.get("parameters"), result["count"], result["max_parameters"]
+            next_cursor = result["next_cursor"]
+            if (not isinstance(rows, list) or type(count) is not int or type(maximum) is not int
+                    or not 0 <= len(rows) <= min(page.get("limit", 32), count) or maximum < count
+                    or type(result.get("commit")) is not int or type(result.get("revision")) is not int
+                    or (next_cursor is not None and (not isinstance(next_cursor, str) or not 1 <= len(next_cursor) <= 160
+                                                     or not rows or next_cursor == page.get("cursor")))):
+                raise HextileClientError("The APP returned an invalid Shader parameter page. Restart discovery or update 360 Hextile.",
+                                         kind="unsupported", status_code=409)
+            return result
         except HextileClientError as exc:
             if exc.kind == "http" and exc.status_code is not None and exc.status_code < 500:
                 _raise_plain_refusal(exc)
