@@ -1039,6 +1039,34 @@ def test_native_shader_extension_routes_are_explicit_and_closed() -> None:
         assert not {"actor", "mutation", "authority_ticket", "path"} & set(tool["inputSchema"]["properties"])
 
 
+def test_change_shader_id_keeps_the_original_request_on_lost_reply(monkeypatch):
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    base = {"kind": "saved", "working_revision": 3, "document_hash": "sha256:" + "a" * 64,
+            "source_hash": "sha256:" + "b" * 64}
+    args = {"shader": {"origin": "user", "shaderId": "aurora_copy"}, "new_shader_id": "aurora",
+            "request_id": "b5897a63-59a1-4d8f-aecb-36ba083fc1ea", "project_context_witness": "proof",
+            "base": base}
+    tool = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_change_id")
+    jsonschema.validate(args, tool["inputSchema"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**args, "shader": {"origin": "builtin", "shaderId": "aurora"}}, tool["inputSchema"])
+    receipt = {"status": "committed", "shader_id": "aurora", "previous_shader_id": "aurora_copy",
+               "revision": 3, "commit": 5, "digest": base["document_hash"], "base": base}
+    client = Client("http://127.0.0.1:9")
+    post = mock.Mock(side_effect=[HextileClientError("lost reply", kind="app_down"), receipt])
+    monkeypatch.setattr(client, "_shader_request", post)
+    handler = HextileMcpServer(client=client)._handlers["shader_change_id"]
+    with pytest.raises(HextileClientError) as unknown:
+        handler(args)
+    assert unknown.value.receipt["request_id"] == args["request_id"]
+    assert handler(args) == receipt
+    expected = mock.call("POST", "/api/shaders/agent-operations/change-id", {
+        **args, "confirmation_scope": {"operation": "change_id", "shader": args["shader"], "new_shader_id": "aurora"},
+    })
+    assert post.call_args_list == [expected, expected]
+
+
 def test_named_history_client_forwards_closed_intent_and_keeps_unknown_request(monkeypatch):
     from hextile_client import Client, HextileClientError
     client = Client("http://127.0.0.1:9")

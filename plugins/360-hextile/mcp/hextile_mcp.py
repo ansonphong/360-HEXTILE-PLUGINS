@@ -3206,6 +3206,15 @@ SHADER_EXTENSION_TOOLS = [
                                       "shader": _USER_SHADER_REF},
                                       "required": ["operation", "shader"], "additionalProperties": False}},
               ["request_id", "shader", "project_context_witness", "base", "title"]),
+    _tool_def("shader_change_id", "Change a My Library Shader's exact ID and folder name. Pass the original shader and saved base "
+                                  "from shader_list_assets or shader_get_asset_state, project_context_witness, a fresh request_id "
+                                  "and new_shader_id. IDs already in use are refused. The reply returns the new shader_id and base. "
+                                  "For a lost reply, use shader_get_operation with scope asset, the original shader and request_id "
+                                  "or resend the original change with the same request_id in the same Project.",
+              {"shader": _USER_SHADER_REF, "project_context_witness": _NATIVE_SHADER_TARGET["project_context_witness"],
+               "request_id": _NATIVE_SHADER_REQUEST_ID, "base": _NATIVE_SHADER_BASE,
+               "new_shader_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,120}$"}},
+              ["request_id", "shader", "project_context_witness", "base", "new_shader_id"]),
     _tool_def("shader_delete_asset", "Use to delete a Shader from My Library (only origin \"user\"). Destructive. Pass request_id (fresh "
                                      "UUID), shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
                                      "base, library_intent \"saved\" and confirmation_scope {operation:\"delete\", shader}. Omit "
@@ -3994,6 +4003,7 @@ class HextileMcpServer:
             "shader_set_tags": self._shader_set_tags,
             "shader_set_project_conventions": self._shader_set_project_conventions,
             "shader_rename_asset": self._shader_rename_asset,
+            "shader_change_id": self._shader_change_id,
             "shader_delete_asset": self._shader_delete_asset,
             "shader_open_asset": self._shader_open_asset,
             "shader_save_as": self._shader_save_as,
@@ -4963,6 +4973,9 @@ class HextileMcpServer:
 
     def _shader_rename_asset(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_asset(args)
+
+    def _shader_change_id(self, args: dict[str, Any]) -> Any:
+        return self.client.change_shader_id(args)
 
     def _shader_delete_asset(self, args: dict[str, Any]) -> Any:
         return self.client.delete_shader_asset(args)

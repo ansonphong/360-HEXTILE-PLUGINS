@@ -24,7 +24,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 5. Edit the code (helper include: `#include "modules/lib/noise.glsl"`, full declared path) → read every file with `shader_get_asset_state {..,"include":["source"]}`, then `["code"]` with every file and top-level `"lease":L` — a compile error returns `file:line:col` and saves nothing.
 6. Add a slider → with `"lease":L`: `create ["parameters","glow"]` plus a `["code"]` entry using `hxParam_glow`.
 7. Remove a parameter → with `"lease":L`: `delete ["parameters","<id>"]` plus `["code"]` without `hxParam_<id>`, in one call.
-8. Rename a Shader → `shader_rename_asset` with `W`, `B` — My Library only.
+8. Rename a Shader title with `shader_rename_asset`. To change the ID and folder name, use `shader_change_id {"shader":S,"base":B,"project_context_witness":W,"request_id":U,"new_shader_id":"new_id"}`. Both operations are My Library only.
 9. Duplicate → `shader_duplicate_asset {"shader":S,"base":B,"destination_origin":"user","title":"Copy",..}`; `shader_save_as` (on screen) replies `pending` and the Workshop switches to the copy — confirm with `shader_list_assets`.
 10. Delete → `shader_delete_asset` with `W`, `B` — My Library only.
 11. Play, pause, jump to 3 s → `shader_control_clock {"action":"play"|"pause"|"seek","time":3,..}` — on screen.

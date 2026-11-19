@@ -5152,6 +5152,37 @@ class Client:
                 kind="shader_operation_outcome_unknown", receipt={"request_id": request_id})
         return receipt
 
+    def change_shader_id(self, args: Mapping[str, Any]) -> dict:
+        target_fields = ("shader", "project_context_witness", "request_id")
+        _closed_argument_error("Change Shader ID", args, {*target_fields, "new_shader_id", "base"}, set())
+        _native_shader_args("status", {key: args[key] for key in target_fields})
+        shader = args["shader"]
+        new_id, base = args["new_shader_id"], args["base"]
+        if (shader["origin"] != "user" or not isinstance(new_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,120}", new_id) or not _reply_base(base)):
+            raise HextileClientError("Change Shader ID needs a My Library target, exact new ID and saved base.",
+                                     status_code=422, kind="other")
+        body = {**args, "confirmation_scope": {
+            "operation": "change_id", "shader": dict(shader), "new_shader_id": new_id,
+        }}
+        unknown = HextileClientError(
+            "Shader ID change outcome unknown. Read shader_get_operation with the original Shader and request ID.",
+            kind="shader_operation_outcome_unknown", receipt={"request_id": args["request_id"]})
+        try:
+            result = self._shader_request("POST", "/api/shaders/agent-operations/change-id", body)
+        except HextileClientError as exc:
+            status = exc.status_code
+            if status is not None and 400 <= status < 500 and status not in {408, 429}:
+                raise
+            raise unknown from exc
+        if (not isinstance(result, dict) or result.get("status") != "committed"
+                or result.get("previous_shader_id") != shader["shaderId"] or result.get("shader_id") != new_id
+                or type(result.get("commit")) is not int or result["commit"] < 1
+                or type(result.get("revision")) is not int or result["revision"] != base["working_revision"]
+                or result.get("digest") != base["document_hash"] or result.get("base") != base):
+            raise unknown
+        return result
+
     def delete_shader_asset(self, args: Mapping[str, Any]) -> Any:
         if isinstance(args, Mapping) and "expected_working_digest" not in args:
             base = args.get("base")

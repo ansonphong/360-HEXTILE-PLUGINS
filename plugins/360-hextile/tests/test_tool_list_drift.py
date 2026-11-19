@@ -419,7 +419,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 129 and len(SHADER_EXTENSION_TOOLS) == 44
+    assert len(TOOLS) == 129 and len(SHADER_EXTENSION_TOOLS) == 45
 
 
 def test_trusted_local_file_contract() -> None:

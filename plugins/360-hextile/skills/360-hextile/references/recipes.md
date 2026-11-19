@@ -25,6 +25,8 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 
 ## Saving
 
+- Change a My Library Shader's ID and folder name → `shader_change_id {"shader":S,"base":B,"project_context_witness":W,"request_id":U,"new_shader_id":"new_id"}`. If the reply is lost, use `shader_get_operation` with `scope:"asset"`, the original Shader ref and the original request ID.
+
 `shader_edit` autosaves each accepted batch to the working copy and returns `commit` and `revision`. Read `edit_counts` and each `results[].outcome`. For a skipped operation or one that lost to a newer human edit, read `results[].reason` before making any correction. A lost reply uses the original request ID. A corrected edit uses a new request ID.
 
 ## Find what's open

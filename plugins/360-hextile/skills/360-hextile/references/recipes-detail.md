@@ -13,6 +13,8 @@ Index with placeholders (`W`, `B`, `S`, `U`, `L`) and the common one-liners: `ge
 
 ## Shader library
 
+- To change the ID and folder name → `shader_change_id {"shader":S,"project_context_witness":W,"request_id":U,"base":B,"new_shader_id":"new_id"}` for My Library. Check the returned `shader_id` and use it for later edits. Saved sequences can still refer to the former ID. A lost reply can be checked with `shader_get_operation` using `scope:"asset"`, the original Shader ref and the original request ID. An identical retry in the same Project recovers the original result.
+
 - To duplicate → `shader_duplicate_asset {"request_id":U,"project_context_witness":W,"shader":S,"base":B,"destination_origin":"user","title":"Copy"}` — returns the new `shaderId`; the copy is not opened.
 - To rename (Library title) → `shader_rename_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,"title":"New"}` (`base` required here; owner fields filled) — `origin:"user"` only; the id does not change. Look rename needs only `name` (or `look_id`) plus `title`; Look delete only `name` (or `look_id`); no base or confirmation scope.
 - To delete → `shader_delete_asset {"shader":S,"project_context_witness":W,"request_id":U,"base":B,<saved-shelf fields, operation "delete">}` — `origin:"user"` only.
