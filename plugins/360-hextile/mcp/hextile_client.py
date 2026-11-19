@@ -741,8 +741,83 @@ def _bounded_job_route(job: Mapping[str, Any]) -> bool:
 
 
 _SHADER_DIAGNOSTICS_HEADERS = {"X-Hextile-Shader-Diagnostics": "1"}
-_SHADER_DIAGNOSTIC_ACTIONS = {"poll_original", "stop_polling", "show_output", "inspect_output",
-    "edit_source", "check_destination", "check_worker", "refresh_context", "check_diagnostic_log"}
+# Public text comes from the client vocabulary. The host supplies only checked evidence.
+_SHADER_ROUTE_REASONS = frozenset({
+    "band", "browser_host", "combination_unqualified", "desktop_only", "display", "display_host",
+    "display_preserve360_unmapped", "gpu", "history", "history_direct_dome_unsupported",
+    "implementation_identity_mismatch", "mapped", "max_texture_size", "no_capable_client", "presentation",
+    "raw_float_sequence_unsupported", "raw_host", "route_unqualified",
+    "route_unsupported_for_profile", "runtime_evidence_missing", "runtime_identity_mismatch",
+    "source", "temporal_passes_unsupported", "tile", "unsupported_runtime",
+})
+_SHADER_DIAGNOSTIC_PHASES = {"preflight", "preparing", "checking", "starting", "compiling", "replaying",
+           "rendering", "verifying", "publishing", "unknown"}
+_SHADER_SOURCE_POLICY_RULES = frozenset({
+    "atomic", "buffer", "call_nesting", "directive", "discard", "function_count",
+    "generated_interface", "host_declaration", "image", "layout", "loop_nesting",
+    "loop_trip_count", "main", "non_fragment_stage", "recursion", "reserved_identifier",
+    "sampler", "source_encoding", "source_size", "string_literal", "syntax",
+    "temporal_entry", "unbounded_loop", "unknown_call", "unsupported_overload",
+})
+_SHADER_FAILURE_GUIDANCE = {
+    "source_policy": ("edit_source", "The native source policy refused this Shader.",
+                    "Open the reported source location, correct the shader, then preflight the saved revision."),
+    "gl_compile_failed": ("edit_source", "The native Shader program did not compile.",
+                          "Open the saved Shader and check its source before exporting again."),
+    "compile_failed": ("edit_source", "The native Shader did not compile.",
+                       "Open the saved Shader and check its source before exporting again."),
+    "storage_no_space": ("check_destination", "The destination device ran out of space.",
+                         "Free up space at the selected destination, then recheck this export."),
+    "storage_permission_denied": ("check_destination", "The destination or work folder could not be written.",
+                                  "Check the selected destination and its write permissions."),
+    "storage_unavailable": ("check_destination", "The native output storage became unavailable.",
+                            "Check that the selected folder is still available and writable."),
+    "publication_conflict": ("check_destination", "The output conflicts with an existing file or publication receipt.",
+                             "Inspect the destination and preserve existing output before choosing how to proceed."),
+    "worker_missing": ("check_worker", "The native Shader worker is unavailable.",
+                       "Check the 360 Hextile installation for the Shader worker."),
+    "codec_unavailable": ("check_worker", "The OpenEXR codec is unavailable.",
+                          "Check the 360 Hextile installation for the OpenEXR codec."),
+    "gpu_busy": ("check_worker", "The GPU is busy with another job.",
+                 "Wait for the current GPU job to finish before checking the export again."),
+    "stop_requested": ("stop_polling", "This export attempt stopped.", "Stop polling this attempt."),
+    "ownership_lost": ("inspect_output", "This attempt no longer has a live render owner.",
+                        "Inspect the existing output before deciding whether to continue."),
+    "output_owner_changed": ("refresh_context", "The mounted Shader owner changed.",
+                              "Refresh live context and match the requested Shader before trying again."),
+    "unknown_failure": ("check_diagnostic_log", "The Shader export failed without a confirmed cause.",
+                        "Find the diagnostic ID in the local backend log."),
+}
+_SHADER_FAILURE_MESSAGE = {
+    "deadline_exceeded": "The Shader worker exceeded its deadline.",
+    "draw_failed": "The Shader worker could not draw the output.",
+    "frame_deadline_exceeded": "The Shader worker exceeded the deadline for a frame.",
+    "gl_allocation_failed": "The Shader worker could not allocate GPU resources.",
+    "gl_context_unavailable": "The Shader worker could not open a graphics context.",
+    "hash_quarantined": "The Shader worker blocked this source after a previous worker failure.",
+    "invalid_sequence": "The Shader worker refused the sequence inputs.",
+    "license_required": "The selected Shader export requires a valid license.",
+    "progress_stalled": "The Shader worker stopped reporting progress.",
+    "resource_limit": "The Shader worker reached a resource limit.",
+    "sequence_publish_failed": "The Shader worker could not publish the sequence output.",
+    "shader_source_format_retired": "The saved Shader source format is no longer supported.",
+    "shader_source_unavailable": "The saved Shader source could not be read.",
+    "worker_crash": "The Shader worker exited unexpectedly.",
+    "worker_failed": "The Shader worker reported a failure.",
+    "worker_protocol_error": "The Shader worker returned an invalid response.",
+}
+
+
+def _shader_output_status_action(args: Mapping[str, Any]) -> dict:
+    return {"tool": "shader_get_output_job", "arguments": {key: args[key] for key in
+            ("request_id", "profile", "shader", "project_context_witness")}}
+
+
+def _shader_uncertain_output(operation: str, args: Mapping[str, Any]) -> dict:
+    receipt = {"request_id": args["request_id"]}
+    if operation in {"still", "stop_job"}:
+        receipt["next_action"] = _shader_output_status_action(args)
+    return receipt
 
 
 def _shader_render_diagnostic(value: Any, *, sequence_id: str | None = None,
@@ -752,12 +827,12 @@ def _shader_render_diagnostic(value: Any, *, sequence_id: str | None = None,
     required = {"cause", "phase", "terminal", "output", "message", "next_action"}
     if not required <= value.keys() or value.keys() - required - {"id", "attempt_id", "source"}:
         return None
-    def word(text):
-        return type(text) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", text) is not None
-    def sentence(text):
-        return type(text) is str and 0 < len(text) <= 300 and text.isprintable() and not any(ch in text for ch in "\\/:<>")
-    if (not word(value["cause"]) or not word(value["phase"])
-            or type(value["terminal"]) is not bool or not sentence(value["message"])):
+    cause, phase = value["cause"], value["phase"]
+    if (type(cause) is not str or cause not in _SHADER_FAILURE_GUIDANCE
+            and cause not in _SHADER_FAILURE_MESSAGE and cause not in {"active", "pending", "complete"}
+            or type(phase) is not str or phase not in _SHADER_DIAGNOSTIC_PHASES
+            or type(value["terminal"]) is not bool
+            or value["terminal"] == (cause in {"active", "pending"})):
         return None
     output = value["output"]
     if (type(output) is not dict or not {"published", "verified", "basis"} <= output.keys()
@@ -766,33 +841,48 @@ def _shader_render_diagnostic(value: Any, *, sequence_id: str | None = None,
             or any(count is not None and (type(count) is not int or not 0 <= count <= 1_000_000)
                    for key, count in output.items() if key != "basis")):
         return None
-    action = value["next_action"]
-    if (type(action) is not dict or type(action.get("kind")) is not str
-            or action["kind"] not in _SHADER_DIAGNOSTIC_ACTIONS or not sentence(action.get("message"))):
-        return None
-    next_action = {key: action[key] for key in ("kind", "message")}
-    if action["kind"] == "poll_original":
-        if sequence_id is not None:
-            next_action.update(tool="get_shader_sequence", arguments={"sequence_id": sequence_id})
-        elif still_args is not None:
-            next_action.update(tool="shader_get_output_job", arguments={key: still_args[key] for key in
-                ("request_id", "profile", "shader", "project_context_witness")})
-    result = {**value, "next_action": next_action}
     for key in ("id", "attempt_id"):
-        if key in result and (type(result[key]) is not str or re.fullmatch(
-                r"(?:attempt_)?[0-9a-f]{32}" if key == "attempt_id" else r"[0-9a-f]{32}", result[key]) is None):
+        if key in value and (type(value[key]) is not str or re.fullmatch(
+                r"(?:attempt_)?[0-9a-f]{32}" if key == "attempt_id" else r"[0-9a-f]{32}", value[key]) is None):
             return None
-    if "source" in result:
-        loc = result["source"]
-        if (result["cause"] != "source_policy" or type(loc) is not dict
-                or set(loc) not in ({"rule"}, {"rule", "member", "line", "column"}) or not word(loc["rule"])):
+    loc = value.get("source")
+    if "source" in value:
+        if (cause != "source_policy" or type(loc) is not dict
+                or set(loc) not in ({"rule"}, {"rule", "member", "line", "column"})
+                or type(loc["rule"]) is not str or loc["rule"] not in _SHADER_SOURCE_POLICY_RULES):
             return None
         if "member" in loc and (type(loc["member"]) is not str or len(loc["member"]) > 255
                 or re.fullmatch(r"source\.glsl|modules/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.glsl", loc["member"]) is None
                 or any(part in (".", "..") for part in loc["member"].split("/"))
                 or any(type(loc[key]) is not int or not 1 <= loc[key] < 2**31 for key in ("line", "column"))):
             return None
-    return result
+    if cause in {"active", "pending"}:
+        action, step = "poll_original", "Check this same export handle again."
+        message = ("This export has a live owner." if cause == "active"
+                   else "This export is awaiting a confirmed outcome.")
+    elif cause == "complete":
+        action = "show_output"
+        if sequence_id and output.get("rendered") is not None and output["published"] is None:
+            message = "The managed render is complete."
+            step = "Preflight a folder export if you need a separate output folder."
+        else:
+            message, step = "This export finished.", "Open the recorded output."
+    else:
+        action, message, step = _SHADER_FAILURE_GUIDANCE.get(cause, _SHADER_FAILURE_GUIDANCE["unknown_failure"])
+        message = _SHADER_FAILURE_MESSAGE.get(cause, message)
+        if action == "check_diagnostic_log" and "id" not in value:
+            action, step = "inspect_output", "Check the original output and local backend log."
+        if cause == "source_policy" and loc and loc["rule"] == "unbounded_loop":
+            message = "Native export requires a loop with a proven maximum iteration count."
+    next_action = {"kind": action, "message": step}
+    if action == "poll_original":
+        if sequence_id is not None:
+            next_action.update(tool="get_shader_sequence", arguments={"sequence_id": sequence_id})
+        elif still_args is not None:
+            next_action.update(_shader_output_status_action(still_args))
+    elif action == "refresh_context":
+        next_action.update(tool="get_live_context", arguments={"view": "shader"})
+    return {**value, "message": message, "next_action": next_action}
 
 
 def _shader_preflight_guidance(reply: Mapping[str, Any]) -> dict:
@@ -831,11 +921,34 @@ def _shader_preflight_guidance(reply: Mapping[str, Any]) -> dict:
                     clean.append(option)
             if clean:
                 rows.append({"route": row["route"], "available": True, "codec_options": clean})
-        elif type(row.get("reason")) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", row["reason"]):
+        elif type(row.get("reason")) is str and row["reason"] in _SHADER_ROUTE_REASONS:
             rows.append({"route": row["route"], "available": False, "reason": row["reason"]})
     if rows:
         result["route_discovery"] = {"selected": discovery["selected"], "routes": rows}
     return result
+
+
+def _shader_guided_refusal(detail: Mapping[str, Any]) -> dict | None:
+    if "diagnostic" not in detail and "route_discovery" not in detail:
+        return None
+    diagnostic = _shader_render_diagnostic(detail.get("diagnostic"))
+    result = _shader_preflight_guidance(detail)
+    code = detail.get("code")
+    if type(code) is not str or (code not in _SHADER_ROUTE_REASONS and code not in _SHADER_FAILURE_GUIDANCE
+            and code not in _SHADER_FAILURE_MESSAGE and code not in {
+                "dome_storage_unavailable", "export_failed", "import_failed", "still_failed",
+                "import_stopped", "dome_stopped", "export_stopped",
+            }):
+        code = diagnostic["cause"] if diagnostic else "shader_refused"
+    if diagnostic is not None:
+        message, step = diagnostic["message"], diagnostic["next_action"]["message"]
+        result["diagnostic"] = diagnostic
+    elif "route_discovery" in result:
+        message = "The requested render route is unavailable for this output on the current host."
+        step = "Check the route reasons and codec options before selecting a qualified route and preflighting again."
+    else:
+        message, step = "Shader output was refused.", "Check the original output and local backend log."
+    return {**result, "code": code, "message": message, "next_step": step}
 
 
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
@@ -844,7 +957,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
     def invalid() -> HextileClientError:
         return HextileClientError("Invalid bounded Shader output receipt",
             kind="shader_output_outcome_unknown" if mutation else "other",
-            receipt={"request_id": args["request_id"]} if mutation else None)
+            receipt=_shader_uncertain_output(operation, args) if mutation else None)
 
     try:
         if type(result) is not dict or len(json.dumps(result, ensure_ascii=False,
@@ -901,11 +1014,22 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     and result["released"] is False and result["status"] == "cancel_pending" and result["cleanup"] == "pending"):
                 raise invalid()
         elif operation in {"still", "get_job", "stop_job"}:
+            offered = "diagnostic" in result
             diagnostic = _shader_render_diagnostic(result.get("diagnostic"), still_args=args)
             keys -= {"diagnostic"}
             result = {key: result[key] for key in keys}
             if diagnostic is not None:
                 result["diagnostic"] = diagnostic
+            if offered:
+                result.pop("reason", None)
+                keys.discard("reason")
+                if "error" in result:
+                    old_error = result["error"]
+                    refusal = _shader_guided_refusal({
+                        "code": old_error.get("code") if type(old_error) is dict else None,
+                        "diagnostic": diagnostic,
+                    })
+                    result["error"] = {key: refusal[key] for key in ("code", "message", "next_step")}
             allowed = {"request_id", "profile", "job", "publication", "state", "output_name", "output_path", "reason",
                        "route", "producer_state", "published_cursor", "error"}
             if (not {"request_id", "profile", "job"} <= keys or keys - allowed
@@ -4397,6 +4521,11 @@ class Client:
                 "Shader sequence POST outcome unknown. GET the preflight-known sequence_id and compare request_hash; never mint a new ID or blindly repost.",
                 status_code=exc.status_code, kind="shader_sequence_outcome_unknown",
                 receipt={"status": "unknown"})
+        if isinstance(detail, Mapping):
+            guidance = _shader_guided_refusal(detail)
+            if guidance is not None:
+                return HextileClientError(guidance["message"], status_code=exc.status_code,
+                                         kind=exc.kind, receipt=guidance)
         source_messages = {
             "shader_source_format_retired": "Frozen from the retired Shader format. Start a new render.",
             "shader_source_unavailable": "Frozen Shader source is unavailable. Start a new render.",
@@ -4409,11 +4538,6 @@ class Client:
             if type(detail.get("next_step")) is str and detail["next_step"].strip() and "\n" not in detail["next_step"]:
                 next_step = detail["next_step"]
         receipt = {"code": code or "shader_sequence_refused"}
-        if isinstance(detail, Mapping):
-            receipt.update(_shader_preflight_guidance(detail))
-            diagnostic = _shader_render_diagnostic(detail.get("diagnostic"))
-            if diagnostic is not None:
-                receipt["diagnostic"] = diagnostic
         if message:
             receipt["message"] = message
         if next_step:
@@ -7612,13 +7736,9 @@ class Client:
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
                     or exc.kind == "other" and 200 <= exc.status_code < 300:
-                receipt = {"request_id": args["request_id"]}
-                if operation == "still":
-                    receipt["next_action"] = {"tool": "shader_get_output_job", "arguments": {key: args[key] for key in
-                        ("request_id", "profile", "shader", "project_context_witness")}}
                 raise HextileClientError(
                     "Shader output outcome unknown; inspect the original request_id without reposting.",
-                    kind="shader_output_outcome_unknown", receipt=receipt) from exc
+                    kind="shader_output_outcome_unknown", receipt=_shader_uncertain_output(operation, args)) from exc
             raise
         return _shader_output_receipt(operation, args, result, mutation=True)
 
@@ -7676,8 +7796,7 @@ class Client:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
                     or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError("Shader output stop outcome unknown; read the original job status.",
-                    kind="shader_output_outcome_unknown", receipt={"request_id": args["request_id"],
-                        "next_action": {"tool": "shader_get_output_job", "arguments": dict(args)}}) from exc
+                    kind="shader_output_outcome_unknown", receipt=_shader_uncertain_output("stop_job", args)) from exc
             raise
 
     def export_shader_bundle(self, args: Mapping[str, Any]) -> dict:
@@ -7720,6 +7839,10 @@ def _raise_plain_refusal(exc: HextileClientError) -> None:
     detail = parsed.get("detail") if isinstance(parsed, dict) else None
     if not isinstance(detail, dict):
         raise exc
+    guidance = _shader_guided_refusal(detail)
+    if guidance is not None:
+        raise HextileClientError(guidance["message"], status_code=exc.status_code,
+                                 kind="http", receipt=guidance) from exc
     code, message, next_step = detail.get("code"), detail.get("message"), detail.get("next_step")
     if next_step is None and type(code) is str:
         next_step = _DEFAULT_NEXT_STEP.get((code, message))
@@ -7728,11 +7851,6 @@ def _raise_plain_refusal(exc: HextileClientError) -> None:
             or type(next_step) is not str or not next_step.strip() or "\n" in next_step or len(next_step) > 300):
         raise exc
     receipt = {"code": code, "message": message, "next_step": next_step}
-    if "diagnostic" in detail or "route_discovery" in detail:
-        receipt.update(_shader_preflight_guidance(detail))
-        diagnostic = _shader_render_diagnostic(detail.get("diagnostic"))
-        if diagnostic is not None:
-            receipt["diagnostic"] = diagnostic
     raise HextileClientError(message, status_code=exc.status_code, kind="http", receipt=receipt) from exc
 
 
@@ -7750,7 +7868,8 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
         if exc.receipt is not None:
             payload["receipt"] = exc.receipt
             plain = exc.receipt
-            if set(plain) == {"code", "message", "next_step"}:
+            fields = {"code", "message", "next_step"}
+            if fields <= set(plain) <= fields | {"diagnostic", "route_discovery", "checks"}:
                 payload["code"] = plain["code"]
                 payload["message"] = plain["message"]
                 payload["next_step"] = plain["next_step"]

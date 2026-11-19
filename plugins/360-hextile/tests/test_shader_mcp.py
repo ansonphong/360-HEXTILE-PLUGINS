@@ -528,6 +528,66 @@ def test_shader_output_receipts_refuse_wrong_identity_and_private_fields(monkeyp
     assert len(calls) == 7
 
 
+def test_shader_diagnostics_strip_host_prose_and_validate_recovery_actions(monkeypatch):
+    from hextile_client import error_payload
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    client = Client()
+    args = {"request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e", "profile": "png-master/1",
+            "shader": {"origin": "user", "shaderId": "aurora"}, "project_context_witness": "w"}
+    digest = "sha256:" + "a" * 64
+    owner = {**args, "studio_surface_id": "surface", "expected_edit_sequence": 1,
+             "base": {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest}}
+    private = "Private shader prompt text"
+    diagnostic = {"cause": "output_owner_changed", "phase": "publishing", "terminal": True,
+                  "output": {"published": None, "verified": None, "basis": "unknown"},
+                  "message": private, "next_action": {"kind": "refresh_context", "message": private}}
+    detail = {"code": "output_owner_changed", "message": private, "next_step": private, "diagnostic": diagnostic}
+    job = {"id": "a" * 32, "shader_ref": args["shader"], "state": "completed",
+           "progress": 1.0, "output_identity": None}
+    response = {**{k: args[k] for k in ("request_id", "profile")}, "job": job, "state": "failed",
+                "publication": "failed", "diagnostic": diagnostic, "reason": {"message": private},
+                "error": {key: detail[key] for key in ("code", "message", "next_step")}}
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: response)
+    returned = client.get_shader_output_job(args)
+    assert private not in json.dumps(returned)
+    action = returned["diagnostic"]["next_action"]
+    assert action["tool"] == "get_live_context" and action["arguments"] == {"view": "shader"}
+    jsonschema.validate(action["arguments"], _schema(action["tool"])["inputSchema"])
+
+    for supplied in (diagnostic, {**diagnostic, "phase": "private_marker"},
+                     {**diagnostic, "cause": "source_policy", "source": {"rule": "private_marker"}}):
+        def refused(*_a, **_k):
+            raise HextileClientError(private, kind="http", status_code=422,
+                body=json.dumps({"detail": {**detail, "diagnostic": supplied}}))
+        monkeypatch.setattr(client, "request_json", refused)
+        with pytest.raises(HextileClientError) as error:
+            client.preflight_shader_still({**owner, "output": {"width": 16, "height": 8}})
+        payload = error_payload(error.value)
+        assert private not in json.dumps(payload) and "private_marker" not in json.dumps(payload)
+        assert all(payload[key] == payload["receipt"][key] for key in ("code", "message", "next_step"))
+        assert ("diagnostic" in payload["receipt"]) is (supplied is diagnostic)
+        try:
+            refused()
+        except HextileClientError as exc:
+            assert private not in json.dumps(error_payload(client._shader_sequence_error(exc)))
+
+    get_job = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_get_output_job")
+    malformed = [None, {**response, "request_id": "wrong"}, {**response, "padding": "x" * 32768}]
+    calls = []
+    for reply in malformed:
+        def accepted(method, path, *_a, **_k):
+            calls.append((method, path))
+            return reply
+        monkeypatch.setattr(client, "request_json", accepted)
+        with pytest.raises(HextileClientError) as error:
+            client.export_shader_still({**owner, "preflight_request_id": args["request_id"]})
+        assert error.value.kind == "shader_output_outcome_unknown"
+        assert error.value.receipt["next_action"] == {"tool": "shader_get_output_job", "arguments": args}
+        jsonschema.validate(error.value.receipt["next_action"]["arguments"], get_job["inputSchema"])
+    assert calls == [("POST", "/api/shaders/agent-operations/output/still")] * len(malformed)
+
+
 def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     descriptor = next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == "shader_create_asset")
