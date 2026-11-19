@@ -8,6 +8,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 ## How to work fast
 
 - Orient with one read: `get_live_context(view="shader")` (on-screen work only; off-screen Shaders need none before `shader_edit`).
+- Read mounted controls with `get_shader_parameters` (default 32, maximum 64 per page, 1,024 per document). Follow `next_cursor` until null. Combine repeated enum option slices by parameter id. Restart the read after `page_changed`.
 - Act by `shader_id` with `shader_edit` (one call can batch several edits), no open step, no Save; it saves itself.
 - 403 `No document is open` or `connected: false`: never poll it; ask the user to open a document or the Shader Workshop.
 - Lost reply: resend the same request with the same `request_id`.

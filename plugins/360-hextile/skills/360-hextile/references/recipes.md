@@ -34,7 +34,7 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 - Create a named blank Shader → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"new","template_id":"hx_starter","title":"My Shader"}`. The title is optional. Recover a lost reply with `shader_get_operation {"request_id":U,"project_context_witness":W,"scope":"creation"}`.
 - Find by name → `shader_list_assets {"search":"beam"}` (searches titles, not ids); returns `W`, `S`, `base`.
 - Another Shader's title, tags, saved values → `shader_get_asset_state {"shader":S,"project_context_witness":W}`.
-- On-screen parameters → `get_shader_parameters {}` (ids, values, label, type, help, min, max, step, options).
+- On-screen parameters → `get_shader_parameters {"limit":32}`. Follow `next_cursor` with `{"cursor":"<next_cursor>"}` until null. The reply gives `count` and `max_parameters` (1,024). A wide enum continues with the same parameter id and the next slice of its options.
 - Read GLSL and parameter help/labels/options, any Shader (off-screen Built-ins too) → `shader_get_asset_state {"shader":S,"project_context_witness":W,"include":["source","parameters"]}` — one call.
 - Package files on disk (`shader.json`, `source.glsl`, `modules/*.glsl`) → `open_shader_workspace` (file flow only; the sibling `revisions/<NNNNNN>/` of `workspace_path` is the saved copy).
 

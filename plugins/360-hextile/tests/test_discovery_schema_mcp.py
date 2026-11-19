@@ -567,3 +567,25 @@ def test_malformed_discovery_success_is_not_a_schema() -> None:
     assert direct.get_config_schema("PromptSettings") == page
     assert positive.call_tool("get_processor_schema", {"pipeline_id": "sdxl"})["isError"] is False
     assert json.loads(positive.call_tool("get_processor_schema", {"pipeline_id": "sdxl"})["content"][0]["text"]) == ui
+
+
+def test_shader_parameter_discovery_pages_use_one_checked_reader() -> None:
+    path = "/api/agent/shader-parameters"
+    first = {"count": 1024, "max_parameters": 1024, "next_cursor": "v1-token:1.32",
+             "parameters": [{"id": "mode", "options": list(range(32)), "option_count": 400}]}
+    last = {**first, "next_cursor": None, "parameters": [{"id": "mode", "options": [32], "option_offset": 32}]}
+    server, _client, calls = _server({
+        ("GET", path, ""): (200, json.dumps(first).encode()),
+        ("GET", path, "limit=1&cursor=v1-token%3A1.32"): (200, json.dumps(last).encode()),
+    })
+    schema = _tool("get_shader_parameters")["inputSchema"]
+    assert set(schema["properties"]) == {"limit", "cursor"}
+    assert schema["properties"]["limit"]["maximum"] == 64
+    handler = server._handlers["get_shader_parameters"]
+    assert handler({}) == first
+    assert handler({"limit": 1, "cursor": first["next_cursor"]}) == last
+    for invalid in ({"limit": True}, {"limit": 65}, {"cursor": ""}, {"cursor": "z" * 161}, {"shader": "other"}):
+        with pytest.raises(HextileClientError) as error:
+            handler(invalid)
+        assert error.value.status_code == 422
+    assert len(_native_calls(calls)) == 2

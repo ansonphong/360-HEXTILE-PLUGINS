@@ -240,7 +240,7 @@ Use the existing status, cancellation and original-request recovery tools.
 
 ## Shader package
 
-Mounted Shader parameter controls are live session values, not Workflow fields and not proof of a saved package. `get_shader_parameters` returns current IDs, values, optional human revisions, commit and revision without source. Structural edits use `shader_edit`.
+Mounted Shader parameter controls are live session values, not Workflow fields and not proof of a saved package. `get_shader_parameters` returns a bounded page of current IDs, values, metadata and optional human revisions alongside commit, revision, total `count`, `max_parameters` (1,024) and `next_cursor`. Pass an optional `limit` of 1–64 or continue with the returned cursor. A wide enum spans pages under the same id with `option_offset` and total `option_count`; merge its option ID and label slices. `truncated_option_labels` identifies labels projected to 300 characters. A changed revision or surface returns `page_changed`; restart from the first page. Structural edits use `shader_edit`.
 
 `shader.json` is not a `.hextile.json` Workflow. It holds the authored data. `source.glsl` and `modules/**/*.glsl` hold the code. No GLSL bodies belong in durable JSON. Include unused helpers. `shader.json` is at most 2 MiB. GLSL is at most 64 KiB in total, with at most 31 modules plus the entry, include depth at most 16, and a path of at most 256 bytes. `shader_edit` saves each accepted batch; Register saves only in the file-workspace flow. Read merge. Watch compile. See the installed `shader` skill and https://360hextile.com/docs/create/shader.
 

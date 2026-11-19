@@ -2464,12 +2464,13 @@ TOOLS: list[dict[str, Any]] = [
         required=["render_id", "node_id"],
     ),
     _tool_def("get_shader_parameters",
-        "Use to read the open Shader's parameters: ids, current values, label, type, range "
-        "(min/max/step), help, group, default, options and option_labels, plus document commit and "
-        "revision. No GLSL source. Takes no arguments: the on-screen Shader only; MCP must be enabled. For an "
-        "off-screen Shader use shader_get_asset_state {shader, project_context_witness, include:[\"parameters\"]}. If no document is open it fails 403 \"No document is "
-        "open in 360 Hextile...\": ask the user to open one, then try once. Do not poll.",
-        {}),
+        "Read a page of the open Shader's control IDs, values, labels, ranges, options and human revisions. "
+        "count is the document total; max_parameters is the supported capacity (1024). Follow next_cursor until null. "
+        "A wide enum repeats its id with option_offset and option_count. Combine options and option_labels by id. "
+        "After page_changed, start again without a cursor. For off-screen Shaders use shader_get_asset_state. "
+        "If no document is open, ask the user to open the Workshop.",
+        {"limit": {"type": "integer", "minimum": 1, "maximum": 64, "default": 32},
+         "cursor": {"type": "string", "minLength": 1, "maxLength": 160}}),
     _tool_def("shader_edit",
         "Use to change a Shader's package: rename a dropdown's options, change a parameter's label, range "
         "or default, or edit GLSL. To change a label use this, not any parameter-setting tool. Pass "
@@ -5046,10 +5047,8 @@ class HextileMcpServer:
         return HextileClientError(message, kind="version_mismatch", status_code=exc.status_code)
 
     def _get_shader_parameters(self, args: dict[str, Any]) -> Any:
-        if args:
-            raise HextileClientError("Expected no Shader parameter discovery arguments", kind="other", status_code=422)
         try:
-            return self.client.get_shader_parameters(session_id=self._ensure_session_id())
+            return self.client.get_shader_parameters(session_id=self._ensure_session_id(), **({"page": args} if args else {}))
         except HextileClientError as exc:
             if exc.status_code == 403 and "studio_not_present" in (exc.body or ""):
                 raise HextileClientError(_NO_STUDIO, status_code=403, body=exc.body, kind="http") from exc

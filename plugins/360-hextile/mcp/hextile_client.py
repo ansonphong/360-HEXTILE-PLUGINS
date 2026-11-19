@@ -4364,10 +4364,16 @@ class Client:
             raise HextileClientError("Invalid MCP session origin", kind="other", status_code=422)
         return {"X-Hextile-Agent": "mcp", "X-Hextile-Mcp-Session": session_id}
 
-    def get_shader_parameters(self, *, session_id: str) -> Any:
-        """Read only the mounted Shader's source-free exposed controls."""
+    def get_shader_parameters(self, *, session_id: str, page: Optional[Mapping[str, Any]] = None) -> Any:
+        """Read one revision-bound page of mounted Shader controls."""
+        page = {} if page is None else page
+        _closed_argument_error("Expected Shader parameter page arguments", page, set(), {"cursor", "limit"})
+        if "limit" in page and (type(page["limit"]) is not int or not 1 <= page["limit"] <= 64):
+            raise HextileClientError("Parameter page limit must be an integer from 1 to 64", kind="other", status_code=422)
+        if "cursor" in page and (type(page["cursor"]) is not str or not 1 <= len(page["cursor"]) <= 160):
+            raise HextileClientError("Invalid parameter page cursor", kind="other", status_code=422)
         try:
-            return self.get_json("/api/agent/shader-parameters",
+            return self.get_json("/api/agent/shader-parameters", params=page or None,
                                  headers=self._shader_parameter_headers(session_id))
         except HextileClientError as exc:
             if exc.kind == "http" and exc.status_code is not None and exc.status_code < 500:
