@@ -657,10 +657,30 @@ def test_located_http_refusals_preserve_independent_guidance(discovery):
         with pytest.raises(HextileClientError) as ordinary:
             client.request_json("POST", "/api/shaders/sequences", {})
         assert ordinary.value.body == wire[:800].decode()
-        wire += b" " * 8192
-        with pytest.raises(HextileClientError) as oversized:
-            client.request_json("POST", "/api/shaders/sequences/preflight", {})
-        assert oversized.value.body == wire[:800].decode()
+        server = HextileMcpServer(client=client)
+        server._emit_activity = lambda **_kwargs: None
+        tools = (("shader_preflight_still_export", still), ("preflight_shader_sequence", sequence))
+        oversized = wire.ljust(8193)
+        malformed = b'{"detail":{"diagnostic":' + secret.encode()
+        legacy = {"code": "authority", "message": "Current Shader writer is required",
+                  "next_step": "Open the Shader first."}
+        extended_legacy = b" " * 850 + json.dumps({"detail": {**legacy, "message": secret}}).encode()
+        exposed = []
+        for label, wire in (("oversized", oversized), ("malformed", malformed), ("legacy", extended_legacy)):
+            for name, args in tools:
+                result = server.call_tool(name, args)
+                payload = json.loads(result["content"][0]["text"])
+                assert result["isError"] and payload["status_code"] == 422
+                if secret in json.dumps(payload):
+                    exposed.append((label, name))
+                assert "diagnostic" not in payload.get("receipt", {})
+        assert exposed == []
+        wire = json.dumps({"detail": legacy}).encode()
+        for name, args in tools:
+            result = server.call_tool(name, args)
+            payload = json.loads(result["content"][0]["text"])
+            assert result["isError"] and payload["status_code"] == 422
+            assert {key: payload[key] for key in legacy} == legacy
 
 
 def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> None:

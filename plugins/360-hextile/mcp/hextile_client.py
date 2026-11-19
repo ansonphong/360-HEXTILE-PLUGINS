@@ -3585,23 +3585,34 @@ class Client:
         except HextileClientError:
             raise
         except urllib.error.HTTPError as exc:
-            snippet = error_body = ""
-            try:
-                shader_preflight = method == "POST" and path in (
-                    "/api/shaders/sequences/preflight", "/api/shaders/agent-operations/output/still/preflight")
-                if shader_preflight:
-                    # The diagnostic and available routes share one bounded JSON
-                    # refusal. Keep the ordinary exception text at snippet size.
+            if method == "POST" and path in (
+                "/api/shaders/sequences/preflight", "/api/shaders/agent-operations/output/still/preflight",
+            ):
+                error_body = None
+                try:
                     raw = exc.read(_SHADER_PREFLIGHT_ERROR_CAP + 1)
-                    snippet = raw[:_ERROR_BODY_SNIPPET].decode("utf-8", "replace")
-                    error_body = raw.decode("utf-8", "replace") if len(raw) <= _SHADER_PREFLIGHT_ERROR_CAP else snippet
-                else:
-                    # Hotkeys and workspace conflicts have existing structured limits.
-                    limit = 64 * 1024 if path == "/api/agent/hotkeys/requests" or path.startswith(
-                        "/api/agent/shader-workspaces/") else _ERROR_BODY_SNIPPET
-                    snippet = error_body = (exc.read(limit) or b"").decode("utf-8", "replace")
+                    if len(raw) <= _ERROR_BODY_SNIPPET:
+                        error_body = raw.decode("utf-8", "replace")
+                    elif len(raw) <= _SHADER_PREFLIGHT_ERROR_CAP:
+                        # Extended bodies belong only to the checked diagnostic
+                        # projection. Legacy plain refusals keep their old limit.
+                        data = json.loads(raw)
+                        detail = data.get("detail") if isinstance(data, dict) else None
+                        if isinstance(detail, dict) and {"diagnostic", "route_discovery"} & detail.keys():
+                            error_body = raw.decode("utf-8")
+                except Exception:
+                    pass
+                # A malformed, oversized or unsupported error must never
+                # expose the raw host response through the public tool error.
+                raise HextileClientError("Shader export preflight was refused.", status_code=exc.code,
+                                         body=error_body, kind="http") from exc
+            snippet = ""
+            try:
+                # Hotkeys has bounded structured conflict details, not a log snippet.
+                limit = 64 * 1024 if path == "/api/agent/hotkeys/requests" or path.startswith("/api/agent/shader-workspaces/") else _ERROR_BODY_SNIPPET
+                snippet = (exc.read(limit) or b"").decode("utf-8", "replace")
             except Exception:
-                snippet = error_body = str(exc.reason or "")
+                snippet = str(exc.reason or "")
             if exc.code == 404 and "/api/workflows/run" in path:
                 raise HextileClientError(
                     UPGRADE_MSG,
@@ -3628,7 +3639,7 @@ class Client:
             raise HextileClientError(
                 f"HTTP {exc.code} {method} {path}: {snippet}",
                 status_code=exc.code,
-                body=error_body,
+                body=snippet,
                 kind="http",
             ) from exc
         except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as exc:
