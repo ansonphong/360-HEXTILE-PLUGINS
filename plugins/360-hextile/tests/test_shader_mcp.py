@@ -592,8 +592,15 @@ def test_shader_diagnostics_strip_host_prose_and_validate_recovery_actions(monke
     {"selected": [], "routes": [{"route": "native", "available": False, "reason": "route_unqualified"}]},
     {"selected": "native", "routes": [{"route": {}, "available": False},
                                      {"route": "native", "available": True, "codec_options": [{"format": "png"}]}]},
+    {"selected": "native", "routes": [
+        {"route": "native", "available": True, "codec_options": [{"format": "png"}]},
+        {"route": "webgl-raw-float", "available": False, "reason": "route_unqualified"},
+        {"route": "webgl-display-native-encode", "available": False, "reason": "runtime_identity_mismatch"},
+        {"route": "webgl-browser-encode-desktop", "available": False, "reason": "route_unqualified"},
+        {"route": "webgl-browser-encode-backend", "available": False, "reason": "route_unqualified"},
+    ]},
 ])
-def test_malformed_discovery_preserves_located_http_refusals(discovery):
+def test_located_http_refusals_preserve_independent_guidance(discovery):
     from hextile_client import error_payload
 
     digest = "sha256:" + "a" * 64
@@ -601,16 +608,21 @@ def test_malformed_discovery_preserves_located_http_refusals(discovery):
     secret = "private shader text"
     detail = {"code": "source_policy", "message": secret, "next_step": secret,
               "diagnostic": {"cause": "source_policy", "phase": "preflight", "terminal": True,
+                             "id": "c" * 32,
                              "source": source, "message": secret,
                              "output": {"published": 0, "verified": 0, "basis": "not_started"},
                              "next_action": {"kind": "edit_source", "message": secret}},
               "route_discovery": discovery}
+    full_discovery = len(discovery["routes"]) == 5
+    wire = json.dumps({"detail": detail}, separators=(",", ":")).encode()
+    if full_discovery:
+        assert len(wire) > 800
     visits = []
 
     def refuse(request, *, timeout):
         visits.append(request.selector)
         raise urllib.error.HTTPError(request.full_url, 422, "Unprocessable Entity", {},
-                                     io.BytesIO(json.dumps({"detail": detail}).encode()))
+                                     io.BytesIO(wire))
 
     client = Client("http://127.0.0.1:9", opener=refuse)
     still = {"request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e", "profile": "png-master/1",
@@ -636,10 +648,19 @@ def test_malformed_discovery_preserves_located_http_refusals(discovery):
         assert receipt["diagnostic"]["source"] == source
         assert receipt["diagnostic"]["next_action"]["kind"] == "edit_source"
         if type(discovery["selected"]) is str:
-            assert receipt["route_discovery"]["routes"] == [discovery["routes"][1]]
+            assert receipt["route_discovery"]["routes"] == [
+                row for row in discovery["routes"] if type(row["route"]) is str]
         else:
             assert "route_discovery" not in receipt
     assert visits == ["/api/shaders/agent-operations/output/still/preflight", "/api/shaders/sequences/preflight"]
+    if full_discovery:
+        with pytest.raises(HextileClientError) as ordinary:
+            client.request_json("POST", "/api/shaders/sequences", {})
+        assert ordinary.value.body == wire[:800].decode()
+        wire += b" " * 8192
+        with pytest.raises(HextileClientError) as oversized:
+            client.request_json("POST", "/api/shaders/sequences/preflight", {})
+        assert oversized.value.body == wire[:800].decode()
 
 
 def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> None:

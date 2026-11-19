@@ -319,6 +319,7 @@ _BATCH_KNOWN_404 = (
 )
 
 _ERROR_BODY_SNIPPET = 800
+_SHADER_PREFLIGHT_ERROR_CAP = 8 * 1024
 _REQUEST_HEADERS: ContextVar[Mapping[str, str]] = ContextVar(
     "hextile_request_headers", default={}
 )
@@ -3584,15 +3585,23 @@ class Client:
         except HextileClientError:
             raise
         except urllib.error.HTTPError as exc:
-            snippet = ""
+            snippet = error_body = ""
             try:
-                # Hotkeys has bounded structured conflict details, not a log snippet.
-                limit = 64 * 1024 if path == "/api/agent/hotkeys/requests" or path.startswith("/api/agent/shader-workspaces/") else _ERROR_BODY_SNIPPET
-                snippet = (exc.read(limit) or b"").decode(
-                    "utf-8", "replace"
-                )
+                shader_preflight = method == "POST" and path in (
+                    "/api/shaders/sequences/preflight", "/api/shaders/agent-operations/output/still/preflight")
+                if shader_preflight:
+                    # The diagnostic and available routes share one bounded JSON
+                    # refusal. Keep the ordinary exception text at snippet size.
+                    raw = exc.read(_SHADER_PREFLIGHT_ERROR_CAP + 1)
+                    snippet = raw[:_ERROR_BODY_SNIPPET].decode("utf-8", "replace")
+                    error_body = raw.decode("utf-8", "replace") if len(raw) <= _SHADER_PREFLIGHT_ERROR_CAP else snippet
+                else:
+                    # Hotkeys and workspace conflicts have existing structured limits.
+                    limit = 64 * 1024 if path == "/api/agent/hotkeys/requests" or path.startswith(
+                        "/api/agent/shader-workspaces/") else _ERROR_BODY_SNIPPET
+                    snippet = error_body = (exc.read(limit) or b"").decode("utf-8", "replace")
             except Exception:
-                snippet = str(exc.reason or "")
+                snippet = error_body = str(exc.reason or "")
             if exc.code == 404 and "/api/workflows/run" in path:
                 raise HextileClientError(
                     UPGRADE_MSG,
@@ -3619,7 +3628,7 @@ class Client:
             raise HextileClientError(
                 f"HTTP {exc.code} {method} {path}: {snippet}",
                 status_code=exc.code,
-                body=snippet,
+                body=error_body,
                 kind="http",
             ) from exc
         except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as exc:
