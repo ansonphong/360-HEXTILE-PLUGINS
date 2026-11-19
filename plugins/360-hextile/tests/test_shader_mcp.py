@@ -588,6 +588,60 @@ def test_shader_diagnostics_strip_host_prose_and_validate_recovery_actions(monke
     assert calls == [("POST", "/api/shaders/agent-operations/output/still")] * len(malformed)
 
 
+@pytest.mark.parametrize("discovery", [
+    {"selected": [], "routes": [{"route": "native", "available": False, "reason": "route_unqualified"}]},
+    {"selected": "native", "routes": [{"route": {}, "available": False},
+                                     {"route": "native", "available": True, "codec_options": [{"format": "png"}]}]},
+])
+def test_malformed_discovery_preserves_located_http_refusals(discovery):
+    from hextile_client import error_payload
+
+    digest = "sha256:" + "a" * 64
+    source = {"rule": "unbounded_loop", "member": "source.glsl", "line": 25, "column": 5}
+    secret = "private shader text"
+    detail = {"code": "source_policy", "message": secret, "next_step": secret,
+              "diagnostic": {"cause": "source_policy", "phase": "preflight", "terminal": True,
+                             "source": source, "message": secret,
+                             "output": {"published": 0, "verified": 0, "basis": "not_started"},
+                             "next_action": {"kind": "edit_source", "message": secret}},
+              "route_discovery": discovery}
+    visits = []
+
+    def refuse(request, *, timeout):
+        visits.append(request.selector)
+        raise urllib.error.HTTPError(request.full_url, 422, "Unprocessable Entity", {},
+                                     io.BytesIO(json.dumps({"detail": detail}).encode()))
+
+    client = Client("http://127.0.0.1:9", opener=refuse)
+    still = {"request_id": "7e720fa5-192b-47da-a705-ab3b5ddc979e", "profile": "png-master/1",
+        "shader": {"origin": "user", "shaderId": "aurora"}, "project_context_witness": "w",
+        "studio_surface_id": "surface", "expected_edit_sequence": 1,
+        "base": {"kind": "saved", "working_revision": 1, "document_hash": digest, "source_hash": digest},
+        "output": {"width": 16, "height": 8}}
+    sequence = {"shader_ref": {"origin": "user", "id": "aurora"}, "project_context_witness": "w",
+        "working_revision": 1, "document_hash": digest, "source_hash": digest, "idempotency_key": "folder-test",
+        "name": "test", "frame_rate": {"num": 30, "den": 1}, "frame_count": 3, "seed": 0,
+        "start_time": {"num": "0", "den": "1"}, "end_time": {"num": "1", "den": "10"},
+        "width": 16, "height": 8, "publication_mode": "deferred",
+        "output": {"projection": "equirectangular", "pan": 0, "tilt": 0, "roll": 0}}
+    for call, args in ((client.preflight_shader_still, still), (client.preflight_shader_sequence, sequence)):
+        with pytest.raises(HextileClientError) as error:
+            call(args)
+        payload = error_payload(error.value)
+        assert payload["code"] == "source_policy" and payload["status_code"] == 422
+        assert "proven maximum iteration count" in payload["message"]
+        assert "reported source location" in payload["next_step"]
+        assert secret not in json.dumps(payload)
+        receipt = payload["receipt"]
+        assert receipt["diagnostic"]["source"] == source
+        assert receipt["diagnostic"]["next_action"]["kind"] == "edit_source"
+        if type(discovery["selected"]) is str:
+            assert receipt["route_discovery"]["routes"] == [discovery["routes"][1]]
+        else:
+            assert "route_discovery" not in receipt
+    assert visits == ["/api/shaders/agent-operations/output/still/preflight", "/api/shaders/sequences/preflight"]
+
+
 def test_shader_create_paste_is_closed_and_uses_creation_status(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     descriptor = next(item for item in SHADER_EXTENSION_TOOLS if item["name"] == "shader_create_asset")

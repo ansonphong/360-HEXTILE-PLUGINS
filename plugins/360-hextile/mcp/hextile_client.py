@@ -894,12 +894,12 @@ def _shader_preflight_guidance(reply: Mapping[str, Any]) -> dict:
         result["checks"] = checks
     discovery = reply.get("route_discovery")
     if (type(discovery) is not dict or set(discovery) != {"selected", "routes"}
-            or discovery["selected"] not in _RENDER_ROUTE_NAMES
+            or type(discovery["selected"]) is not str or discovery["selected"] not in _RENDER_ROUTE_NAMES
             or type(discovery["routes"]) is not list or not 1 <= len(discovery["routes"]) <= len(_RENDER_ROUTE_NAMES)):
         return result
     rows = []
     for row in discovery["routes"]:
-        if (type(row) is not dict or row.get("route") not in _RENDER_ROUTE_NAMES
+        if (type(row) is not dict or type(row.get("route")) is not str or row["route"] not in _RENDER_ROUTE_NAMES
                 or type(row.get("available")) is not bool):
             continue
         if row["available"]:
