@@ -46,7 +46,7 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 - Min / max / step → `["parameters","<id>","min"|"max"|"step"]` — send min and max together.
 - Rename dropdown options → `["parameters","<id>","option_labels"]` value `{"0":"A","1":"B"}` (all labels).
 - Current value → `{"op":"set","address":["values","<id>"],"value":0.7}`; reorder → `["order","parameters"]` with all ids.
-- Add a slider → with `lease`: `{"op":"create","address":["parameters","glow"],"value":{"type":"float","default":1,"min":0,"max":2,"step":0.01,"label":"Glow"}}` plus a `["code"]` entry using `hxParam_glow`.
+- Add a slider → with `lease`: `{"op":"create","address":["parameters","glow"],"value":{"type":"float","default":0.4,"min":0,"max":1,"step":0.01,"label":"Glow"}}` plus a `["code"]` entry using `hxParam_glow`. A new float with valid `min < max` defaults to `control: "slider"`. Set `"control":"number"` to keep a numeric field.
 - Remove a parameter → with `lease`: `delete` `["parameters","<id>"]` plus a `["code"]` entry without `hxParam_<id>`, in one call.
 - Change type or options → with `lease`: `reshape` `["parameters","<id>"]` value `{"type":"enum","options":[0,1,2],"default":0}`.
 - Tags / title → `["meta","tags"|"title"]`; clock → `["clock","bpm"|"speed"]`; size → `["output","width"|"height"]`; `["view","fov"]`; `["capture","seed"]`.
