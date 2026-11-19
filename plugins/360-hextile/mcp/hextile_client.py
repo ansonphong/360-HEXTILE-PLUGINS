@@ -3138,6 +3138,12 @@ def _open_result(value: Any) -> dict:
     return value
 
 
+def _valid_edit_counts(counts: Any) -> bool:
+    return (type(counts) is dict and set(counts) == {"kept", "skipped"}
+            and all(type(count) is int and count >= 0 for count in counts.values())
+            and 1 <= sum(counts.values()) <= 64)
+
+
 def _saved_result(value: Any) -> dict:
     if type(value) is dict and value.get("save") == "unchanged":
         return _edit_result(value)  # A recorded shader_edit that changed nothing (no commit).
@@ -3147,7 +3153,8 @@ def _saved_result(value: Any) -> dict:
         return value
     if (type(value) is not dict or value.get("save") != "saved"
             or not {"merge", "lease", "commit", "revision"} <= set(value)
-            or set(value) - {"save", "merge", "not_adopted", "lease", "commit", "revision", "compile"}
+            or set(value) - {"save", "merge", "not_adopted", "lease", "commit", "revision", "compile", "edit_counts"}
+            or ("edit_counts" in value and not _valid_edit_counts(value["edit_counts"]))
             or not _shader_lease(value["lease"])
             or type(value["commit"]) is not int or value["commit"] < 0
             or type(value["revision"]) is not int or value["revision"] < 0):
@@ -3166,16 +3173,15 @@ def _saved_result(value: Any) -> dict:
 def _edit_result(value: Any) -> dict:
     if (type(value) is not dict or value.get("save") not in {"saved", "unchanged"}
             or not {"save", "results", "commit", "revision"} <= set(value)
-            or set(value) - {"save", "results", "commit", "revision", "compile", "changed", "warning", "base"}
+            or set(value) - {"save", "results", "commit", "revision", "compile", "changed", "warning", "base", "edit_counts"}
+            or ("edit_counts" in value and not _valid_edit_counts(value["edit_counts"]))
             or ("base" in value and not _reply_base(value["base"]))
             or ("changed" in value and type(value["changed"]) is not bool)
             or ("warning" in value and (type(value["warning"]) is not str or len(value["warning"]) > 300))
             or type(value.get("commit")) is not int or value["commit"] < 0
             or type(value.get("revision")) is not int or value["revision"] < 0):
         _malformed("Malformed Shader edit result")
-    rows = _merge_rows(value["results"])
-    kept = sum(row["outcome"] in _MERGE_APPLIED for row in rows)
-    value["edit_counts"] = {"kept": kept, "skipped": len(rows) - kept}
+    _merge_rows(value["results"])
     if "compile" in value:
         _compile_view(value["compile"])
         if _compile_pending_note(value["compile"]):
@@ -5316,6 +5322,10 @@ class Client:
                 or result.get("operation") != ("shader_fork_asset" if action == "fork" else "shader_create_asset")):
             raise HextileClientError(unknown, kind="shader_operation_outcome_unknown",
                 receipt={"request_id": args["request_id"], "scope": "creation"})
+        if (action == "new" and "title" in args
+                and result["receipt"].get("title") != args["title"].strip()):
+            return {**result, "warning": ("The APP saved the starter with a different title. "
+                                           "Use the title and Shader identity in this saved receipt.")}
         return result
 
     def create_shader_asset(self, args: Mapping[str, Any]) -> dict:
@@ -5666,7 +5676,7 @@ class Client:
         shader_id = urllib.parse.quote(args["shader_id"], safe="")
         request_id = urllib.parse.quote(args["request_id"], safe="")
         result = self._shader_workspace_request(
-            "GET", f"/api/shaders/{shader_id}/updates/{request_id}")
+            "GET", f"/api/shaders/{shader_id}/updates/{request_id}", params={"include_edit_counts": 1})
         return _saved_result(result)
 
     def shader_edit(self, args: Mapping[str, Any]) -> Any:
@@ -5677,8 +5687,11 @@ class Client:
         for key in ("lease", "seen"):
             if key in args:
                 body[key] = args[key]
-        result = self._shader_workspace_request("POST", f"/api/shaders/{shader_id}/agent/edits", body)
-        return _edit_result(result)
+        result = _edit_result(self._shader_workspace_request(
+            "POST", f"/api/shaders/{shader_id}/agent/edits", body, params={"include_edit_counts": 1}))
+        if "edit_counts" in result and sum(result["edit_counts"].values()) != len(body["edits"]):
+            _malformed("Shader edit counts do not match the submitted batch")
+        return result
 
     @staticmethod
     def _recovery_result(data: Any, allowed: set[str], required: set[str]) -> dict:
