@@ -25,11 +25,13 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 
 ## Saving
 
-`shader_edit` autosaves each accepted batch to the working copy (no new revision; `shader_checkpoint`, an output or the first agent edit after the human cuts one) and returns `commit` and `revision`. Do not call `register_shader_update` or a Save after it. Read each `results[].outcome`: `skipped` changed nothing even when `save` says `saved`. A repaired edit uses a new request id. Read merge rows for what was kept.
+`shader_edit` autosaves each accepted batch to the working copy and returns `commit` and `revision`. Read `edit_counts` and each `results[].outcome`. For a skipped operation or one that lost to a newer human edit, read `results[].reason` before making any correction. A lost reply uses the original request ID. A corrected edit uses a new request ID.
 
 ## Find what's open
 
 - Which Shader is open → `get_live_context {"view":"shader"}`.
+- Did this saved source reach the Workshop → `get_live_context {"view":"shader"}`. Match `preview.studio_surface_id`, `working_revision`, `document_hash` and `source_hash` to the mounted saved base. `presented` confirms a visible frame. For `failed`, read the source-mapped diagnostics. `showing_previous:true` marks an earlier frame.
+- Create a named blank Shader → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"new","template_id":"hx_starter","title":"My Shader"}`. The title is optional. Recover a lost reply with `shader_get_operation {"request_id":U,"project_context_witness":W,"scope":"creation"}`.
 - Find by name → `shader_list_assets {"search":"beam"}` (searches titles, not ids); returns `W`, `S`, `base`.
 - Another Shader's title, tags, saved values → `shader_get_asset_state {"shader":S,"project_context_witness":W}`.
 - On-screen parameters → `get_shader_parameters {}` (ids, values, label, type, help, min, max, step, options).

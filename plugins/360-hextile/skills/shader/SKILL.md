@@ -32,7 +32,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 14. Render a still → `shader_preflight_still_export` then `shader_export_still` — on screen (below).
 15. Render a sequence → `preflight_shader_sequence` then `render_shader_sequence` (below).
 16. Edit a Built-in → `shader_edit` by its id when `writable` is true (dev mode); a `read_only` reply means duplicate it and edit the copy.
-17. New Shader from pasted GLSL → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"paste","title":"..","source":"<glsl>"}`; from the starter → `"action":"new","template_id":"hx_starter"` (W also comes from `shader_list_assets`).
+17. New Shader from pasted GLSL → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"paste","title":"..","source":"<glsl>"}`. To create a named blank, use `"action":"new","template_id":"hx_starter","title":".."`. Omit `title` for `Untitled Shader`. Recover a lost reply with the original request ID and `scope:"creation"` in `shader_get_operation`.
 18. Clock or timeline → `["clock","bpm"|"speed"]`; first timeline edit sets `["timeline","start"]`, `["timeline","end"]` and `["timeline","loop"]` in one call.
 19. Generate a 360 from a prompt → `validate_config` then `run_workflow` and `get_status` (hub skill).
 20. Change a Fractal value or play its timeline → `fractal` skill; `get_fractal_context` fails until a Fractal scene is open.
@@ -40,6 +40,8 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 Project Shaders are read-only to agents ("Project Shaders cannot be edited here yet."); make a My Library copy with `shader_save_as` or `shader_duplicate_asset`. Each `results[].outcome` must be checked: `skipped` changed nothing even when `save` says `saved`.
 
 ## Connect / what Shader is open?
+
+In Codex, invoke `$360-hextile:shader` directly if the skill picker does not show it. Check the registered Shader tools independently of picker visibility.
 
 If the registered `get_live_context` does not accept `view`, report that the host
 tool registration needs a refresh/reconnect. This read needs no
@@ -52,6 +54,13 @@ The reply names `shader.origin`, `shader.shaderId` (the same value as
 and `agent_open`. `connected: false` or `shader: null` means the Workshop is
 empty. APP down: “Launch 360 Hextile, then retry.” MCP disabled: enable MCP in
 APP Settings. A connection is not a save and not permission to write.
+
+When supported, `preview` identifies the same mounted surface and saved hashes. `presented`
+confirms a visible Workshop frame. `pending` and `compiled` can precede presentation.
+`failed` carries any source-mapped diagnostics and `unknown` means the observation
+is unavailable. `showing_previous:true` means an earlier frame is still on screen.
+A save reply reports storage. Read `edit_counts` and any `results[].reason`, then
+read live context when the user asks whether the edited Shader is visible.
 
 `shader_open_asset` only asks the user to put another Shader on screen; poll its
 request id and never retry a dismissed request. Use force only when the user

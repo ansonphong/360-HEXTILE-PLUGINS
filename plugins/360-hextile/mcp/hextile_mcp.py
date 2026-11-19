@@ -1388,7 +1388,9 @@ TOOLS: list[dict[str, Any]] = [
         "get_live_context",
         "Use to see what the studio has open right now. view=\"shader\" returns the mounted Shader {origin, "
         "shaderId}, its title, whether it is writable, project_context_witness, studio_surface_id, lease, "
-        "commit, revision, saved_base and agent_open (the open policy); no other call is needed first. "
+        "commit, revision, saved_base and agent_open (the open policy). When supported, preview names the "
+        "mounted surface and exact saved revision/hash with state pending, compiled, presented, failed or unknown. "
+        "A failed preview can include source-mapped diagnostics. showing_previous means an earlier frame is visible. "
         "With no Shader mounted it returns connected:false or shader:null and a next hint. Default "
         "view=\"full\" returns the full document snapshot with doc_generation (needed by "
         "apply_config_delta). If no document is open it fails 403 \"No document is open in 360 "
@@ -2481,7 +2483,8 @@ TOOLS: list[dict[str, Any]] = [
         "space, or creates, deletes or reshapes a parameter. Send seen [{address, human}] for any unit "
         "the human edited (number from a read). It saves itself. Replies: if no edit applied, 400 "
         "nothing_saved with findings [{code, field, message}] and nothing saved; if some applied, the "
-        "rest is saved and skipped rows carry results[].reason plus a warning; resending values the saved "
+        "rest is saved and skipped rows carry results[].reason plus a warning. edit_counts summarizes kept "
+        "and skipped operations, including lost_to_human as skipped. Resending values the saved "
         "Shader already has returns save \"unchanged\" (changed:false, no new revision). Deleting a "
         "parameter the code still reads returns 400 parameter_in_use. A lost_to_human row means the "
         "human's value was kept and gives the new number; resend with it only if you still mean it. A bad "
@@ -3278,8 +3281,8 @@ SHADER_EXTENSION_TOOLS = [
                                 "copy becomes selected only after the app confirms. Replies pending; the Workshop switches to the copy; confirm with shader_list_assets (shader_get_operation may say unknown); go back with shader_open_asset.",
               {**_MOUNTED_SHADER_FIELDS, "title": {"type": "string", "minLength": 1, "maxLength": 256}},
               _MOUNTED_SHADER_REQUIRED),
-    _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" with template_id \"hx_starter\" makes one from the starter (required for new; optional space; "
-                                     "no title), action \"paste\" saves source you supply as an unmodified original with unknown licence "
+    _tool_def("shader_create_asset", "Use to create a new Shader. action \"new\" with template_id \"hx_starter\" creates a blank starter "
+                                     "(optional title and space). action \"paste\" saves source you supply as an unmodified original with unknown licence "
                                      "(optional title; never reads local files). Pass request_id and project_context_witness "
                                      "(freshness token, from get_live_context(view=\"shader\") or shader_list_assets). Returns the new Shader and its "
                                      "base. It is not opened; use shader_open_asset. Recover a lost reply with shader_get_operation "
@@ -3289,7 +3292,8 @@ SHADER_EXTENSION_TOOLS = [
                "action": {"enum": ["new", "paste"]}, "template_id": {"const": "hx_starter"},
                "space": {"enum": ["direction_360", "equirect_map", "ray_360", "shadertoy_image"]},
                "source": {"type": "string", "minLength": 1, "maxLength": 2097152},
-               "title": {"type": "string", "minLength": 1, "maxLength": 256}},
+               "title": {"type": "string", "minLength": 1, "maxLength": 256,
+                         "description": "Optional saved title for either a new starter or pasted source."}},
               ["request_id", "project_context_witness", "action"]),
     _tool_def("shader_fork_asset", "Use to make an editable copy of a saved Shader, keeping its credits, Looks, resources and "
                                    "history. Pass request_id, project_context_witness (freshness token, from "

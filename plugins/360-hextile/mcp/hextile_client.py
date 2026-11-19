@@ -2342,7 +2342,7 @@ def _valid_shader_connection(result: Any) -> bool:
     """The v2 live Shader description. Unknown shapes never become compact success."""
     required = {"view", "stack", "connected", "shader", "lease", "commit", "revision", "mcp_enabled"}
     optional = {"title", "writable", "project_context_witness", "studio_surface_id", "agent_open",
-                "saved_base", "next"}
+                "saved_base", "next", "preview"}
     if (type(result) is not dict or not required <= set(result) <= required | optional
             or result["view"] != "shader" or result["stack"] not in {"v1", "v2"}
             or type(result["connected"]) is not bool or type(result["mcp_enabled"]) is not bool):
@@ -2402,7 +2402,35 @@ def _valid_shader_connection(result: Any) -> bool:
     for key in ("commit", "revision"):
         if result[key] is not None and (type(result[key]) is not int or result[key] < 0):
             return False
+    if "preview" in result and not _valid_workshop_preview(result):
+        return False
     return True
+
+
+def _valid_workshop_preview(context: dict) -> bool:
+    preview = context["preview"]
+    identity = {"working_revision", "document_hash", "source_hash"}
+    if (type(preview) is not dict
+            or set(preview) != identity | {"state", "studio_surface_id", "showing_previous", "diagnostics"}
+            or not context["connected"] or context["shader"] is None
+            or not isinstance(context.get("studio_surface_id"), str)
+            or preview["studio_surface_id"] != context["studio_surface_id"]
+            or type(preview["working_revision"]) is not int
+            or type(context.get("saved_base")) is not dict
+            or any(preview[key] != context["saved_base"].get(key) for key in identity)
+            or preview["state"] not in ("pending", "compiled", "presented", "failed", "unknown")
+            or type(preview["showing_previous"]) is not bool
+            or (preview["showing_previous"] and preview["state"] in ("presented", "unknown"))):
+        return False
+    diagnostics = preview["diagnostics"]
+    return (type(diagnostics) is list and len(diagnostics) <= 8
+            and (not diagnostics or preview["state"] == "failed")
+            and all(type(row) is dict and "message" in row and set(row) <= {"message", "file", "line", "column"}
+                    and type(row["message"]) is str and 0 < len(row["message"]) <= 240
+                    and ("file" not in row or type(row["file"]) is str and 0 < len(row["file"]) <= 160)
+                    and all(type(row[key]) is int and 1 <= row[key] <= 2**31 - 1
+                            for key in ("line", "column") if key in row)
+                    for row in diagnostics))
 
 
 def _discovery_malformed(message: str) -> HextileClientError:
@@ -3145,7 +3173,9 @@ def _edit_result(value: Any) -> dict:
             or type(value.get("commit")) is not int or value["commit"] < 0
             or type(value.get("revision")) is not int or value["revision"] < 0):
         _malformed("Malformed Shader edit result")
-    _merge_rows(value["results"])
+    rows = _merge_rows(value["results"])
+    kept = sum(row["outcome"] in _MERGE_APPLIED for row in rows)
+    value["edit_counts"] = {"kept": kept, "skipped": len(rows) - kept}
     if "compile" in value:
         _compile_view(value["compile"])
         if _compile_pending_note(value["compile"]):
@@ -5239,7 +5269,7 @@ class Client:
         expected = ({"request_id", "project_context_witness", "action", "template_id"} if action == "new" else
                     {"request_id", "project_context_witness", "action", "source"} if action == "paste" else
                     {"request_id", "project_context_witness", "action", "shader", "expected_document_hash"})
-        optional = {"space"} if action == "new" else {"title"} if action == "paste" else {"checkpoint_id"}
+        optional = {"space", "title"} if action == "new" else {"title"} if action == "paste" else {"checkpoint_id"}
         valid = (expected <= set(args) and not set(args) - expected - optional and args.get("action") == action)
         if action == "new":
             valid = valid and args.get("template_id") == "hx_starter" and args.get("space", "direction_360") in {
@@ -5250,18 +5280,15 @@ class Client:
             except UnicodeError:
                 source_bytes = b""
             valid = valid and bool(source_bytes) and len(source_bytes) <= 2 * 1024 * 1024
-            if "title" in args:
-                valid = valid and type(args["title"]) is str and 1 <= len(args["title"]) <= 256
         else:
             valid = valid and type(args.get("expected_document_hash")) is str and bool(
                 _WORKSPACE_DIGEST.fullmatch(args["expected_document_hash"]))
             if "checkpoint_id" in args:
                 valid = valid and type(args["checkpoint_id"]) is str and bool(
                     re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args["checkpoint_id"]))
+        if action in {"new", "paste"} and "title" in args:
+            valid = valid and type(args["title"]) is str and bool(args["title"].strip()) and len(args["title"]) <= 256
         if not valid:
-            if isinstance(args, Mapping) and action == "new" and "title" in args:
-                raise HextileClientError("Invalid Shader creation: title is not accepted for action new",
-                                         kind="other", status_code=422)
             if isinstance(args, Mapping):
                 missing = sorted(expected - set(args))
                 unknown = sorted(set(args) - expected - optional)
@@ -5685,7 +5712,7 @@ class Client:
             params={
                 "include_nav": 1 if include_nav else 0,
                 "include_active_tool": 1 if include_active_tool else 0,
-                **({"view": "shader"} if view == "shader" else {}),
+                **({"view": "shader", "include_shader_preview": 1} if view == "shader" else {}),
             },
         )
         if view == "shader" and not _valid_shader_connection(result):
