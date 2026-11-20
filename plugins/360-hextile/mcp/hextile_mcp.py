@@ -51,6 +51,13 @@ ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 MCP_STATUS_TTL_S = 5.0
 ACTIVITY_FLUSH_TIMEOUT_S = 5.0
+_RENDER_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "crashed"})
+_SHADER_SEQUENCE_TERMINAL_STATUSES = frozenset({
+    "completed", "completed_with_errors", "failed", "cancelled", "incomplete", "paused", "stopped",
+})
+_SHADER_OUTPUT_TERMINAL_STATES = frozenset({
+    "completed", "publication_failed", "failed", "cancelled", "stopped", "Interrupted",
+})
 
 # Canonical tool names — drift tests assert SKILL.md ⊆ this list.
 TOOL_NAMES = (
@@ -1522,12 +1529,13 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_status",
-        "Use to check a render started by run_workflow. Pass its run_id. Not for sequences (get_sequence) or Batch jobs (get_batch).",
+        "Use to check a render started by run_workflow. Pass its run_id. Not for sequences (get_sequence) or Batch jobs (get_batch). Pass wait_s 25 instead of calling again.",
         {
             "run_id": {
                 "type": "string",
                 "description": "Render id returned by run_workflow",
             },
+            "wait_s": {"type": "integer", "minimum": 0, "maximum": 25, "default": 0},
         },
         required=["run_id"],
     ),
@@ -2525,8 +2533,9 @@ TOOLS: list[dict[str, Any]] = [
         "Use to check a Shader sequence by its sequence_id (no source or paths). After a lost render "
         "reply compare request_hash from the preflight; a missing id does not prove the render failed. A "
         "diagnostic reports the last confirmed phase, output verification, known reason and next action. "
-        "Stop polling a stopped attempt. Inspect existing output before Continue, using the original request and inspection fingerprint.",
-        {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"}},
+        "Stop polling a stopped attempt. Inspect existing output before Continue, using the original request and inspection fingerprint. Pass wait_s 25 instead of calling again.",
+        {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"},
+         "wait_s": {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}},
         required=["sequence_id"]),
     {"name": "control_shader_sequence",
      "description": "Use to stop, resume, continue or restart a Shader sequence, or manage its output publishing. "
@@ -2958,9 +2967,11 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_get_output_job", "Use to check a still export job. Pass shader, project_context_witness (freshness token, from "
                                        "get_live_context(view=\"shader\")), profile and the request_id you gave shader_export_still (not "
                                        "the preflight id, which returns 404 output_job_unknown). The optional diagnostic reports the "
-                                       "confirmed phase, verified output, cause and one next action. Starts no GPU work.",
+                                       "confirmed phase, verified output, cause and one next action. Starts no GPU work. Pass wait_s 25 instead of calling again.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
-               "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
+               "profile": _OUTPUT_PROFILE,
+               "wait_s": {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}},
+              ["shader", "project_context_witness", "request_id", "profile"]),
     _tool_def("shader_stop_output_job", "Use to stop a running Shader still export. Pass shader, project_context_witness (freshness token, from get_live_context(view=\"shader\")), profile and the export's request_id (not the preflight id). 404 output_job_unknown is possible in the first seconds; small stills finish before a stop lands; a stopped export reports 409 dome_stopped.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE}, ["shader", "project_context_witness", "request_id", "profile"]),
@@ -3877,6 +3888,9 @@ class HextileMcpServer:
         self.internal_mode = bool(self.child_token)
         self.client = client or Client(internal_mode=self.internal_mode, follow_record=True)
         self.notify = notify
+        self._wait_lock = threading.Lock()
+        self._wait_shutdown = threading.Event()
+        self._wait_progress = threading.local()
         # A confirmed MCP-enabled status is reused briefly; the APP still gates every request.
         self._mcp_enabled_until = 0.0
         # None posts activity inline; the stdio server starts a background sender.
@@ -4243,7 +4257,11 @@ class HextileMcpServer:
             bind_headers = getattr(self.client, "request_headers", None)
             header_context = bind_headers(private_headers) if bind_headers else nullcontext()
             with header_context:
-                data = handler(args)
+                self._wait_progress.token = progress_token
+                try:
+                    data = handler(args)
+                finally:
+                    del self._wait_progress.token
             if name == "clear_disposable_cache" and isinstance(data, dict) and data.get("errors"):
                 self._emit_activity(
                     tool=name, call_id=call_id, phase="failed",
@@ -4507,6 +4525,37 @@ class HextileMcpServer:
             )
         except Exception:
             pass
+
+    def _wait_read(
+        self, args: dict[str, Any], read: Callable[[dict[str, Any]], dict[str, Any]],
+        state: Callable[[dict[str, Any]], Any], terminal: frozenset[str],
+    ) -> dict[str, Any]:
+        wait_s = args.get("wait_s", 0)
+        if type(wait_s) is not int or not 0 <= wait_s <= 25:
+            raise HextileClientError("wait_s must be an integer from 0 to 25", kind="other", status_code=422)
+        native_args = {key: value for key, value in args.items() if key != "wait_s"}
+        acquired = wait_s > 0 and self._wait_lock.acquire(blocking=False)
+        waited = 0.0
+        try:
+            start = time.monotonic()
+            result = read(native_args)
+            if acquired:
+                while state(result) not in terminal and not self._wait_shutdown.is_set():
+                    remaining = wait_s - (time.monotonic() - start)
+                    if remaining <= 0:
+                        break
+                    sleep_start = time.monotonic()
+                    interrupted = self._wait_shutdown.wait(min(1.0, remaining))
+                    waited += time.monotonic() - sleep_start
+                    if interrupted:
+                        break
+                    result = read(native_args)
+                    self._notify_progress(getattr(self._wait_progress, "token", None),
+                                          min(100.0, 100.0 * waited / wait_s), str(state(result)))
+            return {**result, "waited_s": waited}
+        finally:
+            if acquired:
+                self._wait_lock.release()
 
     # ── tool handlers ───────────────────────────────────────────────────
 
@@ -4906,7 +4955,9 @@ class HextileMcpServer:
         return self.client.export_shader_still(args)
 
     def _shader_get_output_job(self, args: dict[str, Any]) -> Any:
-        return self.client.get_shader_output_job(args)
+        return self._wait_read(args, self.client.get_shader_output_job,
+                               lambda result: result.get("state") or (result.get("job") or {}).get("state"),
+                               _SHADER_OUTPUT_TERMINAL_STATES)
 
     def _shader_stop_output_job(self, args: dict[str, Any]) -> Any:
         return self.client.stop_shader_output_job(args)
@@ -5083,9 +5134,12 @@ class HextileMcpServer:
         return self.client.render_shader_sequence(args)
 
     def _get_shader_sequence(self, args: dict[str, Any]) -> Any:
-        if set(args) != {"sequence_id"}:
-            raise HextileClientError("Expected exact Shader sequence ID", kind="other", status_code=422)
-        return self.client.get_shader_sequence(args["sequence_id"])
+        def read(native_args: dict[str, Any]) -> dict[str, Any]:
+            if set(native_args) != {"sequence_id"}:
+                raise HextileClientError("Expected exact Shader sequence ID", kind="other", status_code=422)
+            return self.client.get_shader_sequence(native_args["sequence_id"])
+        return self._wait_read(args, read, lambda result: result.get("status"),
+                               _SHADER_SEQUENCE_TERMINAL_STATUSES)
 
     def _control_shader_sequence(self, args: dict[str, Any]) -> Any:
         return self.client.control_shader_sequence(args)
@@ -5430,12 +5484,13 @@ class HextileMcpServer:
         )
 
     def _get_status(self, args: dict[str, Any]) -> Any:
-        run_id = args.get("run_id")
-        if not run_id:
-            raise HextileClientError(
-                "run_id is required", status_code=None, kind="other"
-            )
-        return self.client.get_status(str(run_id))
+        def read(native_args: dict[str, Any]) -> dict[str, Any]:
+            run_id = native_args.get("run_id")
+            if not run_id:
+                raise HextileClientError("run_id is required", status_code=None, kind="other")
+            return self.client.get_status(str(run_id))
+        return self._wait_read(args, read, lambda result: result.get("status"),
+                               _RENDER_TERMINAL_STATUSES)
 
     def _get_gpu_diagnostics(self, args: dict[str, Any]) -> Any:
         return self.client.get_gpu_diagnostics()
@@ -6073,6 +6128,9 @@ def main() -> int:
                 )
                 continue
             if msg is None:
+                shutdown = getattr(server, "_wait_shutdown", None)
+                if shutdown is not None:
+                    shutdown.set()
                 join_inflight()
                 break
             if not isinstance(msg, dict):

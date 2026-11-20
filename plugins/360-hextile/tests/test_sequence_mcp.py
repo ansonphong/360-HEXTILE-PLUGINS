@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,6 +44,42 @@ SEQUENCE_TOOLS = (
     "get_sequence_tags",
     "stop_sequence",
 )
+
+
+def test_shader_sequence_wait_caps_at_25_and_stops_on_terminal(monkeypatch) -> None:
+    import hextile_mcp
+
+    now = [0.0]
+    calls = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class FakeClient:
+        def get_shader_sequence(self, sequence_id):
+            calls.append(sequence_id)
+            return {"sequence_id": sequence_id, "status": "processing"}
+
+    server = HextileMcpServer(client=FakeClient())
+    server._wait_shutdown = Event()
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    sid = "seq_" + "a" * 32
+    result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
+    assert result["status"] == "processing" and result["waited_s"] == 25
+    assert calls == [sid] * 26
+    server.client.get_shader_sequence = lambda sequence_id: {"sequence_id": sequence_id, "status": "paused"}
+    result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
+    assert result["status"] == "paused" and result["waited_s"] == 0
+    assert now[0] == 25
+    for bad in (-1, 26, 2.5, "2", True):
+        with pytest.raises(HextileClientError) as error:
+            server._get_shader_sequence({"sequence_id": sid, "wait_s": bad})
+        assert error.value.status_code == 422
 
 # Full HextileConfig-shaped object (not a pipeline-only stub). Nested keys
 # prove create_sequence emits the complete object, not a subset.

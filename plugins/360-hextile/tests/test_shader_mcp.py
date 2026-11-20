@@ -19,6 +19,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 from unittest import mock
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +32,54 @@ from hextile_mcp import TOOLS, HextileMcpServer  # noqa: E402
 
 def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
+
+
+def test_output_job_wait_stops_on_terminal_state_without_leaking_wait_s(monkeypatch) -> None:
+    import hextile_mcp
+
+    now = [0.0]
+    notifications = []
+    seen = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class FakeClient:
+        def get_shader_output_job(self, args):
+            seen.append(dict(args))
+            return {"state": "processing" if len(seen) == 1 else "completed",
+                    "job": {"state": "processing" if len(seen) == 1 else "completed"}}
+
+    server = HextileMcpServer(client=FakeClient(), notify=notifications.append)
+    server._wait_shutdown = Event()
+    server._wait_progress.token = "progress-1"
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    args = {"request_id": "request-1", "wait_s": 25}
+    result = server._shader_get_output_job(args)
+    assert result["state"] == "completed" and result["waited_s"] == 1
+    assert seen == [{"request_id": "request-1"}] * 2
+    assert len(notifications) == 1
+    assert notifications[0]["params"]["progressToken"] == "progress-1"
+    assert notifications[0]["params"]["message"] == "completed"
+    assert args["wait_s"] == 25
+    for bad in (-1, 26, 1.5, "1", True):
+        with pytest.raises(HextileClientError) as error:
+            server._shader_get_output_job({**args, "wait_s": bad})
+        assert error.value.status_code == 422
+    assert len(seen) == 2
+
+    def refused(_args):
+        raise HextileClientError("output job refused", status_code=409, kind="http")
+
+    server.client.get_shader_output_job = refused
+    with pytest.raises(HextileClientError) as error:
+        server._shader_get_output_job(args)
+    assert error.value.status_code == 409 and now[0] == 1
 
 
 def _inspector_capabilities():

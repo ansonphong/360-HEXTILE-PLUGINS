@@ -4,15 +4,58 @@ from __future__ import annotations
 
 import io
 import json
+import queue
 import select
 import subprocess
 import sys
+import threading
 import time
+from types import SimpleNamespace
 import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "mcp" / "hextile_mcp.py"
+
+
+def test_render_wait_returns_on_terminal_status_and_rejects_bad_duration(monkeypatch) -> None:  # noqa: ANN001
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    for name in ("get_status", "shader_get_output_job", "get_shader_sequence"):
+        tool = next(row for row in hextile_mcp.TOOLS + hextile_mcp.SHADER_EXTENSION_TOOLS
+                    if row["name"] == name)
+        assert tool["inputSchema"]["properties"]["wait_s"] == {
+            "type": "integer", "minimum": 0, "maximum": 25, "default": 0}
+        assert "Pass wait_s 25 instead of calling again." in tool["description"]
+
+    now = [0.0]
+    seen = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class Client:
+        def get_status(self, run_id):  # noqa: ANN001
+            seen.append(run_id)
+            return {"run_id": run_id, "status": "running" if len(seen) == 1 else "failed"}
+
+    server = hextile_mcp.HextileMcpServer(client=Client())
+    server._wait_shutdown = Event()
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    result = server._get_status({"run_id": "run_1", "wait_s": 25})
+    assert result["status"] == "failed" and result["waited_s"] == 1
+    assert seen == ["run_1", "run_1"]
+    server.client.get_status = lambda run_id: {"run_id": run_id, "status": "crashed"}
+    assert server._get_status({"run_id": "run_1", "wait_s": 25})["waited_s"] == 0
+    for bad in (-1, 26, 1.5, "1", True):
+        assert server.call_tool("get_status", {"run_id": "run_1", "wait_s": bad})["isError"] is True
+    assert len(seen) == 2
 
 
 def test_sequential_tools_call_replies_not_dropped() -> None:
@@ -96,6 +139,72 @@ def test_control_lane_replies_while_ordinary_call_is_blocked(monkeypatch) -> Non
     replies = [json.loads(line) for line in stdout.getvalue().splitlines()]
     assert {row["id"] for row in replies} == set(range(1, 11))
     assert [row["id"] for row in replies][-1] == 1
+
+
+def test_wait_keeps_cancel_and_ping_responsive_and_eof_interrupts(monkeypatch) -> None:  # noqa: ANN001
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    started = threading.Event()
+
+    class Client:
+        def get_status(self, run_id):  # noqa: ANN001
+            started.set()
+            return {"run_id": run_id, "status": "running"}
+
+        def cancel_run(self, run_id):  # noqa: ANN001
+            return {"run_id": run_id, "status": "cancelled"}
+
+    server = hextile_mcp.HextileMcpServer(client=Client())
+
+    class Input:
+        def __init__(self):
+            self.lines = queue.Queue()
+
+        def readline(self):
+            return self.lines.get()
+
+        def send(self, row):  # noqa: ANN001
+            self.lines.put(json.dumps(row) + "\n")
+
+    stdin, stdout = Input(), io.StringIO()
+    monkeypatch.setattr(hextile_mcp, "HextileMcpServer", lambda: server)
+    monkeypatch.setattr(hextile_mcp.sys, "stdin", stdin)
+    monkeypatch.setattr(hextile_mcp.sys, "stdout", stdout)
+    thread = threading.Thread(target=hextile_mcp.main)
+    thread.start()
+
+    def call(call_id, name, arguments):  # noqa: ANN001
+        stdin.send({"jsonrpc": "2.0", "id": call_id, "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments}})
+
+    def replies():
+        return {row["id"]: row for line in stdout.getvalue().splitlines()
+                if (row := json.loads(line)).get("id") is not None}
+
+    try:
+        call(1, "get_status", {"run_id": "run_1", "wait_s": 25})
+        assert started.wait(1)
+        call(2, "get_status", {"run_id": "run_2", "wait_s": 25})
+        call(3, "cancel_run", {"run_id": "run_1"})
+        stdin.send({"jsonrpc": "2.0", "id": 4, "method": "ping", "params": {}})
+        deadline = time.monotonic() + 1.5
+        while not {2, 3, 4} <= replies().keys() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        rows = replies()
+        assert {2, 3, 4} <= rows.keys()
+        assert json.loads(rows[2]["result"]["content"][0]["text"])["waited_s"] == 0
+        assert rows[3]["result"]["isError"] is False
+        assert 1 not in rows
+        eof_at = time.monotonic()
+        stdin.lines.put("")
+        thread.join(timeout=1.9)
+        assert not thread.is_alive() and time.monotonic() - eof_at < 2
+        assert 1 in replies()
+    finally:
+        if thread.is_alive():
+            stdin.lines.put("")
+            thread.join(timeout=3)
 
 
 def test_internal_meta_headers_and_activity_suppression() -> None:
