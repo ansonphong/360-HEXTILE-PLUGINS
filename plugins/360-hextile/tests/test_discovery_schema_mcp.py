@@ -443,7 +443,8 @@ def _assert_closed_failure(result: dict[str, Any], secret: str) -> None:
     text = result["content"][0]["text"]
     payload = json.loads(text)
     assert payload["status_code"] == 422
-    assert payload["error"] == "Unexpected arguments"
+    assert payload["error"].startswith("Unexpected arguments")
+    assert payload["code"] == "invalid_arguments" and payload["next_step"]
     assert secret not in text
 
 

@@ -35,7 +35,7 @@ def _schema(name: str) -> dict[str, Any]:
 
 
 def test_list_runs_pages_in_app_order_and_rejects_bad_cursors() -> None:
-    rows = [{"id": str(index)} for index in range(43)]
+    rows = [{"render_id": str(index)} for index in range(43)]
 
     class FakeClient:
         def list_runs(self, lifecycle_status):
@@ -79,13 +79,24 @@ def test_list_runs_pages_in_app_order_and_rejects_bad_cursors() -> None:
         with pytest.raises(HextileClientError) as caught:
             server._list_runs({"limit": limit})
         assert caught.value.code == "invalid_arguments"
+    page_one = server._list_runs({})["data"]
+    rows.insert(0, {"render_id": "new"})
+    page_two = server._list_runs({"cursor": page_one["next_cursor"]})["data"]
+    assert page_one["renders"] + page_two["renders"] == rows[1:41]
+    del rows[rows.index(page_two["renders"][-1])]
+    with pytest.raises(HextileClientError) as caught:
+        server._list_runs({"cursor": page_two["next_cursor"]})
+    assert caught.value.code == "invalid_cursor"
+    assert caught.value.next_step == "Call list_runs without cursor to start again."
 
 
 @pytest.mark.parametrize("tool,args,code,named,next_step", [
     ("shader_get_asset_state", {"shader_id": "x"}, "invalid_arguments",
      ("missing project_context_witness, shader", "unknown shader_id"), "shader_list_assets"),
-    ("get_shader_parameters", {"shader_id": "x"}, "unknown_arguments",
+    ("get_shader_parameters", {"shader_id": "x"}, "invalid_arguments",
      ("unknown shader_id",), "takes no shader_id"),
+    ("get_shader_parameters", {"page": 1}, "invalid_arguments",
+     ("unknown page",), "Pass only cursor and limit (1 to 64)."),
     ("shader_get_output_job", {"job_id": "x"}, "invalid_arguments",
      ("missing profile", "project_context_witness", "request_id", "shader", "unknown job_id"),
      "shader_export_still"),
@@ -94,8 +105,12 @@ def test_list_runs_pages_in_app_order_and_rejects_bad_cursors() -> None:
       "unknown shader_id"),
      "shader_preflight_still_export"),
     ("get_fractal_context", {}, "fractal_unavailable", (), "Do not poll"),
-    ("get_cache_buckets", {"unexpected": 1}, "unknown_arguments", ("unknown unexpected",),
+    ("get_cache_buckets", {"unexpected": 1}, "invalid_arguments", ("unknown unexpected",),
      "Remove unknown keys"),
+    ("get_processor_schema", {"unexpected": 1}, "invalid_arguments",
+     ("missing pipeline_id; unknown unexpected",), "Remove unknown keys"),
+    ("get_cache_buckets", {**{f"k{i}": 1 for i in range(9)}, "bad-key": 1, "x" * 80: 1}, "invalid_arguments",
+     ("unknown k0, k1, k2, k3, k4, k5, k6, k7, 3 more",), "Remove unknown keys"),
 ])
 def test_a8_refusals_explain_recovery(tool, args, code, named, next_step, monkeypatch) -> None:
     client = Client(opener=lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected HTTP")))

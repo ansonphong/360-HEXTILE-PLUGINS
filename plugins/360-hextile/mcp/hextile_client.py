@@ -1504,6 +1504,13 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Invalid native Shader rename", status_code=422, kind="other")
 
 
+def _refusal_names(names: Any) -> str:
+    """Echo at most 8 argument names, each a bounded identifier; others are counted, not echoed."""
+    shown = [name[:64] for name in sorted(str(n) for n in names) if re.fullmatch(r"[A-Za-z0-9_]+", name)][:8]
+    extra = len(names) - len(shown)
+    return ", ".join(shown + ([f"{extra} more"] if extra else []))
+
+
 def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[str], optional: set[str],
                            *, next_step: Optional[str] = None) -> None:
     """Name the missing and unknown fields on a closed argument object."""
@@ -1515,11 +1522,11 @@ def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[st
     if missing or unknown:
         parts = []
         if missing:
-            parts.append("missing " + ", ".join(missing))
+            parts.append("missing " + _refusal_names(missing))
         if unknown:
-            parts.append("unknown " + ", ".join(unknown))
+            parts.append("unknown " + _refusal_names(unknown))
         hint = " (" + _BASE_REQUIRED + ")" if "base" in missing else ""
-        code = ("invalid_arguments" if missing and unknown else "missing_arguments" if missing else "unknown_arguments") if next_step else None
+        code = "invalid_arguments" if next_step else None
         raise HextileClientError(label + ": " + "; ".join(parts) + hint, status_code=422, kind="other",
                                  code=code, next_step=next_step)
 
@@ -4537,7 +4544,9 @@ class Client:
         page = {} if page is None else page
         _closed_argument_error("Expected Shader parameter page arguments", page, set(), {"cursor", "limit"},
                                next_step=("get_shader_parameters reads the on-screen Shader and takes no shader_id; "
-                                          "open it or use shader_get_asset_state."))
+                                          "open it or use shader_get_asset_state."
+                                          if isinstance(page, Mapping) and "shader_id" in page
+                                          else "Pass only cursor and limit (1 to 64)."))
         if "limit" in page and (type(page["limit"]) is not int or not 1 <= page["limit"] <= 64):
             raise HextileClientError("Parameter page limit must be an integer from 1 to 64", kind="other", status_code=422)
         if "cursor" in page and (type(page["cursor"]) is not str or not 1 <= len(page["cursor"]) <= 160):

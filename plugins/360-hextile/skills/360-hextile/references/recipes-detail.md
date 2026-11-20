@@ -61,7 +61,7 @@ All writes copy the `witness` block from `get_fractal_context` unchanged and add
 
 ## Library, settings, docs
 
-- To list renders → `list_runs {}` (no `limit`; returns every render, a large reply); prompts → `search_library_prompts {"query":"neon"}`; sequences → `list_sequences {}`.
+- To list renders → `list_runs {}` returns 20 rows; pass `data.next_cursor` as `cursor` (and `limit` up to 100) for more; prompts → `search_library_prompts {"query":"neon"}`; sequences → `list_sequences {}`.
 - To rename, favorite, duplicate or trash a render → `call_hextile_api {"method":"PATCH","path":"/api/renders/<id>/name","body":{"name":".."}}`, `POST /api/renders/<id>/favorite`, `POST /api/renders/<id>/duplicate`, `DELETE /api/renders/<id>` (schema only).
 - To export to Unreal → `get_unreal_export_catalog`, `preflight_unreal_export`, `export_to_unreal_project`.
 - To read app preferences → `get_app_preferences {}`; change → `update_app_preferences {"changes":{..}}`; MCP status → `get_local_access_status {}`.

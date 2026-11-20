@@ -39,6 +39,7 @@ from hextile_client import (  # noqa: E402
     UNSUPPORTED_CONNECTIVITY,
     Client,
     HextileClientError,
+    _refusal_names,
     error_payload,
     validate_shader_doctor,
     validate_shader_workspace,
@@ -3865,16 +3866,21 @@ _CLOSED_ARGUMENT_KEYS = {
 }
 
 
-def _closed_tool_args(args: Any, allowed: frozenset[str]) -> dict[str, Any]:
-    """Reject a non-object or an unexpected key before any native request."""
+_TOOL_REQUIRED = {tool["name"]: frozenset(tool["inputSchema"].get("required", ())) for tool in TOOLS}
+
+
+def _closed_tool_args(args: Any, allowed: frozenset[str], required: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Reject a non-object or an unexpected key before any native request; name missing keys alongside."""
     if type(args) is not dict:
         raise HextileClientError("Unexpected arguments: arguments must be an object", kind="other",
                                  status_code=422, code="invalid_arguments",
                                  next_step="Pass an object containing only the documented arguments for this tool.")
     unknown = sorted(set(args) - allowed)
     if unknown:
-        raise HextileClientError("Unexpected arguments: unknown " + ", ".join(unknown), kind="other",
-                                 status_code=422, code="unknown_arguments",
+        missing = sorted(set(required) - set(args))
+        named = ("missing " + _refusal_names(missing) + "; " if missing else "") + "unknown " + _refusal_names(unknown)
+        raise HextileClientError("Unexpected arguments: " + named, kind="other",
+                                 status_code=422, code="invalid_arguments",
                                  next_step="Remove unknown keys and retry with the documented arguments for this tool.")
     return args
 
@@ -4232,7 +4238,7 @@ class HextileMcpServer:
                 self._mcp_enabled_until = time.monotonic() + MCP_STATUS_TTL_S
         if name in _CLOSED_ARGUMENT_KEYS:
             try:
-                _closed_tool_args(arguments, _CLOSED_ARGUMENT_KEYS[name])
+                _closed_tool_args(arguments, _CLOSED_ARGUMENT_KEYS[name], _TOOL_REQUIRED.get(name, frozenset()))
             except HextileClientError as exc:
                 return _err_result(error_payload(exc))
             args = dict(arguments)
@@ -4613,7 +4619,8 @@ class HextileMcpServer:
         return self.client.list_processors()
 
     def _get_processor_schema(self, args: dict[str, Any]) -> Any:
-        args = _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["get_processor_schema"])
+        args = _closed_tool_args(args, _DISCOVERY_ARGUMENT_KEYS["get_processor_schema"],
+                                 _TOOL_REQUIRED["get_processor_schema"])
         pipeline_id = args.get("pipeline_id")
         if type(pipeline_id) is not str:
             raise HextileClientError("pipeline_id is required", kind="other", status_code=422)
@@ -5579,19 +5586,19 @@ class HextileMcpServer:
             raise HextileClientError("list_runs requires lifecycle_status active, archived or trashed and integer limit 1 to 100.",
                                      kind="other", status_code=422, code="invalid_arguments",
                                      next_step="Call list_runs without cursor and use a limit from 1 to 100.")
-        offset = 0
+        after = None
         if "cursor" in args:
+            # Unsigned keyset cursor: a forged one can only name an existing render_id in this local read.
             cursor = args["cursor"]
             try:
-                if type(cursor) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", cursor):
+                if type(cursor) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,400}", cursor):
                     raise ValueError("invalid cursor characters")
                 padded = cursor + "=" * (-len(cursor) % 4)
-                decoded = base64.urlsafe_b64decode(padded).decode("ascii")
-                cursor_status, raw_offset = decoded.split(":", 1)
-                if (cursor_status != status or not re.fullmatch(r"[1-9][0-9]*", raw_offset)
-                        or base64.urlsafe_b64encode(decoded.encode("ascii")).decode("ascii").rstrip("=") != cursor):
+                decoded = base64.urlsafe_b64decode(padded).decode("utf-8")
+                cursor_status, after = decoded.split(":", 1)
+                if (cursor_status != status or not after
+                        or base64.urlsafe_b64encode(decoded.encode("utf-8")).decode("ascii").rstrip("=") != cursor):
                     raise ValueError("invalid cursor content")
-                offset = int(raw_offset)
             except (ValueError, UnicodeError, base64.binascii.Error):
                 raise HextileClientError("Invalid list_runs cursor for lifecycle_status.", kind="other",
                                          status_code=422, code="invalid_cursor",
@@ -5601,16 +5608,22 @@ class HextileMcpServer:
         renders = data.get("renders") if isinstance(data, dict) else None
         if not isinstance(renders, list):
             raise HextileClientError("Invalid list_runs reply: data.renders must be an array.", kind="other")
-        total = len(renders)
-        if offset > total:
-            raise HextileClientError("Invalid list_runs cursor for lifecycle_status.", kind="other",
-                                     status_code=422, code="invalid_cursor",
-                                     next_step="Call list_runs without cursor.")
-        next_offset = offset + limit
-        next_cursor = (base64.urlsafe_b64encode(f"{status}:{next_offset}".encode("ascii")).decode("ascii").rstrip("=")
-                       if next_offset < total else None)
-        return {**reply, "data": {**data, "renders": renders[offset:next_offset],
-                                   "total": total, "next_cursor": next_cursor}}
+        ids = [row.get("render_id") if isinstance(row, dict) else None for row in renders]
+        start = 0
+        if after is not None:
+            if after not in ids:
+                raise HextileClientError("list_runs cursor render is no longer in this lifecycle_status.",
+                                         kind="other", status_code=422, code="invalid_cursor",
+                                         next_step="Call list_runs without cursor to start again.")
+            start = ids.index(after) + 1
+        end = start + limit
+        last_id = ids[end - 1] if end < len(renders) else None
+        if end < len(renders) and (type(last_id) is not str or not last_id):
+            raise HextileClientError("Invalid list_runs reply: render rows need render_id.", kind="other")
+        next_cursor = (base64.urlsafe_b64encode(f"{status}:{last_id}".encode("utf-8")).decode("ascii").rstrip("=")
+                       if last_id is not None else None)
+        return {**reply, "data": {**data, "renders": renders[start:end],
+                                   "total": len(renders), "next_cursor": next_cursor}}
 
     def _search_library_prompts(self, args: dict[str, Any]) -> Any:
         return self.client.search_library_prompts(args)
