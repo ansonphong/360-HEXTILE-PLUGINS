@@ -14,6 +14,8 @@ from types import SimpleNamespace
 import urllib.error
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "mcp" / "hextile_mcp.py"
 
@@ -56,6 +58,133 @@ def test_render_wait_returns_on_terminal_status_and_rejects_bad_duration(monkeyp
     for bad in (-1, 26, 1.5, "1", True):
         assert server.call_tool("get_status", {"run_id": "run_1", "wait_s": bad})["isError"] is True
     assert len(seen) == 2
+
+
+def test_waited_s_includes_reread_time_and_omits_missing_state_progress(monkeypatch) -> None:  # noqa: ANN001
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    now = [0.0]
+    notifications = []
+    calls = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class Client:
+        def get_status(self, run_id):  # noqa: ANN001
+            calls.append(run_id)
+            if len(calls) == 2:
+                now[0] += 0.23
+                return {"run_id": run_id}
+            return {"run_id": run_id, "status": "running"}
+
+    server = hextile_mcp.HextileMcpServer(client=Client(), notify=notifications.append)
+    server._wait_shutdown = Event()
+    server._wait_progress.token = "progress-1"
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    result = server._get_status({"run_id": "run_1", "wait_s": 25})
+    assert result["waited_s"] == 1.2
+    assert calls == ["run_1", "run_1"]
+    assert notifications == []
+
+
+def test_wait_deadline_covers_slow_reread() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    reread_started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    class Client:
+        def get_status(self, run_id):  # noqa: ANN001
+            calls.append(run_id)
+            if len(calls) > 1:
+                reread_started.set()
+                release.wait(3)
+            return {"run_id": run_id, "status": "running"}
+
+    server = hextile_mcp.HextileMcpServer(client=Client())
+    started = time.monotonic()
+    try:
+        result = server._get_status({"run_id": "run_1", "wait_s": 2})
+        elapsed = time.monotonic() - started
+        assert reread_started.is_set()
+        assert elapsed <= 2.15
+        assert result["waited_s"] == 2.0
+        assert result["status"] == "running"
+        assert calls == ["run_1", "run_1"]
+    finally:
+        release.set()
+
+
+def test_wait_returns_immediately_for_unknown_render_state() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    for status in (None, "future_native_state"):
+        calls = []
+
+        class Client:
+            def get_status(self, run_id):  # noqa: ANN001
+                calls.append(run_id)
+                return {"run_id": run_id, "status": status}
+
+        server = hextile_mcp.HextileMcpServer(client=Client())
+        result = server._get_status({"run_id": "run_1", "wait_s": 25})
+        assert result["status"] == status and result["waited_s"] == 0
+        assert calls == ["run_1"]
+
+
+def test_waited_reads_keep_client_request_headers(monkeypatch) -> None:  # noqa: ANN001
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+    from hextile_client import Client
+
+    now = [0.0]
+    seen = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class Response:
+        status = 200
+
+        def __init__(self, status):
+            self.status_value = status
+
+        def read(self, size=-1):
+            return json.dumps({"status": self.status_value}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+    def opener(req, timeout=None):  # noqa: ANN001
+        seen.append(req.get_header("X-hextile-copilot-token"))
+        return Response("running" if len(seen) == 1 else "completed")
+
+    client = Client(base_url="http://hextile.test", opener=opener)
+    server = hextile_mcp.HextileMcpServer(client=client)
+    server._wait_shutdown = Event()
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    with client.request_headers({"X-Hextile-Copilot-Token": "child-secret"}):
+        result = server._get_status({"run_id": "run_1", "wait_s": 2})
+    assert result["status"] == "completed"
+    assert seen == ["child-secret", "child-secret"]
 
 
 def test_sequential_tools_call_replies_not_dropped() -> None:
@@ -202,6 +331,55 @@ def test_wait_keeps_cancel_and_ping_responsive_and_eof_interrupts(monkeypatch) -
         assert not thread.is_alive() and time.monotonic() - eof_at < 2
         assert 1 in replies()
     finally:
+        if thread.is_alive():
+            stdin.lines.put("")
+            thread.join(timeout=3)
+
+
+@pytest.mark.parametrize("slow_call", [1, 2])
+def test_eof_during_slow_status_read_exits_within_two_seconds(monkeypatch, slow_call) -> None:  # noqa: ANN001
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    read_started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    class Client:
+        def get_status(self, run_id):  # noqa: ANN001
+            calls.append(run_id)
+            if len(calls) == slow_call:
+                read_started.set()
+                release.wait(3)
+            return {"run_id": run_id, "status": "running"}
+
+    server = hextile_mcp.HextileMcpServer(client=Client())
+
+    class Input:
+        def __init__(self):
+            self.lines = queue.Queue()
+
+        def readline(self):
+            return self.lines.get()
+
+    stdin, stdout = Input(), io.StringIO()
+    monkeypatch.setattr(hextile_mcp, "HextileMcpServer", lambda: server)
+    monkeypatch.setattr(hextile_mcp.sys, "stdin", stdin)
+    monkeypatch.setattr(hextile_mcp.sys, "stdout", stdout)
+    thread = threading.Thread(target=hextile_mcp.main)
+    thread.start()
+    try:
+        stdin.lines.put(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                    "params": {"name": "get_status", "arguments": {"run_id": "run_1", "wait_s": 25}}}) + "\n")
+        assert read_started.wait(2)
+        eof_at = time.monotonic()
+        stdin.lines.put("")
+        thread.join(timeout=1.9)
+        assert not thread.is_alive() and time.monotonic() - eof_at < 2
+        reply = json.loads(stdout.getvalue().splitlines()[0])
+        assert reply["id"] == 1
+    finally:
+        release.set()
         if thread.is_alive():
             stdin.lines.put("")
             thread.join(timeout=3)

@@ -71,7 +71,7 @@ def test_shader_sequence_wait_caps_at_25_and_stops_on_terminal(monkeypatch) -> N
     sid = "seq_" + "a" * 32
     result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
     assert result["status"] == "processing" and result["waited_s"] == 25
-    assert calls == [sid] * 26
+    assert calls == [sid] * 25
     server.client.get_shader_sequence = lambda sequence_id: {"sequence_id": sequence_id, "status": "paused"}
     result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
     assert result["status"] == "paused" and result["waited_s"] == 0
@@ -80,6 +80,52 @@ def test_shader_sequence_wait_caps_at_25_and_stops_on_terminal(monkeypatch) -> N
         with pytest.raises(HextileClientError) as error:
             server._get_shader_sequence({"sequence_id": sid, "wait_s": bad})
         assert error.value.status_code == 422
+
+
+def test_shader_sequence_wait_stops_on_unknown_projected_status() -> None:
+    sid = "seq_" + "a" * 32
+    seen: list[str] = []
+
+    def opener(req: Any, timeout=None) -> _Resp:
+        seen.append(req.full_url)
+        return _Resp({"sequence_id": sid, "status": "future_native_state"})
+
+    server = HextileMcpServer(client=Client(base_url=BASE, opener=opener))
+    result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
+    assert result == {"sequence_id": sid, "waited_s": 0.0}
+    assert seen == [f"{BASE}/api/shaders/sequences/{sid}"]
+
+
+@pytest.mark.parametrize("pending_status", ["queued", "running"])
+def test_shader_sequence_waits_for_folder_publication(monkeypatch, pending_status) -> None:
+    import hextile_mcp
+
+    now = [0.0]
+    reads = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class FakeClient:
+        def get_shader_sequence(self, sequence_id):
+            reads.append(sequence_id)
+            folder_status = pending_status if len(reads) == 1 else "completed"
+            return {"sequence_id": sequence_id, "status": "completed",
+                    "folder_export": {"status": folder_status}}
+
+    server = HextileMcpServer(client=FakeClient())
+    server._wait_shutdown = Event()
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    sid = "seq_" + "b" * 32
+    result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
+    assert result["folder_export"]["status"] == "completed"
+    assert result["waited_s"] == 1
+    assert reads == [sid, sid]
 
 # Full HextileConfig-shaped object (not a pipeline-only stub). Nested keys
 # prove create_sequence emits the complete object, not a subset.

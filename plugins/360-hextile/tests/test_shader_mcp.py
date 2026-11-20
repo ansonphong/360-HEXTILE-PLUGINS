@@ -148,6 +148,11 @@ def test_output_job_wait_stops_on_terminal_state_without_leaking_wait_s(monkeypa
     assert notifications[0]["params"]["progressToken"] == "progress-1"
     assert notifications[0]["params"]["message"] == "completed"
     assert args["wait_s"] == 25
+    for unknown in (None, "future_native_state"):
+        server.client.get_shader_output_job = lambda _args: {"state": unknown}
+        result = server._shader_get_output_job(args)
+        assert result["state"] == unknown and result["waited_s"] == 0
+        assert len(notifications) == 1
     for bad in (-1, 26, 1.5, "1", True):
         with pytest.raises(HextileClientError) as error:
             server._shader_get_output_job({**args, "wait_s": bad})
