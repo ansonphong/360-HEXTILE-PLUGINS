@@ -61,7 +61,7 @@ def test_shader_sequence_wait_caps_at_25_and_stops_on_terminal(monkeypatch) -> N
             return False
 
     class FakeClient:
-        def get_shader_sequence(self, sequence_id):
+        def get_shader_sequence(self, sequence_id, timeout=None):
             calls.append(sequence_id)
             return {"sequence_id": sequence_id, "status": "processing"}
 
@@ -72,7 +72,7 @@ def test_shader_sequence_wait_caps_at_25_and_stops_on_terminal(monkeypatch) -> N
     result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
     assert result["status"] == "processing" and result["waited_s"] == 25
     assert calls == [sid] * 25
-    server.client.get_shader_sequence = lambda sequence_id: {"sequence_id": sequence_id, "status": "paused"}
+    server.client.get_shader_sequence = lambda sequence_id, timeout=None: {"sequence_id": sequence_id, "status": "paused"}
     result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
     assert result["status"] == "paused" and result["waited_s"] == 0
     assert now[0] == 25
@@ -112,7 +112,7 @@ def test_shader_sequence_waits_for_folder_publication(monkeypatch, pending_statu
             return False
 
     class FakeClient:
-        def get_shader_sequence(self, sequence_id):
+        def get_shader_sequence(self, sequence_id, timeout=None):
             reads.append(sequence_id)
             folder_status = pending_status if len(reads) == 1 else "completed"
             return {"sequence_id": sequence_id, "status": "completed",
@@ -637,7 +637,7 @@ def test_shader_render_export_mcp_tool_chain() -> None:
         script = ("class FakeClient:\n"
                   "    def preflight_shader_sequence(self, args): return {'sequence_id':'" + sid + "','status':'ready','request_hash':'" + digest + "'}\n"
                   "    def render_shader_sequence(self, args): return {'sequence_id':'" + sid + "','status':'queued','request_hash':'" + digest + "'}\n"
-                  "    def get_shader_sequence(self, sid): return {'sequence_id':sid,'status':'completed','frames_completed':48}\n"
+                  "    def get_shader_sequence(self, sid, timeout=None): return {'sequence_id':sid,'status':'completed','frames_completed':48}\n"
                   "    def control_shader_sequence(self, args): return {'sequence_id':args['sequence_id'],'action':args['action'],'status':'queued'}\n"
                   "    def preflight_shader_sequence_export(self, args): return {'sequence_id':args['sequence_id'],'attempt_id':'" + attempt + "','transaction_fingerprint':'" + digest + "','status':'ready'}\n"
                   "    def export_shader_sequence(self, args): return {'sequence_id':args['sequence_id'],'attempt_id':'" + attempt + "','transaction_fingerprint':'" + digest + "','status':'queued'}\n"

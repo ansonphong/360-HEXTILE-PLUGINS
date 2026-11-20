@@ -4673,11 +4673,11 @@ class Client:
     def render_shader_sequence(self, body: Mapping[str, Any]) -> dict[str, Any]:
         return self._shader_sequence_post(body, preflight=False)
 
-    def get_shader_sequence(self, sequence_id: str) -> dict[str, Any]:
+    def get_shader_sequence(self, sequence_id: str, *, timeout: Optional[float] = None) -> dict[str, Any]:
         if type(sequence_id) is not str or re.fullmatch(r"seq_[0-9a-f]{32}", sequence_id) is None:
             raise HextileClientError("Expected a known Shader sequence ID", kind="other", status_code=422)
         try:
-            data = self.get_json(f"/api/shaders/sequences/{sequence_id}")
+            data = self.get_json(f"/api/shaders/sequences/{sequence_id}", timeout=timeout)
         except HextileClientError as exc:
             if exc.status_code == 404:
                 raise HextileClientError(
@@ -6190,10 +6190,10 @@ class Client:
         """GET /api/processors/vram-status; the app owns GPU measurements."""
         return self.get_json("/api/processors/vram-status")
 
-    def get_status(self, run_id: str) -> Any:
+    def get_status(self, run_id: str, *, timeout: Optional[float] = None) -> Any:
         """GET /api/renders/{run_id}."""
         rid = urllib.parse.quote(run_id, safe="")
-        return self.get_json(f"/api/renders/{rid}")
+        return self.get_json(f"/api/renders/{rid}", timeout=timeout)
 
     def get_render_config(self, render_id: str) -> Any:
         """GET /api/renders/{render_id}/config — parsed canonical JSON."""
@@ -7859,10 +7859,10 @@ class Client:
             self._shader_request("DELETE", "/api/shaders/agent-operations/output/preview/" + args["request_id"],
                               {key: args[key] for key in ("shader", "project_context_witness")}), mutation=True)
 
-    def get_shader_output_job(self, args: Mapping[str, Any]) -> dict:
+    def get_shader_output_job(self, args: Mapping[str, Any], *, timeout: Optional[float] = None) -> dict:
         _shader_output_args("get_job", args)
         return _shader_output_receipt("get_job", args, self._shader_request("GET", "/api/shaders/agent-operations/output/jobs/" + args["request_id"],
-            headers=_SHADER_DIAGNOSTICS_HEADERS,
+            headers=_SHADER_DIAGNOSTICS_HEADERS, timeout=timeout,
             params={"profile": args["profile"], "origin": args["shader"]["origin"],
                     "shader_id": args["shader"]["shaderId"],
                     "project_context_witness": args["project_context_witness"]}))

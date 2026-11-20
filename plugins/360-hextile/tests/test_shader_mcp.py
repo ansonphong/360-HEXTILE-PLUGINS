@@ -131,7 +131,7 @@ def test_output_job_wait_stops_on_terminal_state_without_leaking_wait_s(monkeypa
             return False
 
     class FakeClient:
-        def get_shader_output_job(self, args):
+        def get_shader_output_job(self, args, timeout=None):
             seen.append(dict(args))
             return {"state": "processing" if len(seen) == 1 else "completed",
                     "job": {"state": "processing" if len(seen) == 1 else "completed"}}
@@ -149,7 +149,7 @@ def test_output_job_wait_stops_on_terminal_state_without_leaking_wait_s(monkeypa
     assert notifications[0]["params"]["message"] == "completed"
     assert args["wait_s"] == 25
     for unknown in (None, "future_native_state"):
-        server.client.get_shader_output_job = lambda _args: {"state": unknown}
+        server.client.get_shader_output_job = lambda _args, timeout=None: {"state": unknown}
         result = server._shader_get_output_job(args)
         assert result["state"] == unknown and result["waited_s"] == 0
         assert len(notifications) == 1
@@ -159,7 +159,7 @@ def test_output_job_wait_stops_on_terminal_state_without_leaking_wait_s(monkeypa
         assert error.value.status_code == 422
     assert len(seen) == 2
 
-    def refused(_args):
+    def refused(_args, timeout=None):
         raise HextileClientError("output job refused", status_code=409, kind="http")
 
     server.client.get_shader_output_job = refused

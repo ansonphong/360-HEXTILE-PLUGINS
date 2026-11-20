@@ -13,7 +13,6 @@ import difflib
 import hashlib
 import http.client
 import base64
-import contextvars
 import json
 import math
 import os
@@ -4547,7 +4546,7 @@ class HextileMcpServer:
             pass
 
     def _wait_read(
-        self, args: dict[str, Any], read: Callable[[dict[str, Any]], dict[str, Any]],
+        self, args: dict[str, Any], read: Callable[[dict[str, Any], Optional[float]], dict[str, Any]],
         state: Callable[[dict[str, Any]], Any], active: frozenset[str],
     ) -> dict[str, Any]:
         wait_s = args.get("wait_s", 0)
@@ -4557,62 +4556,25 @@ class HextileMcpServer:
         acquired = wait_s > 0 and self._wait_lock.acquire(blocking=False)
         try:
             start = time.monotonic()
-
-            def bounded_read() -> tuple[bool, Any]:
-                if self._wait_shutdown.is_set() or time.monotonic() - start >= wait_s:
-                    return False, None
-                # Client status methods have no per-call timeout. A daemon read
-                # lets the wait finish at its deadline or on stdin EOF.
-                done = threading.Event()
-                outcome: list[Any] = []
-                context = contextvars.copy_context()
-
-                def run_read() -> None:
-                    try:
-                        outcome.append((True, context.run(read, native_args)))
-                    except Exception as exc:  # noqa: BLE001
-                        outcome.append((False, exc))
-                    finally:
-                        done.set()
-
-                threading.Thread(target=run_read, daemon=True).start()
-                while not done.is_set() and not self._wait_shutdown.is_set():
-                    remaining = wait_s - (time.monotonic() - start)
-                    if remaining <= 0:
-                        break
-                    done.wait(min(0.05, remaining))
-                if self._wait_shutdown.is_set() or not done.is_set() or time.monotonic() - start > wait_s:
-                    return False, None
-                ok, value = outcome[0]
-                if not ok:
-                    raise value
-                return True, value
-
-            if acquired:
-                finished, result = bounded_read()
-                if not finished:
-                    raise HextileClientError("Status read interrupted or wait_s elapsed", kind="other")
-            else:
-                result = read(native_args)
-            if acquired:
-                while state(result) in active and not self._wait_shutdown.is_set():
-                    remaining = wait_s - (time.monotonic() - start)
-                    if remaining <= 0:
-                        break
-                    if self._wait_shutdown.wait(min(1.0, remaining)):
-                        break
-                    remaining = wait_s - (time.monotonic() - start)
-                    if self._wait_shutdown.is_set() or remaining <= 0:
-                        break
-                    finished, value = bounded_read()
-                    if not finished:
-                        break
-                    result = value
-                    current_state = state(result)
-                    if isinstance(current_state, str):
-                        self._notify_progress(getattr(self._wait_progress, "token", None),
-                                              min(100.0, 100.0 * (time.monotonic() - start) / wait_s),
-                                              current_state)
+            # The first read uses the client's normal timeout, exactly as wait_s 0.
+            result = read(native_args, None)
+            while acquired and state(result) in active:
+                remaining = wait_s - (time.monotonic() - start)
+                if remaining <= 0 or self._wait_shutdown.wait(min(1.0, remaining)):
+                    break
+                remaining = wait_s - (time.monotonic() - start)
+                if remaining <= 0 or self._wait_shutdown.is_set():
+                    break
+                try:
+                    # Re-reads stay inside the deadline; a slow or failed one keeps the last good read.
+                    result = read(native_args, min(remaining, 1.5))
+                except Exception:  # noqa: BLE001
+                    break
+                current_state = state(result)
+                if isinstance(current_state, str):
+                    self._notify_progress(getattr(self._wait_progress, "token", None),
+                                          min(100.0, 100.0 * (time.monotonic() - start) / wait_s),
+                                          current_state)
             return {**result, "waited_s": round(time.monotonic() - start, 1) if acquired else 0}
         finally:
             if acquired:
@@ -5016,7 +4978,7 @@ class HextileMcpServer:
         return self.client.export_shader_still(args)
 
     def _shader_get_output_job(self, args: dict[str, Any]) -> Any:
-        return self._wait_read(args, self.client.get_shader_output_job,
+        return self._wait_read(args, lambda native_args, timeout: self.client.get_shader_output_job(native_args, timeout=timeout),
                                lambda result: result.get("state") or (result.get("job") or {}).get("state"),
                                _SHADER_OUTPUT_ACTIVE_STATES)
 
@@ -5213,10 +5175,10 @@ class HextileMcpServer:
         return self.client.render_shader_sequence(args)
 
     def _get_shader_sequence(self, args: dict[str, Any]) -> Any:
-        def read(native_args: dict[str, Any]) -> dict[str, Any]:
+        def read(native_args: dict[str, Any], timeout: Optional[float]) -> dict[str, Any]:
             if set(native_args) != {"sequence_id"}:
                 raise HextileClientError("Expected exact Shader sequence ID", kind="other", status_code=422)
-            return self.client.get_shader_sequence(native_args["sequence_id"])
+            return self.client.get_shader_sequence(native_args["sequence_id"], timeout=timeout)
         def state(result: dict[str, Any]) -> Any:
             folder = result.get("folder_export")
             if isinstance(folder, dict) and folder.get("status") in {"queued", "running"}:
@@ -5567,11 +5529,11 @@ class HextileMcpServer:
         )
 
     def _get_status(self, args: dict[str, Any]) -> Any:
-        def read(native_args: dict[str, Any]) -> dict[str, Any]:
+        def read(native_args: dict[str, Any], timeout: Optional[float]) -> dict[str, Any]:
             run_id = native_args.get("run_id")
             if not run_id:
                 raise HextileClientError("run_id is required", status_code=None, kind="other")
-            return self.client.get_status(str(run_id))
+            return self.client.get_status(str(run_id), timeout=timeout)
         return self._wait_read(args, read, lambda result: result.get("status"),
                                _RENDER_ACTIVE_STATUSES)
 
