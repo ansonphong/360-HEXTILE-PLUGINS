@@ -47,6 +47,7 @@ All: `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[<entry>]}
 - Label / help / group / widget / clamp / default → `{"op":"set","address":["parameters","<id>","label"|"help"|"group"|"control"|"clamp"|"default"],"value":..}`.
 - Min / max / step → `["parameters","<id>","min"|"max"|"step"]` — send min and max together.
 - Rename dropdown options → `["parameters","<id>","option_labels"]` value `{"0":"A","1":"B"}` (all labels).
+- Star / unstar a parameter (shown with an accent outline and the Workshop "starred only" filter) → `{"op":"set","address":["parameters","<id>","starred"],"value":true}`; unstar with `{"op":"delete","address":["parameters","<id>","starred"]}` (never `false`); `get_shader_parameters` reports `starred:true`.
 - Current value → `{"op":"set","address":["values","<id>"],"value":0.7}`; reorder → `["order","parameters"]` with all ids.
 - Add a slider → with `lease`: `{"op":"create","address":["parameters","glow"],"value":{"type":"float","default":0.4,"min":0,"max":1,"step":0.01,"label":"Glow"}}` plus a `["code"]` entry using `hxParam_glow`. A new float with valid `min < max` defaults to `control: "slider"`. Set `"control":"number"` to keep a numeric field.
 - Remove a parameter → with `lease`: `delete` `["parameters","<id>"]` plus a `["code"]` entry without `hxParam_<id>`, in one call.
