@@ -5086,8 +5086,9 @@ class Client:
             found = [row for row in rows if row.get("id") == args["look_id"]]
             if name is not None and (found or conflict_status == 422):
                 if len(named) > 1:
-                    raise HextileClientError(f"{len(named)} Looks are named {json.dumps(name)}; send look_id only",
-                                             status_code=409, kind="other")
+                    raise HextileClientError(
+                        f"look_id and name disagree: {len(named)} Looks are named {json.dumps(name)}; "
+                        "send look_id only", status_code=conflict_status, kind="other")
                 if (found or named) and (not found or not named or named[0].get("id") != found[0].get("id")):
                     raise HextileClientError(
                         f"look_id {json.dumps(args['look_id'])} and name {json.dumps(name)} disagree; "
@@ -5115,21 +5116,36 @@ class Client:
             if checked.pop("action", None) != operation.removeprefix("shader_history_"):
                 raise HextileClientError("Invalid retention action", status_code=422, kind="other")
         _native_history_args(operation, checked)
+        recovery = ('Recover with shader_get_operation {shader, scope:"asset", request_id, '
+                    "project_context_witness} using the reply's values; never resend.")
         try:
             receipt = self._shader_request("POST", path, dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
                     or exc.kind == "other" and 200 <= exc.status_code < 300:
-                raise HextileClientError("Shader history outcome unknown; read shader_get_operation by original request_id. Do not submit again.",
-                    kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]}) from exc
+                raise HextileClientError(
+                    "Shader history outcome unknown; " + recovery if operation == "shader_apply_look" else
+                    "Shader history outcome unknown; read shader_get_operation by original request_id. Do not submit again.",
+                    kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]},
+                    next_step=recovery if operation == "shader_apply_look" else None) from exc
             raise
+        except http.client.HTTPException as exc:
+            if operation != "shader_apply_look":
+                raise
+            raise HextileClientError("Shader history outcome unknown; " + recovery,
+                                     kind="shader_operation_outcome_unknown",
+                                     receipt={"request_id": checked["request_id"]},
+                                     next_step=recovery) from exc
         if isinstance(receipt, dict):
             _shape_merge_container(receipt)
         if (not isinstance(receipt, dict) or receipt.get("request_id") != checked["request_id"]
                 or receipt.get("operation") != operation
                 or receipt.get("state") not in {"pending", "applied", "saved", "refused", "failed", "unknown", "expired"}):
-            raise HextileClientError("Shader history acknowledgement unknown; read shader_get_operation by original request_id.",
-                kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]})
+            raise HextileClientError(
+                "Shader history acknowledgement unknown; " + recovery if operation == "shader_apply_look" else
+                "Shader history acknowledgement unknown; read shader_get_operation by original request_id.",
+                kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]},
+                next_step=recovery if operation == "shader_apply_look" else None)
         if len(json.dumps(receipt, ensure_ascii=False).encode("utf-8")) > 32768:
             raise HextileClientError("Shader history receipt exceeds result limit", kind="other")
         return receipt
@@ -7935,7 +7951,8 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
             payload["receipt"] = exc.receipt
             plain = exc.receipt
             fields = {"code", "message", "next_step"}
-            if fields <= set(plain) <= fields | {"diagnostic", "route_discovery", "checks"}:
+            if fields <= set(plain) <= fields | {"diagnostic", "route_discovery", "checks",
+                                                 "request_id", "project_context_witness"}:
                 payload["code"] = plain["code"]
                 payload["message"] = plain["message"]
                 payload["next_step"] = plain["next_step"]

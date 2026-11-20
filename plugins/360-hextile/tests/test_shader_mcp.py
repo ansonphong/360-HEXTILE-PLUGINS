@@ -3188,6 +3188,7 @@ def test_apply_look_short_form_uses_the_long_form_native_body(monkeypatch) -> No
     import uuid
     assert str(uuid.UUID(short_reply["request_id"])) == short_reply["request_id"]
     assert uuid.UUID(short_reply["request_id"]).version == 4
+    assert short_reply["project_context_witness"] == "wit"
     assert calls[0] == ("GET", "/api/shaders/agent-operations/assets", None, {"params": {}})
     short_body = calls[-1][2]
     assert short_body == {"shader": shader, "project_context_witness": "wit",
@@ -3203,6 +3204,7 @@ def test_apply_look_short_form_uses_the_long_form_native_body(monkeypatch) -> No
     assert [call[1] for call in calls] == ["/api/shaders/agent-operations/looks",
                                            "/api/shaders/agent-operations/looks/apply"]
     assert calls[-1][2] == short_body
+    assert "project_context_witness" not in json.loads(long["content"][0]["text"])
 
 
 def test_apply_look_mixed_keys_and_ambiguous_name_refuse_through_mcp(monkeypatch) -> None:
@@ -3236,4 +3238,70 @@ def test_apply_look_mixed_keys_and_ambiguous_name_refuse_through_mcp(monkeypatch
     ambiguous = server.call_tool("shader_apply_look", {"shader": shader, "name": "Cool"})
     assert ambiguous["isError"] is True
     assert "2 Looks are named" in json.loads(ambiguous["content"][0]["text"])["error"]
+    mixed_ambiguous = server.call_tool("shader_apply_look", {
+        "shader": shader, "name": "Cool", "look_id": "look_2"})
+    mixed_ambiguous_error = json.loads(mixed_ambiguous["content"][0]["text"])
+    assert mixed_ambiguous_error["status_code"] == 422
+    assert "name" in mixed_ambiguous_error["error"] and "look_id" in mixed_ambiguous_error["error"]
     assert all(path != "/api/shaders/agent-operations/looks/apply" for _, path in calls)
+
+
+@pytest.mark.parametrize("failure", ["oversize", "refusal", "incomplete", "timeout"])
+def test_apply_look_short_form_error_returns_recovery_values(monkeypatch, failure) -> None:
+    import uuid
+
+    shader = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "e" * 64
+    client = Client("http://127.0.0.1:9")
+    posts = []
+
+    def reply(method, path, body=None, **kwargs):
+        if path.endswith("/assets"):
+            return {"schema": 1, "project_context_witness": "wit", "project": {},
+                    "entries": [], "next_cursor": None}
+        if path.endswith("/looks"):
+            return {"schema": 1, "shader": shader, "project_context_witness": "wit",
+                    "provenance": "saved", "entries": [
+                        {"id": "look_1", "title": "Warm", "revision": 2, "envelope_hash": digest}]}
+        if path.endswith("/looks/apply"):
+            posts.append(body)
+            if failure == "oversize":
+                return {"request_id": body["request_id"], "operation": "shader_apply_look",
+                        "state": "saved", "padding": "x" * 32768}
+            if failure == "refusal":
+                detail = {"code": "look_stale", "message": "Look changed",
+                          "next_step": "Read the Looks and choose again."}
+                raise HextileClientError("HTTP 409", status_code=409,
+                                         body=json.dumps({"detail": detail}), kind="http")
+            if failure == "incomplete":
+                raise http.client.IncompleteRead(b"partial", 20)
+            raise HextileClientError("timed out", kind="app_down")
+        if "/operations/" in path:
+            return {"request_id": path.rsplit("/", 1)[-1], "operation": "shader_apply_look",
+                    "state": "saved"}
+        raise AssertionError(f"unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, "request_json", reply)
+    server = HextileMcpServer(client=client, child_token="test")
+    result = server.call_tool("shader_apply_look", {"shader": shader, "name": "Warm"})
+    assert result["isError"] is True
+    error = json.loads(result["content"][0]["text"])
+    assert len(posts) == 1
+    request_id = error["receipt"]["request_id"]
+    assert str(uuid.UUID(request_id)) == request_id and uuid.UUID(request_id).version == 4
+    assert request_id == posts[0]["request_id"]
+    assert error["receipt"]["project_context_witness"] == posts[0]["project_context_witness"] == "wit"
+    if failure == "refusal":
+        assert (error["code"], error["message"], error["next_step"]) == (
+            "look_stale", "Look changed", "Read the Looks and choose again.")
+    elif failure == "oversize":
+        assert error["error"] == "Shader history receipt exceeds result limit"
+    else:
+        assert error["kind"] == "shader_operation_outcome_unknown"
+        assert "shader_get_operation" in error["error"] and "never resend" in error["error"]
+        assert all(key in error["next_step"] for key in (
+            "shader", 'scope:"asset"', "request_id", "project_context_witness"))
+        recovered = server.call_tool("shader_get_operation", {
+            "shader": shader, "scope": "asset", "request_id": request_id,
+            "project_context_witness": error["receipt"]["project_context_witness"]})
+        assert recovered["isError"] is False

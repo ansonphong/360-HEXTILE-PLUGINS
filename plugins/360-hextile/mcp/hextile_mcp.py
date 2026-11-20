@@ -3026,8 +3026,9 @@ SHADER_EXTENSION_TOOLS = [
               ["shader", "project_context_witness", "request_id", "title"]),
     _tool_def("shader_apply_look", "Use to apply a saved Look: shader_apply_look {shader, name} (or look_id). "
                                    "If project_context_witness is omitted, a native shader_list_assets read supplies it. "
-                                   "If request_id is omitted, a UUIDv4 is minted and returned in the reply. Recover a lost reply "
-                                   "with shader_get_operation using scope asset and that request_id; never resend the short form. "
+                                   "If request_id is omitted, a UUIDv4 is minted and returned with the witness. Recover a lost "
+                                   "reply with shader_get_operation {shader, scope:\"asset\", request_id, "
+                                   "project_context_witness} using the reply's values; never resend the short form. "
                                    "Explicit project_context_witness and request_id are also accepted. base is optional, as is "
                                    "expected_look_envelope_hash (omitted = the saved head and the Look as it is now; "
                                    "the person's edits still win). Library Shader: library_intent and confirmation_scope are filled "
@@ -5044,9 +5045,22 @@ class HextileMcpServer:
         filled = dict(args)
         if "project_context_witness" not in filled:
             filled["project_context_witness"] = self.client.list_shader_assets({})["project_context_witness"]
-        if "request_id" not in filled:
+        minted = "request_id" not in filled
+        if minted:
             filled["request_id"] = str(uuid.uuid4())
-        return self.client.apply_shader_look(filled)
+        try:
+            result = self.client.apply_shader_look(filled)
+        except HextileClientError as exc:
+            if minted or "project_context_witness" not in args:
+                exc.receipt = {**(exc.receipt or {}),
+                               **({"request_id": filled["request_id"]} if minted else {}),
+                               "project_context_witness": filled["project_context_witness"]}
+            raise
+        if minted or "project_context_witness" not in args:
+            result = {**result, "project_context_witness": filled["project_context_witness"]}
+            if minted:
+                result["request_id"] = filled["request_id"]
+        return result
 
     def _shader_rename_look(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_look(args)
