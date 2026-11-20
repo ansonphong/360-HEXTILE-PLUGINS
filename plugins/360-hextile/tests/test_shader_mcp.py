@@ -34,6 +34,87 @@ def _schema(name: str) -> dict[str, Any]:
     return next(tool for tool in TOOLS if tool["name"] == name)
 
 
+def test_list_runs_pages_in_app_order_and_rejects_bad_cursors() -> None:
+    rows = [{"id": str(index)} for index in range(43)]
+
+    class FakeClient:
+        def list_runs(self, lifecycle_status):
+            assert lifecycle_status in {"active", "archived"}
+            return {"success": True, "message": "OK", "data": {"renders": rows}}
+
+    server = HextileMcpServer(client=FakeClient())
+    schema = _schema("list_runs")
+    assert schema["inputSchema"]["properties"]["limit"]["default"] == 20
+    assert "pass next_cursor as cursor" in schema["description"]
+    tool_reply = server.call_tool("list_runs", {})
+    assert tool_reply["isError"] is False
+    tool_data = json.loads(tool_reply["content"][0]["text"])["data"]
+    assert len(tool_data["renders"]) == 20 and isinstance(tool_data["next_cursor"], str)
+    pages = []
+    cursor = None
+    while True:
+        result = server._list_runs({"cursor": cursor} if cursor else {})
+        assert result["success"] is True and result["message"] == "OK"
+        assert result["data"]["total"] == 43
+        assert len(result["data"]["renders"]) <= 20
+        pages.extend(result["data"]["renders"])
+        cursor = result["data"]["next_cursor"]
+        if cursor is None:
+            break
+    assert pages == rows
+    assert len(server._list_runs({"limit": 7})["data"]["renders"]) == 7
+    first_cursor = server._list_runs({})["data"]["next_cursor"]
+    for arguments in ({"cursor": "bad"}, {"lifecycle_status": "archived", "cursor": first_cursor}):
+        with pytest.raises(HextileClientError) as caught:
+            server._list_runs(arguments)
+        assert caught.value.status_code == 422
+        assert caught.value.code == "invalid_cursor"
+        assert caught.value.next_step == "Call list_runs without cursor."
+    refused = server.call_tool("list_runs", {"cursor": "bad"})
+    refusal = json.loads(refused["content"][0]["text"])
+    assert refused["isError"] is True
+    assert refusal["code"] == "invalid_cursor" and refusal["message"] == refusal["error"]
+    assert refusal["next_step"] == "Call list_runs without cursor."
+    for limit in (0, True, 101):
+        with pytest.raises(HextileClientError) as caught:
+            server._list_runs({"limit": limit})
+        assert caught.value.code == "invalid_arguments"
+
+
+@pytest.mark.parametrize("tool,args,code,named,next_step", [
+    ("shader_get_asset_state", {"shader_id": "x"}, "invalid_arguments",
+     ("missing project_context_witness, shader", "unknown shader_id"), "shader_list_assets"),
+    ("get_shader_parameters", {"shader_id": "x"}, "unknown_arguments",
+     ("unknown shader_id",), "takes no shader_id"),
+    ("shader_get_output_job", {"job_id": "x"}, "invalid_arguments",
+     ("missing profile", "project_context_witness", "request_id", "shader", "unknown job_id"),
+     "shader_export_still"),
+    ("shader_export_still", {"shader_id": "x"}, "invalid_arguments",
+     ("missing base, preflight_request_id, profile, project_context_witness, request_id, shader, studio_surface_id",
+      "unknown shader_id"),
+     "shader_preflight_still_export"),
+    ("get_fractal_context", {}, "fractal_unavailable", (), "Do not poll"),
+    ("get_cache_buckets", {"unexpected": 1}, "unknown_arguments", ("unknown unexpected",),
+     "Remove unknown keys"),
+])
+def test_a8_refusals_explain_recovery(tool, args, code, named, next_step, monkeypatch) -> None:
+    client = Client(opener=lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected HTTP")))
+    if tool == "get_fractal_context":
+        monkeypatch.setattr(client, "get_json", lambda *a, **k: {})
+    server = HextileMcpServer(client=client)
+    result = server.call_tool(tool, args)
+    assert result["isError"] is True
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["code"] == code
+    assert payload["message"] == payload["error"]
+    assert next_step in payload["next_step"]
+    for field in named:
+        assert field in payload["message"]
+    assert {"ok", "error", "kind", "status_code"} <= payload.keys()
+    if tool == "get_fractal_context":
+        assert payload["receipt"] == {"code": "fractal_unavailable"}
+
+
 def test_output_job_wait_stops_on_terminal_state_without_leaking_wait_s(monkeypatch) -> None:
     import hextile_mcp
 

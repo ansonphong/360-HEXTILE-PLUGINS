@@ -1367,8 +1367,15 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
         extra = sorted(set(args) - required - optional) if isinstance(args, Mapping) else []
         named = "; ".join(part for part in (missing and "missing " + ", ".join(missing),
                                             extra and "unknown " + ", ".join(extra)) if part)
+        next_step = (
+            "Pass shader {origin, shaderId}, project_context_witness, profile, and the request_id given to shader_export_still."
+            if operation == "get_job" else
+            "Call shader_preflight_still_export, then pass its request_id as preflight_request_id to shader_export_still with shader, project_context_witness, studio_surface_id, base, profile, and a new request_id."
+            if operation == "still" else None
+        )
         raise HextileClientError("Expected closed Shader output arguments" + (f" ({named})" if named else ""),
-                                 status_code=422, kind="other")
+                                 status_code=422, kind="other",
+                                 code="invalid_arguments" if next_step else None, next_step=next_step)
     if "render_route" in args and not _checked_render_route(args["render_route"]):
         raise HextileClientError("Expected a closed render_route", status_code=422, kind="other")
     _native_shader_args("state", {key: args[key] for key in ("shader", "project_context_witness")})
@@ -1454,7 +1461,16 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
     if isinstance(args, Mapping) and "base" in expected and "base" not in args:
         raise HextileClientError(_BASE_REQUIRED, status_code=422, kind="other")
     if not isinstance(args, Mapping) or expected - args.keys() or set(args) - expected - optional:
-        raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
+        if operation != "state":
+            raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
+        missing = sorted(expected - args.keys()) if isinstance(args, Mapping) else sorted(expected)
+        unknown = sorted(set(args) - expected - optional) if isinstance(args, Mapping) else []
+        named = "; ".join(part for part in (missing and "missing " + ", ".join(missing),
+                                            unknown and "unknown " + ", ".join(unknown)) if part)
+        raise HextileClientError("Expected closed native Shader operation arguments" + f" ({named})",
+                                 status_code=422, kind="other", code="invalid_arguments",
+                                 next_step=("Pass shader {origin, shaderId} and project_context_witness from "
+                                            "shader_list_assets or get_live_context(view=\"shader\")."))
     ref = args["shader"]
     if (not isinstance(ref, Mapping) or set(ref) != {"origin", "shaderId"}
             or type(ref.get("origin")) is not str or ref["origin"] not in {"builtin", "user", "project"}
@@ -1488,10 +1504,12 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Invalid native Shader rename", status_code=422, kind="other")
 
 
-def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[str], optional: set[str]) -> None:
+def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[str], optional: set[str],
+                           *, next_step: Optional[str] = None) -> None:
     """Name the missing and unknown fields on a closed argument object."""
     if not isinstance(args, Mapping):
-        raise HextileClientError(f"{label}: arguments must be an object", status_code=422, kind="other")
+        raise HextileClientError(f"{label}: arguments must be an object", status_code=422, kind="other",
+                                 code="invalid_arguments" if next_step else None, next_step=next_step)
     missing = sorted(required - set(args))
     unknown = sorted(set(args) - required - optional)
     if missing or unknown:
@@ -1501,7 +1519,9 @@ def _closed_argument_error(label: str, args: Mapping[str, Any], required: set[st
         if unknown:
             parts.append("unknown " + ", ".join(unknown))
         hint = " (" + _BASE_REQUIRED + ")" if "base" in missing else ""
-        raise HextileClientError(label + ": " + "; ".join(parts) + hint, status_code=422, kind="other")
+        code = ("invalid_arguments" if missing and unknown else "missing_arguments" if missing else "unknown_arguments") if next_step else None
+        raise HextileClientError(label + ": " + "; ".join(parts) + hint, status_code=422, kind="other",
+                                 code=code, next_step=next_step)
 
 
 def _native_read_args(args: Mapping[str, Any], required: set[str], optional: set[str] = frozenset()) -> None:
@@ -1912,12 +1932,16 @@ class HextileClientError(RuntimeError):
         body: Optional[str] = None,
         kind: str = "http",
         receipt: Optional[Mapping[str, Any]] = None,
+        code: Optional[str] = None,
+        next_step: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.body = body
         self.kind = kind  # app_down | upgrade | http | other | endpoint_unverified | unsupported_connectivity
         self.receipt = dict(receipt) if receipt is not None else None
+        self.code = code
+        self.next_step = next_step
 
 
 _SHADER_SEQUENCE_REQUIRED = {
@@ -4511,7 +4535,9 @@ class Client:
     def get_shader_parameters(self, *, session_id: str, page: Optional[Mapping[str, Any]] = None) -> Any:
         """Read one revision-bound page of mounted Shader controls."""
         page = {} if page is None else page
-        _closed_argument_error("Expected Shader parameter page arguments", page, set(), {"cursor", "limit"})
+        _closed_argument_error("Expected Shader parameter page arguments", page, set(), {"cursor", "limit"},
+                               next_step=("get_shader_parameters reads the on-screen Shader and takes no shader_id; "
+                                          "open it or use shader_get_asset_state."))
         if "limit" in page and (type(page["limit"]) is not int or not 1 <= page["limit"] <= 64):
             raise HextileClientError("Parameter page limit must be an integer from 1 to 64", kind="other", status_code=422)
         if "cursor" in page and (type(page["cursor"]) is not str or not 1 <= len(page["cursor"]) <= 160):
@@ -7234,6 +7260,8 @@ class Client:
             raise HextileClientError(
                 "Fractal workshop is not mounted.", status_code=503, kind="http",
                 receipt={"code": "fractal_unavailable"},
+                code="fractal_unavailable",
+                next_step="Ask the user to open a Fractal scene, then read once. Do not poll.",
             )
         result = self._fractal_inspect(surface)
         try:
@@ -7912,5 +7940,10 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
                 payload["message"] = plain["message"]
                 payload["next_step"] = plain["next_step"]
                 payload["error"] = plain["message"]
+        if exc.code is not None:
+            payload["code"] = exc.code
+            payload["message"] = str(exc)
+        if exc.next_step is not None:
+            payload["next_step"] = exc.next_step
         return payload
     return {"ok": False, "error": str(exc), "kind": "other"}
