@@ -52,15 +52,8 @@ ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 MCP_STATUS_TTL_S = 5.0
 ACTIVITY_FLUSH_TIMEOUT_S = 5.0
-_RENDER_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "crashed"})
 _RENDER_ACTIVE_STATUSES = frozenset({"queued", "running", "processing"})
-_SHADER_SEQUENCE_TERMINAL_STATUSES = frozenset({
-    "completed", "completed_with_errors", "failed", "cancelled", "incomplete", "paused", "stopped",
-})
 _SHADER_SEQUENCE_ACTIVE_STATUSES = frozenset({"queued", "processing", "publishing"})
-_SHADER_OUTPUT_TERMINAL_STATES = frozenset({
-    "completed", "publication_failed", "failed", "cancelled", "stopped", "Interrupted",
-})
 _SHADER_OUTPUT_ACTIVE_STATES = frozenset({"queued", "processing", "stop_requested", "recovered"})
 
 # Canonical tool names — drift tests assert SKILL.md ⊆ this list.
@@ -3024,7 +3017,8 @@ SHADER_EXTENSION_TOOLS = [
                "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "request_id", "title"]),
-    _tool_def("shader_apply_look", "Use to apply a saved Look: shader_apply_look {shader, name} (or look_id). "
+    _tool_def("shader_apply_look", "Use to apply a saved Look: shader_apply_look {shader, name} (or look_id); "
+                                   "a name and look_id that disagree are refused (422). "
                                    "If project_context_witness is omitted, a native shader_list_assets read supplies it. "
                                    "If request_id is omitted, a UUIDv4 is minted and returned with the witness. Recover a lost "
                                    "reply with shader_get_operation {shader, scope:\"asset\", request_id, "
@@ -4558,7 +4552,8 @@ class HextileMcpServer:
     ) -> dict[str, Any]:
         wait_s = args.get("wait_s", 0)
         if type(wait_s) is not int or not 0 <= wait_s <= 25:
-            raise HextileClientError("wait_s must be an integer from 0 to 25", kind="other", status_code=422)
+            raise HextileClientError("wait_s must be an integer from 0 to 25", kind="other", status_code=422,
+                                     code="invalid_arguments", next_step="Pass wait_s as an integer from 0 to 25.")
         native_args = {key: value for key, value in args.items() if key != "wait_s"}
         acquired = wait_s > 0 and self._wait_lock.acquire(blocking=False)
         try:

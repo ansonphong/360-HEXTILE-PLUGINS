@@ -56,6 +56,9 @@ def test_render_wait_returns_on_terminal_status_and_rejects_bad_duration(monkeyp
     for bad in (-1, 26, 1.5, "1", True):
         assert server.call_tool("get_status", {"run_id": "run_1", "wait_s": bad})["isError"] is True
     assert len(seen) == 2
+    refusal = json.loads(server.call_tool("get_status", {"run_id": "run_1", "wait_s": 26})["content"][0]["text"])
+    assert refusal["code"] == "invalid_arguments"
+    assert refusal["next_step"] == "Pass wait_s as an integer from 0 to 25."
 
 
 def test_waited_s_includes_reread_time_and_omits_missing_state_progress(monkeypatch) -> None:  # noqa: ANN001
