@@ -120,7 +120,7 @@ def test_sequence_status_preserves_frozen_browser_route_without_private_fields()
                 'frames_completed': 3, 'frame_count': 5, 'private_grant': 'secret',
                 'continuation_receipt': {'key': 'original', 'request_hash': 'sha256:' + 'a' * 64,
                     'inspection_fingerprint': 'sha256:' + 'b' * 64, 'run_id': 'c' * 32, 'mode': 'native'}}
-    client.get_json = lambda path: response
+    client.get_json = lambda path, **_: response
     result = client.get_shader_sequence(sid)
     assert result['render_route'] == route
     assert result['route'] == route['route']

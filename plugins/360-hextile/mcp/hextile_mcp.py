@@ -1532,7 +1532,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_status",
-        "Use to check a render started by run_workflow. Pass its run_id. Not for sequences (get_sequence) or Batch jobs (get_batch). Pass wait_s 25 instead of calling again.",
+        "Use to check a render started by run_workflow. Pass its run_id. Not for sequences (get_sequence) or Batch jobs (get_batch). Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read.",
         {
             "run_id": {
                 "type": "string",
@@ -2540,7 +2540,7 @@ TOOLS: list[dict[str, Any]] = [
         "Use to check a Shader sequence by its sequence_id (no source or paths). After a lost render "
         "reply compare request_hash from the preflight; a missing id does not prove the render failed. A "
         "diagnostic reports the last confirmed phase, output verification, known reason and next action. "
-        "Stop polling a stopped attempt. Inspect existing output before Continue, using the original request and inspection fingerprint. Pass wait_s 25 instead of calling again.",
+        "Stop polling a stopped attempt. Inspect existing output before Continue, using the original request and inspection fingerprint. Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read.",
         {"sequence_id": {"type": "string", "pattern": r"^seq_[0-9a-f]{32}$"},
          "wait_s": {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}},
         required=["sequence_id"]),
@@ -2974,7 +2974,7 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_get_output_job", "Use to check a still export job. Pass shader, project_context_witness (freshness token, from "
                                        "get_live_context(view=\"shader\")), profile and the request_id you gave shader_export_still (not "
                                        "the preflight id, which returns 404 output_job_unknown). The optional diagnostic reports the "
-                                       "confirmed phase, verified output, cause and one next action. Starts no GPU work. Pass wait_s 25 instead of calling again.",
+                                       "confirmed phase, verified output, cause and one next action. Starts no GPU work. Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "profile": _OUTPUT_PROFILE,
                "wait_s": {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}},
