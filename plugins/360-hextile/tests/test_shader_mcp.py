@@ -130,6 +130,16 @@ def test_a8_refusals_explain_recovery(tool, args, code, named, next_step, monkey
         assert payload["receipt"] == {"code": "fractal_unavailable"}
 
 
+@pytest.mark.parametrize("tool", ["shader_get_asset_state", "shader_get_output_job", "shader_export_still"])
+def test_shader_refusals_bound_echoed_key_names(tool) -> None:
+    client = Client(opener=lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected HTTP")))
+    payload = json.loads(HextileMcpServer(client=client).call_tool(
+        tool, {"shader_id": "x", "y" * 80: 1, "bad-key": 1})["content"][0]["text"])
+    assert payload["code"] == "invalid_arguments"
+    assert "y" * 64 in payload["message"] and "y" * 65 not in payload["message"]
+    assert "bad-key" not in payload["message"] and "1 more" in payload["message"]
+
+
 def test_output_job_wait_stops_on_terminal_state_without_leaking_wait_s(monkeypatch) -> None:
     import hextile_mcp
 

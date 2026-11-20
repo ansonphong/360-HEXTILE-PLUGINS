@@ -1365,8 +1365,8 @@ def _shader_output_args(operation: str, args: Mapping[str, Any]) -> None:
     if not isinstance(args, Mapping) or required - args.keys() or set(args) - required - optional:
         missing = sorted(required - args.keys()) if isinstance(args, Mapping) else []
         extra = sorted(set(args) - required - optional) if isinstance(args, Mapping) else []
-        named = "; ".join(part for part in (missing and "missing " + ", ".join(missing),
-                                            extra and "unknown " + ", ".join(extra)) if part)
+        named = "; ".join(part for part in (missing and "missing " + _refusal_names(missing),
+                                            extra and "unknown " + _refusal_names(extra)) if part)
         next_step = (
             "Pass shader {origin, shaderId}, project_context_witness, profile, and the request_id given to shader_export_still."
             if operation == "get_job" else
@@ -1465,8 +1465,8 @@ def _native_shader_args(operation: str, args: Mapping[str, Any]) -> None:
             raise HextileClientError("Expected closed native Shader operation arguments", status_code=422, kind="other")
         missing = sorted(expected - args.keys()) if isinstance(args, Mapping) else sorted(expected)
         unknown = sorted(set(args) - expected - optional) if isinstance(args, Mapping) else []
-        named = "; ".join(part for part in (missing and "missing " + ", ".join(missing),
-                                            unknown and "unknown " + ", ".join(unknown)) if part)
+        named = "; ".join(part for part in (missing and "missing " + _refusal_names(missing),
+                                            unknown and "unknown " + _refusal_names(unknown)) if part)
         raise HextileClientError("Expected closed native Shader operation arguments" + f" ({named})",
                                  status_code=422, kind="other", code="invalid_arguments",
                                  next_step=("Pass shader {origin, shaderId} and project_context_witness from "
