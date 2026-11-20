@@ -3018,7 +3018,7 @@ SHADER_EXTENSION_TOOLS = [
                "seen": _SEEN},
               ["shader", "project_context_witness", "request_id", "title"]),
     _tool_def("shader_apply_look", "Use to apply a saved Look: shader_apply_look {shader, name} (or look_id); "
-                                   "a name and look_id that disagree are refused (422). "
+                                   "a name and look_id that disagree are refused. "
                                    "If project_context_witness is omitted, a native shader_list_assets read supplies it. "
                                    "If request_id is omitted, a UUIDv4 is minted and returned with the witness. Recover a lost "
                                    "reply with shader_get_operation {shader, scope:\"asset\", request_id, "

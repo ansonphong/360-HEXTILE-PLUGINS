@@ -5052,7 +5052,8 @@ class Client:
             "origin": args["shader"]["origin"], "shader_id": args["shader"]["shaderId"],
             "project_context_witness": args["project_context_witness"]}), kind="looks", entries=128)
 
-    def _shader_history_args(self, args: Mapping[str, Any], operation: str) -> Mapping[str, Any]:
+    def _shader_history_args(self, args: Mapping[str, Any], operation: str, *,
+                             minted: bool = False) -> Mapping[str, Any]:
         """Fill what the Shader already says: Library owner fields, and a Look named or listed by shader_get_looks."""
         if not isinstance(args, Mapping):
             return args
@@ -5066,7 +5067,7 @@ class Client:
                     args[field] = value
         if operation in {"shader_apply_look", "shader_rename_look", "shader_delete_look"} and (
                 "name" in args or "expected_look_envelope_hash" not in args):
-            args = self._resolve_look(args, conflict_status=422 if operation == "shader_apply_look" else 409)
+            args = self._resolve_look(args, conflict_status=422 if minted else 409)
         if ("library_intent" not in args and "studio_surface_id" not in args
                 and isinstance(args.get("shader"), Mapping)):
             args["library_intent"] = "saved"
@@ -5117,7 +5118,7 @@ class Client:
 
     def _shader_history_write(self, args: Mapping[str, Any], operation: str, path: str, *,
                               minted: bool = False) -> dict:
-        args = _default_working_digest(self._shader_history_args(args, operation))
+        args = _default_working_digest(self._shader_history_args(args, operation, minted=minted))
         checked = dict(args)
         if operation.startswith("shader_checkpoint_"):
             if checked.pop("action", None) != operation.removeprefix("shader_checkpoint_"):

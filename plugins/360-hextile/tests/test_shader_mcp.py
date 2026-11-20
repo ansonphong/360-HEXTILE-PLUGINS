@@ -3182,6 +3182,19 @@ def test_look_resolution_refuses_a_name_and_look_id_that_disagree(monkeypatch) -
         client._resolve_look({**base, "name": "Dawn"})
 
 
+def test_apply_look_conflict_is_422_only_for_the_minted_short_form(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    entries = [{"id": "look_1", "title": "Dusk", "envelope_hash": "sha256:" + "1" * 64},
+               {"id": "look_2", "title": "Dawn", "envelope_hash": "sha256:" + "2" * 64}]
+    monkeypatch.setattr(client, "get_shader_looks", lambda _args: {"entries": entries})
+    args = {"shader": {"origin": "user", "shaderId": "aurora"}, "project_context_witness": "wit",
+            "request_id": "11111111-1111-4111-8111-111111111111", "look_id": "look_1", "name": "Dawn"}
+    for minted, status in ((False, 409), (True, 422)):
+        with pytest.raises(HextileClientError) as caught:
+            client._shader_history_args(args, "shader_apply_look", minted=minted)
+        assert caught.value.status_code == status
+
+
 def test_apply_look_short_form_uses_the_long_form_native_body(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
 
