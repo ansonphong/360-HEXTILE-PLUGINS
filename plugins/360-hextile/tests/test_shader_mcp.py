@@ -3069,3 +3069,85 @@ def test_look_resolution_refuses_a_name_and_look_id_that_disagree(monkeypatch) -
         assert caught.value.status_code == status
     with pytest.raises(HextileClientError, match="send look_id"):
         client._resolve_look({**base, "name": "Dawn"})
+
+
+def test_apply_look_short_form_uses_the_long_form_native_body(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    tool = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_apply_look")
+    assert tool["inputSchema"]["required"] == ["shader"]
+    assert "oneOf" not in tool["inputSchema"]
+    shader = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "e" * 64
+    calls = []
+    client = Client("http://127.0.0.1:9")
+
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs))
+        if path.endswith("/assets"):
+            return {"schema": 1, "project_context_witness": "wit", "project": {},
+                    "entries": [], "next_cursor": None}
+        if path.endswith("/looks"):
+            return {"schema": 1, "shader": shader, "project_context_witness": "wit",
+                    "provenance": "saved", "entries": [
+                        {"id": "look_1", "title": "Warm", "revision": 2, "envelope_hash": digest}]}
+        assert path.endswith("/looks/apply")
+        return {"request_id": body["request_id"], "operation": "shader_apply_look", "state": "saved"}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    server = HextileMcpServer(client=client, child_token="test")
+    short = server.call_tool("shader_apply_look", {"shader": shader, "name": "Warm"})
+    assert short.get("isError") is not True
+    short_reply = json.loads(short["content"][0]["text"])
+    import uuid
+    assert str(uuid.UUID(short_reply["request_id"])) == short_reply["request_id"]
+    assert uuid.UUID(short_reply["request_id"]).version == 4
+    assert calls[0] == ("GET", "/api/shaders/agent-operations/assets", None, {"params": {}})
+    short_body = calls[-1][2]
+    assert short_body == {"shader": shader, "project_context_witness": "wit",
+                          "request_id": short_reply["request_id"], "look_id": "look_1",
+                          "expected_look_envelope_hash": digest, "library_intent": "saved",
+                          "confirmation_scope": {"operation": "shader_apply_look", "shader": shader}}
+
+    calls.clear()
+    long = server.call_tool("shader_apply_look", {
+        "shader": shader, "project_context_witness": "wit", "request_id": short_reply["request_id"],
+        "name": "Warm"})
+    assert long.get("isError") is not True
+    assert [call[1] for call in calls] == ["/api/shaders/agent-operations/looks",
+                                           "/api/shaders/agent-operations/looks/apply"]
+    assert calls[-1][2] == short_body
+
+
+def test_apply_look_mixed_keys_and_ambiguous_name_refuse_through_mcp(monkeypatch) -> None:
+    shader = {"origin": "user", "shaderId": "aurora"}
+    client = Client("http://127.0.0.1:9")
+    calls = []
+    digest = "sha256:" + "e" * 64
+
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path))
+        if path.endswith("/assets"):
+            return {"schema": 1, "project_context_witness": "wit", "project": {},
+                    "entries": [], "next_cursor": None}
+        if path.endswith("/looks"):
+            return {"schema": 1, "shader": shader, "project_context_witness": "wit",
+                    "provenance": "saved", "entries": [
+                        {"id": "look_1", "title": "Warm", "revision": 2, "envelope_hash": digest},
+                        {"id": "look_2", "title": "Cool", "revision": 3, "envelope_hash": digest},
+                        {"id": "look_3", "title": "Cool", "revision": 4, "envelope_hash": digest}]}
+        raise AssertionError(f"unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, "request_json", reply)
+    server = HextileMcpServer(client=client, child_token="test")
+    for look_id in ("look_2", "missing"):
+        mixed = server.call_tool("shader_apply_look", {
+            "shader": shader, "name": "Warm", "look_id": look_id})
+        assert mixed["isError"] is True
+        mixed_error = json.loads(mixed["content"][0]["text"])
+        assert mixed_error["status_code"] == 422
+        assert "name" in mixed_error["error"] and "look_id" in mixed_error["error"]
+    ambiguous = server.call_tool("shader_apply_look", {"shader": shader, "name": "Cool"})
+    assert ambiguous["isError"] is True
+    assert "2 Looks are named" in json.loads(ambiguous["content"][0]["text"])["error"]
+    assert all(path != "/api/shaders/agent-operations/looks/apply" for _, path in calls)

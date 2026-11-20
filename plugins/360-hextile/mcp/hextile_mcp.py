@@ -3016,11 +3016,15 @@ SHADER_EXTENSION_TOOLS = [
                "expected_look_envelope_hash": _SHADER_DIGEST,
                "seen": _SEEN},
               ["shader", "project_context_witness", "request_id", "title"]),
-    _tool_def("shader_apply_look", "Use to apply a saved Look to a Shader. Pass shader, project_context_witness (freshness token, "
-                                   "from get_live_context(view=\"shader\")), request_id and the Look by name (its title) or look_id. "
-                                   "base is optional, and so is expected_look_envelope_hash (omitted = the saved head and the Look as "
-                                   "it is now; the person's edits still win). " + "Library Shader: library_intent and confirmation_scope are filled for you. Open Shader: studio_surface_id." + " GLSL changes need "
-                                   "separate policy. The reply's base feeds the next write.",
+    _tool_def("shader_apply_look", "Use to apply a saved Look: shader_apply_look {shader, name} (or look_id). "
+                                   "If project_context_witness is omitted, a native shader_list_assets read supplies it. "
+                                   "If request_id is omitted, a UUIDv4 is minted and returned in the reply. Recover a lost reply "
+                                   "with shader_get_operation using scope asset and that request_id; never resend the short form. "
+                                   "Explicit project_context_witness and request_id are also accepted. base is optional, as is "
+                                   "expected_look_envelope_hash (omitted = the saved head and the Look as it is now; "
+                                   "the person's edits still win). Library Shader: library_intent and confirmation_scope are filled "
+                                   "for you. Open Shader: studio_surface_id. GLSL changes need separate policy. "
+                                   "The reply's base feeds the next write.",
               {**_NATIVE_SHADER_TARGET, **_NATIVE_HISTORY_OWNER, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "look_id": _NATIVE_HISTORY_CHECKPOINT, "expected_look_envelope_hash": _SHADER_DIGEST,
                "name": {"type": "string", "minLength": 1, "maxLength": 256,
@@ -3028,7 +3032,7 @@ SHADER_EXTENSION_TOOLS = [
                "id": {**_NATIVE_HISTORY_CHECKPOINT, "description": "Same as look_id (the shader_get_looks field)."},
                "envelope_hash": {**_SHADER_DIGEST, "description": "Same as expected_look_envelope_hash."},
                "seen": _SEEN},
-              ["shader", "project_context_witness", "request_id"]),
+              ["shader"]),
     _tool_def("shader_rename_look", "Use to rename a saved Look. Pass shader, project_context_witness (freshness token, from "
                                     "get_live_context(view=\"shader\")), request_id, the Look by name (its current title) or "
                                     "look_id, and title (the new name). base is optional, and so is expected_look_envelope_hash. "
@@ -4981,7 +4985,12 @@ class HextileMcpServer:
         return self.client.save_shader_look(args)
 
     def _shader_apply_look(self, args: dict[str, Any]) -> Any:
-        return self.client.apply_shader_look(args)
+        filled = dict(args)
+        if "project_context_witness" not in filled:
+            filled["project_context_witness"] = self.client.list_shader_assets({})["project_context_witness"]
+        if "request_id" not in filled:
+            filled["request_id"] = str(uuid.uuid4())
+        return self.client.apply_shader_look(filled)
 
     def _shader_rename_look(self, args: dict[str, Any]) -> Any:
         return self.client.rename_shader_look(args)

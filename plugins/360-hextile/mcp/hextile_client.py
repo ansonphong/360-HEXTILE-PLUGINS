@@ -5031,7 +5031,7 @@ class Client:
                     args[field] = value
         if operation in {"shader_apply_look", "shader_rename_look", "shader_delete_look"} and (
                 "name" in args or "expected_look_envelope_hash" not in args):
-            args = self._resolve_look(args)
+            args = self._resolve_look(args, conflict_status=422 if operation == "shader_apply_look" else 409)
         if ("library_intent" not in args and "studio_surface_id" not in args
                 and isinstance(args.get("shader"), Mapping)):
             args["library_intent"] = "saved"
@@ -5041,7 +5041,7 @@ class Client:
             args["confirmation_scope"] = {"operation": scope, "shader": dict(args["shader"])}
         return args
 
-    def _resolve_look(self, args: dict) -> dict:
+    def _resolve_look(self, args: dict, *, conflict_status: int = 409) -> dict:
         """One Look by look_id or name, with its current envelope hash when none was sent."""
         name = args.pop("name", None)
         if name is not None and (type(name) is not str or not name.strip()):
@@ -5058,14 +5058,14 @@ class Client:
                 and row["title"].casefold() == name.strip().casefold()]
         if "look_id" in args:
             found = [row for row in rows if row.get("id") == args["look_id"]]
-            if name is not None and found:
+            if name is not None and (found or conflict_status == 422):
                 if len(named) > 1:
                     raise HextileClientError(f"{len(named)} Looks are named {json.dumps(name)}; send look_id only",
                                              status_code=409, kind="other")
-                if not named or named[0].get("id") != found[0].get("id"):
+                if (found or named) and (not found or not named or named[0].get("id") != found[0].get("id")):
                     raise HextileClientError(
-                        f"look_id {json.dumps(args['look_id'])} is not the Look named {json.dumps(name)}; "
-                        "send one of them or matching values", status_code=409, kind="other")
+                        f"look_id {json.dumps(args['look_id'])} and name {json.dumps(name)} disagree; "
+                        "send one of them or matching values", status_code=conflict_status, kind="other")
         else:
             found = named
         titles = ", ".join(json.dumps(row.get("title")) for row in rows[:20]) or "none"
