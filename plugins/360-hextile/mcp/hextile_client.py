@@ -5106,7 +5106,8 @@ class Client:
         args.setdefault("expected_look_envelope_hash", found[0].get("envelope_hash"))
         return args
 
-    def _shader_history_write(self, args: Mapping[str, Any], operation: str, path: str) -> dict:
+    def _shader_history_write(self, args: Mapping[str, Any], operation: str, path: str, *,
+                              minted: bool = False) -> dict:
         args = _default_working_digest(self._shader_history_args(args, operation))
         checked = dict(args)
         if operation.startswith("shader_checkpoint_"):
@@ -5116,25 +5117,29 @@ class Client:
             if checked.pop("action", None) != operation.removeprefix("shader_history_"):
                 raise HextileClientError("Invalid retention action", status_code=422, kind="other")
         _native_history_args(operation, checked)
+        # Only a handler-minted request_id (shader_apply_look short form) gets recovery guidance;
+        # an explicit request_id keeps the long form's replies unchanged.
         recovery = ('Recover with shader_get_operation {shader, scope:"asset", request_id, '
                     "project_context_witness} using the reply's values; never resend.")
+        sent = {"request_id": checked["request_id"]}
         try:
             receipt = self._shader_request("POST", path, dict(args))
         except HextileClientError as exc:
             if exc.kind == "app_down" or exc.status_code is None or exc.status_code >= 500 \
                     or exc.kind == "other" and 200 <= exc.status_code < 300:
                 raise HextileClientError(
-                    "Shader history outcome unknown; " + recovery if operation == "shader_apply_look" else
+                    "Shader history outcome unknown; " + recovery if minted else
                     "Shader history outcome unknown; read shader_get_operation by original request_id. Do not submit again.",
-                    kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]},
-                    next_step=recovery if operation == "shader_apply_look" else None) from exc
+                    kind="shader_operation_outcome_unknown", receipt=sent,
+                    next_step=recovery if minted else None) from exc
+            if minted:
+                exc.receipt = {**(exc.receipt or {}), **sent}
             raise
         except http.client.HTTPException as exc:
-            if operation != "shader_apply_look":
+            if not minted:
                 raise
             raise HextileClientError("Shader history outcome unknown; " + recovery,
-                                     kind="shader_operation_outcome_unknown",
-                                     receipt={"request_id": checked["request_id"]},
+                                     kind="shader_operation_outcome_unknown", receipt=sent,
                                      next_step=recovery) from exc
         if isinstance(receipt, dict):
             _shape_merge_container(receipt)
@@ -5142,19 +5147,23 @@ class Client:
                 or receipt.get("operation") != operation
                 or receipt.get("state") not in {"pending", "applied", "saved", "refused", "failed", "unknown", "expired"}):
             raise HextileClientError(
-                "Shader history acknowledgement unknown; " + recovery if operation == "shader_apply_look" else
+                "Shader history acknowledgement unknown; " + recovery if minted else
                 "Shader history acknowledgement unknown; read shader_get_operation by original request_id.",
-                kind="shader_operation_outcome_unknown", receipt={"request_id": checked["request_id"]},
-                next_step=recovery if operation == "shader_apply_look" else None)
+                kind="shader_operation_outcome_unknown", receipt=sent,
+                next_step=recovery if minted else None)
         if len(json.dumps(receipt, ensure_ascii=False).encode("utf-8")) > 32768:
+            if minted:
+                raise HextileClientError("Shader history receipt exceeds result limit", kind="other",
+                                         receipt=sent, next_step=recovery)
             raise HextileClientError("Shader history receipt exceeds result limit", kind="other")
         return receipt
 
     def save_shader_look(self, args: Mapping[str, Any]) -> dict:
         return self._shader_history_write(args, "shader_save_look", "/api/shaders/agent-operations/looks/save")
 
-    def apply_shader_look(self, args: Mapping[str, Any]) -> dict:
-        return self._shader_history_write(args, "shader_apply_look", "/api/shaders/agent-operations/looks/apply")
+    def apply_shader_look(self, args: Mapping[str, Any], *, minted: bool = False) -> dict:
+        return self._shader_history_write(args, "shader_apply_look", "/api/shaders/agent-operations/looks/apply",
+                                          minted=minted)
 
     def rename_shader_look(self, args: Mapping[str, Any]) -> dict:
         return self._shader_history_write(args, "shader_rename_look", "/api/shaders/agent-operations/looks/rename")

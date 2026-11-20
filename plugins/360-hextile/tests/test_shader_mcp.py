@@ -3291,11 +3291,13 @@ def test_apply_look_short_form_error_returns_recovery_values(monkeypatch, failur
     assert str(uuid.UUID(request_id)) == request_id and uuid.UUID(request_id).version == 4
     assert request_id == posts[0]["request_id"]
     assert error["receipt"]["project_context_witness"] == posts[0]["project_context_witness"] == "wit"
+    assert (error["request_id"], error["project_context_witness"]) == (request_id, "wit")
     if failure == "refusal":
         assert (error["code"], error["message"], error["next_step"]) == (
             "look_stale", "Look changed", "Read the Looks and choose again.")
     elif failure == "oversize":
         assert error["error"] == "Shader history receipt exceeds result limit"
+        assert "shader_get_operation" in error["next_step"] and "never resend" in error["next_step"]
     else:
         assert error["kind"] == "shader_operation_outcome_unknown"
         assert "shader_get_operation" in error["error"] and "never resend" in error["error"]
@@ -3305,3 +3307,85 @@ def test_apply_look_short_form_error_returns_recovery_values(monkeypatch, failur
             "shader": shader, "scope": "asset", "request_id": request_id,
             "project_context_witness": error["receipt"]["project_context_witness"]})
         assert recovered["isError"] is False
+
+
+def test_apply_look_pre_send_refusals_carry_no_request_id(monkeypatch) -> None:
+    shader = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "e" * 64
+    client = Client("http://127.0.0.1:9")
+    posts = []
+
+    def reply(method, path, body=None, **kwargs):
+        if path.endswith("/assets"):
+            return {"schema": 1, "project_context_witness": "wit", "project": {},
+                    "entries": [], "next_cursor": None}
+        if path.endswith("/looks"):
+            return {"schema": 1, "shader": shader, "project_context_witness": "wit",
+                    "provenance": "saved", "entries": [
+                        {"id": "look_1", "title": "Warm", "revision": 2, "envelope_hash": digest},
+                        {"id": "look_2", "title": "Cool", "revision": 3, "envelope_hash": digest},
+                        {"id": "look_3", "title": "Cool", "revision": 4, "envelope_hash": digest}]}
+        posts.append(path)
+        raise AssertionError(f"unexpected request: {method} {path}")
+
+    monkeypatch.setattr(client, "request_json", reply)
+    server = HextileMcpServer(client=client, child_token="test")
+    for extra, status in (({"name": "Nope"}, 404), ({"name": "Warm", "bogus": 1}, 422),
+                          ({"name": "Cool"}, 409), ({"name": "Warm", "look_id": "look_2"}, 422)):
+        result = server.call_tool("shader_apply_look", {"shader": shader, **extra})
+        assert result["isError"] is True
+        text = result["content"][0]["text"]
+        assert json.loads(text)["status_code"] == status
+        assert "request_id" not in text and "shader_get_operation" not in text
+    assert posts == []
+
+
+@pytest.mark.parametrize("failure", ["success", "refusal", "timeout", "incomplete", "oversize"])
+def test_apply_look_explicit_long_form_replies_are_unchanged(monkeypatch, failure) -> None:
+    # Expected payloads are the replies of 5d7dfca, before the short-form recovery handling.
+    shader = {"origin": "user", "shaderId": "aurora"}
+    digest = "sha256:" + "e" * 64
+    request_id = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+    client = Client("http://127.0.0.1:9")
+
+    def reply(method, path, body=None, **kwargs):
+        if path.endswith("/looks"):
+            return {"schema": 1, "shader": shader, "project_context_witness": "wit",
+                    "provenance": "saved", "entries": [
+                        {"id": "look_1", "title": "Warm", "revision": 2, "envelope_hash": digest}]}
+        assert path.endswith("/looks/apply"), path
+        if failure == "refusal":
+            detail = {"code": "look_stale", "message": "Look changed",
+                      "next_step": "Read the Looks and choose again."}
+            raise HextileClientError("HTTP 409", status_code=409, body=json.dumps({"detail": detail}), kind="http")
+        if failure == "timeout":
+            raise HextileClientError("timed out", kind="app_down")
+        if failure == "incomplete":
+            raise http.client.IncompleteRead(b"partial", 20)
+        return {"request_id": request_id, "operation": "shader_apply_look", "state": "saved",
+                **({"padding": "x" * 32768} if failure == "oversize" else {})}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    server = HextileMcpServer(client=client, child_token="test")
+    result = server.call_tool("shader_apply_look", {
+        "shader": shader, "project_context_witness": "wit", "request_id": request_id, "name": "Warm"})
+    payload = json.loads(result["content"][0]["text"])
+    expected = {
+        "success": {"request_id": request_id, "operation": "shader_apply_look", "state": "saved"},
+        "refusal": {"ok": False, "error": "Look changed", "kind": "http", "status_code": 409,
+                    "receipt": {"code": "look_stale", "message": "Look changed",
+                                "next_step": "Read the Looks and choose again."},
+                    "code": "look_stale", "message": "Look changed",
+                    "next_step": "Read the Looks and choose again."},
+        "timeout": {"ok": False, "error": "Shader history outcome unknown; read shader_get_operation by "
+                    "original request_id. Do not submit again.", "kind": "shader_operation_outcome_unknown",
+                    "status_code": None, "receipt": {"request_id": request_id}},
+        "oversize": {"ok": False, "error": "Shader history receipt exceeds result limit", "kind": "other",
+                     "status_code": None},
+    }
+    assert result["isError"] is (failure != "success")
+    if failure == "incomplete":
+        payload.pop("trace", None)
+        assert payload == {"ok": False, "error": "IncompleteRead(7 bytes read, 20 more expected)", "kind": "other"}
+    else:
+        assert payload == expected[failure]

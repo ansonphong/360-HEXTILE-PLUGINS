@@ -4328,6 +4328,7 @@ class HextileMcpServer:
             if name in _HOTKEY_OPS and exc.receipt is not None:
                 safe_error.pop("receipt", None)
                 safe_error.update(exc.receipt)
+            safe_error.update(getattr(exc, "recovery_values", None) or {})
             self._emit_activity(
                 tool=name,
                 call_id=call_id,
@@ -5011,12 +5012,17 @@ class HextileMcpServer:
         if minted:
             filled["request_id"] = str(uuid.uuid4())
         try:
-            result = self.client.apply_shader_look(filled)
+            result = self.client.apply_shader_look(filled, minted=minted)
         except HextileClientError as exc:
-            if minted or "project_context_witness" not in args:
+            # The client tags every post-send error of a minted call with its request_id; a
+            # pre-send refusal (no POST) carries no request_id to recover.
+            sent = minted and (exc.receipt or {}).get("request_id") == filled["request_id"]
+            if sent or "project_context_witness" not in args:
                 exc.receipt = {**(exc.receipt or {}),
-                               **({"request_id": filled["request_id"]} if minted else {}),
                                "project_context_witness": filled["project_context_witness"]}
+            if sent:
+                exc.recovery_values = {"request_id": filled["request_id"],
+                                       "project_context_witness": filled["project_context_witness"]}
             raise
         if minted or "project_context_witness" not in args:
             result = {**result, "project_context_witness": filled["project_context_witness"]}
