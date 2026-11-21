@@ -2909,15 +2909,14 @@ SHADER_EXTENSION_TOOLS = [
                            "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}}),
     _tool_def("shader_get_asset_state", "Use to read a Shader's saved values and its saved base (working_revision, document_hash, "
                                         "source_hash: the exact saved version, needed by most write tools), plus title, tags, writable "
-                                        "and inputs. Pass shader {origin, shaderId} and project_context_witness (project-wide: the one from "
-                                        "get_live_context(view=\"shader\") or shader_list_assets works for every Shader, even when "
-                                        "another is on screen). Any shelf, open or not "
+                                        "and inputs. Pass shader {origin, shaderId}; project_context_witness is optional (project-wide; if "
+                                        "omitted, a native shader_list_assets read supplies it). Any shelf, open or not "
                                         "(Built-ins too). include [\"parameters\"] adds every parameter definition (label, help, group, "
                                         "range, options); include [\"source\"] adds the saved GLSL as {\"source.glsl\": text, "
                                         "\"modules/x.glsl\": text} (up to 192 KB).",
               {**_NATIVE_SHADER_TARGET, "include": {"type": "array", "uniqueItems": True, "maxItems": 2,
                                                     "items": {"enum": ["source", "parameters"]}}},
-              ["shader", "project_context_witness"]),
+              ["shader"]),
     _tool_def("shader_request_preview", "Use to render a full-size preview of a saved Shader and inspect it. Pass shader, "
                                         "project_context_witness (freshness token, from get_live_context(view=\"shader\")), "
                                         "studio_surface_id, a fresh request_id, base, mode (\"still\" or \"sequence\"), width, height and "
@@ -3007,10 +3006,10 @@ SHADER_EXTENSION_TOOLS = [
                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                "newest": {"type": "boolean"}},
               ["shader", "project_context_witness"]),
-    _tool_def("shader_get_looks", "Use to list a Shader's saved Looks (named value presets). Pass shader and "
-                                  "project_context_witness (freshness token, from get_live_context(view=\"shader\")). Returns ids and "
-                                  "envelope hashes, no source or pixels.",
-              _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
+    _tool_def("shader_get_looks", "Use to list a Shader's saved Looks (named value presets). Pass shader; "
+                                  "project_context_witness is optional (if omitted, a native shader_list_assets read supplies it). "
+                                  "Returns ids and envelope hashes, no source or pixels.",
+              _NATIVE_SHADER_TARGET, ["shader"]),
     _tool_def("shader_save_look", "Use to save the Shader's current saved values as a named Look (to set a value and save "
                                   "it as a Look in one call, use shader_edit: set [\"values\",\"<id>\"] plus create "
                                   "[\"looks\",\"<look id>\"]). Pass shader, project_context_witness "
@@ -4971,8 +4970,15 @@ class HextileMcpServer:
         body = {key: args[key] for key in allowed - {"target", "render_id"} if key in args}
         return self.client.clone_spot(args["render_id"], body)
 
+    def _with_witness(self, args: dict[str, Any]) -> dict[str, Any]:
+        """An omitted project_context_witness comes from a native shader_list_assets read (it is project-wide)."""
+        filled = dict(args)
+        if "project_context_witness" not in filled:
+            filled["project_context_witness"] = self.client.list_shader_assets({})["project_context_witness"]
+        return filled
+
     def _shader_get_asset_state(self, args: dict[str, Any]) -> Any:
-        return self.client.get_shader_asset_state(args)
+        return self.client.get_shader_asset_state(self._with_witness(args) if "shader" in args else args)
 
     def _shader_request_preview(self, args: dict[str, Any]) -> Any:
         return self.client.request_shader_preview(args)
@@ -5014,15 +5020,13 @@ class HextileMcpServer:
         return self.client.get_shader_history(args)
 
     def _shader_get_looks(self, args: dict[str, Any]) -> Any:
-        return self.client.get_shader_looks(args)
+        return self.client.get_shader_looks(self._with_witness(args) if "shader" in args else args)
 
     def _shader_save_look(self, args: dict[str, Any]) -> Any:
         return self.client.save_shader_look(args)
 
     def _shader_apply_look(self, args: dict[str, Any]) -> Any:
-        filled = dict(args)
-        if "project_context_witness" not in filled:
-            filled["project_context_witness"] = self.client.list_shader_assets({})["project_context_witness"]
+        filled = self._with_witness(args)
         minted = "request_id" not in filled
         if minted:
             filled["request_id"] = str(uuid.uuid4())

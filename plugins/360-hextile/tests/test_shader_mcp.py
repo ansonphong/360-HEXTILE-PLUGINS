@@ -3245,6 +3245,36 @@ def test_apply_look_short_form_uses_the_long_form_native_body(monkeypatch) -> No
     assert "project_context_witness" not in json.loads(long["content"][0]["text"])
 
 
+def test_asset_state_and_looks_fill_an_omitted_witness_like_apply_look(monkeypatch) -> None:
+    from hextile_mcp import SHADER_EXTENSION_TOOLS
+
+    for name in ("shader_get_asset_state", "shader_get_looks"):
+        tool = next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == name)
+        assert tool["inputSchema"]["required"] == ["shader"]
+    shader = {"origin": "user", "shaderId": "aurora"}
+    calls = []
+    client = Client("http://127.0.0.1:9")
+
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, kwargs.get("params")))
+        if path.endswith("/assets"):
+            return {"schema": 1, "project_context_witness": "wit", "project": {},
+                    "entries": [], "next_cursor": None}
+        return {"schema": 1, "shader": shader, "project_context_witness": "wit", "entries": []}
+
+    monkeypatch.setattr(client, "request_json", reply)
+    server = HextileMcpServer(client=client, child_token="test")
+    for name, path in (("shader_get_asset_state", "/asset-state"), ("shader_get_looks", "/looks")):
+        calls.clear()
+        server.call_tool(name, {"shader": shader})
+        assert calls[0] == ("GET", "/api/shaders/agent-operations/assets", {})
+        assert calls[1][1].endswith(path) and calls[1][2]["project_context_witness"] == "wit"
+        calls.clear()
+        server.call_tool(name, {"shader": shader, "project_context_witness": "given"})
+        assert calls[0][1].endswith(path) and calls[0][2]["project_context_witness"] == "given"
+        assert not any(call[1].endswith("/assets") for call in calls)
+
+
 def test_apply_look_mixed_keys_and_ambiguous_name_refuse_through_mcp(monkeypatch) -> None:
     shader = {"origin": "user", "shaderId": "aurora"}
     client = Client("http://127.0.0.1:9")
