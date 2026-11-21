@@ -4269,6 +4269,51 @@ def test_client_reads_spectrum_frames_and_windows_and_lists_interface_rows(monke
                                  "project_context_witness": "wit", "selector": "signals"})
 
 
+def test_client_closes_spectrum_frames_as_native_does(monkeypatch) -> None:
+    bands = [0.25] * 8 + [0.5] * 8
+    frame = {"schema": 1, "signal_id": "signal_" + "3" * 24, "time": {"num": "1", "den": "2"},
+             "source_generation": 1, "curve_sha256": "d" * 64, "state": "ready", "u": 0.5,
+             "values": bands, "peaks": bands}
+    state = {"reply": frame}
+    server, client = _audio_server(monkeypatch, lambda *_a, **_k: state["reply"])
+    read = {"owner": _audio_owner(), "curve_handle": "h" * 24,
+            "selector": {"kind": "time", "time": {"num": "1", "den": "2"}}}
+    assert client.read_audio_signal(read)["u"] == 0.5
+    for broken in ({**frame, "values": [], "u": 0},                 # not a native band count
+                   {**frame, "values": [0.5] * 12, "u": 0.5},
+                   {**frame, "values": [1.5] + bands[1:], "u": 1.5},  # outside [0, 1]
+                   {**frame, "values": [-0.5] + bands[1:]},
+                   {**frame, "peaks": bands[:-1]},                  # peaks length must equal values
+                   {**frame, "peaks": [2.0] * 16},
+                   {**frame, "u": 0.25}):                           # u must equal max(values)
+        state["reply"] = broken
+        with pytest.raises(HextileClientError, match="Malformed Audio signal"):
+            client.read_audio_signal(read)
+
+
+def test_client_requires_every_typed_interface_key_and_public_names(monkeypatch) -> None:
+    interface = {"type": "spectrum", "names": ["S", "SCount", "SPeak"], "peak": True, "bands": 32,
+                 "history": {"length_ms": 2000, "rows": 128, "spacing_ms": 15.75}, "units": 35}
+    row = _audio_signal(measurement=_spectrum_measurement())
+    state = {}
+    server, client = _audio_server(monkeypatch, lambda *_a, **_k: state["reply"])
+    read = {"shader": {"origin": "user", "shaderId": "aurora"}, "project_context_witness": "wit",
+            "selector": "signals"}
+    for good in (interface, {**interface, "history": None, "peak": False, "units": 17}):
+        row["modulators"][0]["interface"] = good
+        state["reply"] = _audio_page(selector="signals", entries=[row])
+        assert client.get_shader_audio(read)["entries"][0]["modulators"][0]["interface"] == good
+    for broken in ({key: value for key, value in interface.items() if key != "units"},
+                   {**interface, "names": ["S", "hxSpectrum_S"]},
+                   {**interface, "names": "S"}, {**interface, "peak": 1}, {**interface, "bands": "32"},
+                   {**interface, "type": "waveform"}, {**interface, "units": -1},
+                   {**interface, "history": {"length_ms": 2000, "rows": 128}}):
+        row["modulators"][0]["interface"] = broken
+        state["reply"] = _audio_page(selector="signals", entries=[row])
+        with pytest.raises(HextileClientError, match="Malformed Audio page"):
+            client.get_shader_audio(read)
+
+
 def test_spectrum_refusals_relay_code_and_next_step(monkeypatch) -> None:
     signal, modulator = "signal_" + "3" * 24, "mod_" + "4" * 24
     refused = {}

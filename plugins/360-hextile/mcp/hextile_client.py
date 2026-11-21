@@ -2119,6 +2119,35 @@ _AUDIO_MODULATOR = frozenset({"id", "alias", "label", "enabled", "output_min", "
                               "interface"})
 # A Spectrum modulator's generated GLSL surface (public names only, never the hx... internals).
 _AUDIO_INTERFACE = frozenset({"type", "names", "peak", "bands", "history", "units"})
+_AUDIO_BAND_COUNTS = (8, 16, 31, 32, 64)  # native SPECTRUM_BAND_COUNTS
+
+
+def _audio_unit_levels(levels: Any, count: int) -> bool:
+    return (type(levels) is list and len(levels) == count and all(map(_audio_number, levels))
+            and all(0 <= level <= 1 for level in levels))
+
+
+def _audio_frame_ok(reply: Mapping[str, Any]) -> bool:
+    """A ready Spectrum frame as native validate_signal_frame closes it: bands, [0,1] levels, peaks, u == max."""
+    values, peaks = reply["values"], reply["peaks"]
+    return (type(values) is list and len(values) in _AUDIO_BAND_COUNTS and _audio_unit_levels(values, len(values))
+            and (peaks is None or _audio_unit_levels(peaks, len(values))) and reply["u"] == max(values))
+
+
+def _audio_interface_ok(interface: Any) -> bool:
+    """One Spectrum modulator's GLSL surface as the APP projects it: every key, typed, public names only."""
+    if type(interface) is not dict or set(interface) != _AUDIO_INTERFACE:
+        return False
+    history, names = interface["history"], interface["names"]
+    return (interface["type"] == "spectrum" and type(names) is list and bool(names)
+            and all(type(name) is str and name and not name.startswith("hx") for name in names)
+            and type(interface["peak"]) is bool and interface["bands"] in _AUDIO_BAND_COUNTS
+            and type(interface["bands"]) is int and _audio_count(interface["units"])
+            and (history is None or type(history) is dict and set(history) == {"length_ms", "rows", "spacing_ms"}
+                 and _audio_count(history["length_ms"]) and _audio_count(history["rows"])
+                 and _audio_number(history["spacing_ms"])))
+
+
 _AUDIO_PROPOSAL = frozenset({"alias", "label", "output_min", "output_max", "signal_spec"})
 
 
@@ -2150,8 +2179,7 @@ def _audio_page(value: Any, args: Mapping[str, Any], selector: str, limit: int) 
                                                 or set(row["resource"]) - _AUDIO_TRACK_RESOURCE)
                    or selector == "signals" and (type(row.get("modulators")) is not list or any(
                        type(mod) is not dict or set(mod) - _AUDIO_MODULATOR
-                       or "interface" in mod and (type(mod["interface"]) is not dict
-                                                  or set(mod["interface"]) - _AUDIO_INTERFACE)
+                       or "interface" in mod and not _audio_interface_ok(mod["interface"])
                        for mod in row["modulators"]))
                    for row in entries)
             or cursor is not None and (type(cursor) is not str or not 1 <= len(cursor) <= 160 or not entries
@@ -8511,10 +8539,7 @@ class Client:
             keys = keys | {"values", "peaks"}  # a Spectrum frame also carries every band level (and peaks or null)
         reply = _audio_reply(result, keys, "signal read")
         values = reply.get("values")
-        if set(reply) != keys or (selector["kind"] == "time" and "values" in keys and (
-                type(values) is not list or len(values) > 64 or not all(map(_audio_number, values))
-                or reply["peaks"] is not None and (type(reply["peaks"]) is not list or len(reply["peaks"]) > 64
-                                                   or not all(map(_audio_number, reply["peaks"]))))) or (
+        if set(reply) != keys or (selector["kind"] == "time" and "values" in keys and not _audio_frame_ok(reply)) or (
                 reply.get("state") != "ready" if selector["kind"] == "time" else
                 type(reply.get("rows")) is not list or type(reply.get("neighbors")) is not list
                 or len(reply["rows"]) + len(reply["neighbors"]) > selector["max_samples"]):
