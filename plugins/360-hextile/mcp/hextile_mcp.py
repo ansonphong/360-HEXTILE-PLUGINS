@@ -4417,7 +4417,7 @@ class HextileMcpServer:
             "get_fractal_request", "get_fractal_sequence", "get_shader_sequence",
             "audio_get_preparation", "audio_release_preparation"} or (
             name in {"control_fractal_sequence", "control_shader_sequence"}
-            and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export", "retry_companions")
+            and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export")
                 or name == "control_shader_sequence" and arguments.get("action") in {"start_over", "recover_start_over"})
         )
         if (
@@ -5213,10 +5213,7 @@ class HextileMcpServer:
         def state(result: dict[str, Any]) -> Any:
             if _shader_companions_publishing(result):
                 return "publishing"
-            if result.get("publication") in {"queued", "processing"}:
-                return "publishing"
-            job = result.get("job")
-            return result.get("state") or (job.get("state") if isinstance(job, dict) else None)
+            return result.get("state") or (result.get("job") or {}).get("state")
         return self._wait_read(args, lambda native_args, timeout: self.client.get_shader_output_job(native_args, timeout=timeout),
                                state, _SHADER_OUTPUT_ACTIVE_STATES)
 

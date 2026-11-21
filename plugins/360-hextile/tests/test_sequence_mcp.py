@@ -207,34 +207,6 @@ def test_output_job_wait_continues_while_companions_publish(monkeypatch) -> None
     assert reads == [{"request_id": "request-1"}] * 2
 
 
-def test_output_job_wait_continues_while_publication_is_active(monkeypatch) -> None:
-    import hextile_mcp
-
-    now = [0.0]
-    reads = []
-
-    class Event:
-        def is_set(self):
-            return False
-
-        def wait(self, seconds):
-            now[0] += seconds
-            return False
-
-    class FakeClient:
-        def get_shader_output_job(self, args, timeout=None):
-            reads.append(args)
-            active = len(reads) == 1
-            return {"state": "completed", "job": {"state": "completed"},
-                    "publication": "processing" if active else "complete"}
-
-    server = HextileMcpServer(client=FakeClient())
-    server._wait_shutdown = Event()
-    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
-    result = server._shader_get_output_job({"request_id": "request-1", "wait_s": 25})
-    assert result["publication"] == "complete" and result["waited_s"] == 1
-    assert len(reads) == 2
-
 # Full HextileConfig-shaped object (not a pipeline-only stub). Nested keys
 # prove create_sequence emits the complete object, not a subset.
 FULL_CONFIG: dict[str, Any] = {
@@ -957,20 +929,24 @@ def test_control_shader_sequence_retry_companions_maps_the_native_route() -> Non
     assert result == {"sequence_id": sid, "action": "retry_companions", "companions": companions}
 
 
-def test_control_shader_sequence_retry_companions_refusal_keeps_typed_guidance() -> None:
+@pytest.mark.parametrize("code,step", [
+    ("companion_retry_stale", "Read get_shader_sequence again before retrying the soundtrack files."),
+    ("frozen_identity", "Read get_shader_sequence again; use start_over if it persists."),
+])
+def test_control_shader_sequence_retry_companions_refusal_keeps_typed_guidance(code, step) -> None:
     sid = "seq_" + "f" * 32
     body = {"sequence_id": sid, "action": "retry_companions", "closure_sha256": "a" * 64,
             "receipt_revision": 0, "attempt_id": None, "destination": "/renders/chosen"}
 
     def opener(req, timeout=None):
         raise urllib.error.HTTPError(url=req.full_url, code=409, msg="Conflict", hdrs=None,
-                                     fp=io.BytesIO(json.dumps({"detail": {"code": "companion_retry_stale"}}).encode()))
+                                     fp=io.BytesIO(json.dumps({"detail": {"code": code}}).encode()))
 
     with pytest.raises(HextileClientError) as error:
         Client(base_url=BASE, opener=opener).control_shader_sequence(body)
     assert error.value.status_code == 409
-    assert error.value.receipt["code"] == "companion_retry_stale"
-    assert error.value.receipt["next_step"] == "Read get_shader_sequence again before retrying the soundtrack files."
+    assert error.value.receipt["code"] == code
+    assert error.value.receipt["next_step"] == step
 
 
 @pytest.mark.parametrize("bad", [

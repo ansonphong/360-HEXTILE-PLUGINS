@@ -792,57 +792,56 @@ _SHADER_FAILURE_GUIDANCE = {
                               "Refresh live context and match the requested Shader before trying again."),
     "unknown_failure": ("check_diagnostic_log", "The Shader export failed without a confirmed cause.",
                         "Find the diagnostic ID in the local backend log."),
-    # Audio readiness, frozen closure and soundtrack companion recovery (T8g.2).
+    # Audio readiness, frozen Audio and soundtrack companion refusals (T8g.2). Native sends these
+    # code-only; kinds reuse the existing vocabulary.
     "provider_unavailable": ("check_worker", "Audio is unavailable, so its curves cannot be frozen.",
                              "Check the Audio provider, then preflight the sequence again."),
-    "audio_curve_not_ready": ("prepare_audio", "Audio curves are still preparing; the render was not admitted.",
-                              "Read the Audio preparation, then preflight again when every curve is ready."),
+    "audio_curve_not_ready": ("edit_source", "An Audio curve is not ready; the render was not admitted.",
+                              "Read audio_get_preparation, then preflight again when every curve is ready."),
     "audio_identity": ("edit_source", "This Shader's Audio sources no longer match its tracks.",
                        "Save the Shader again, then preflight the sequence."),
-    "audio_frozen_invalid": ("prepare_audio", "The Audio curves could not be frozen for this render.",
+    "audio_frozen_invalid": ("edit_source", "The Audio curves could not be frozen for this render.",
                              "Prepare the Audio sources again, then preflight the sequence."),
-    "audio_accumulation_unsupported": ("edit_source", "This Shader builds each frame from earlier frames and cannot replay an Audio source.",
-                                       "Remove the sampled input or choose a Shader without frame history before rendering."),
+    "audio_accumulation_unsupported": ("edit_source", "A Shader that builds frames from earlier frames cannot replay Audio.",
+                                       "Remove the sampled input or choose a Shader without frame history."),
     "audio_sample_unavailable": ("inspect_output", "The acknowledged sample's frozen Audio is unavailable.",
                                  "Capture the sample again, then preflight the sequence."),
     "audio_sample_stale": ("inspect_output", "The acknowledged sample's Audio identity changed.",
                            "Capture a new sample, then preflight the sequence."),
-    "frozen_missing": ("start_over", "This job's frozen Audio is missing.",
-                       "Saved frames are unaffected; start over to render with the current Audio."),
-    "frozen_corrupt": ("start_over", "This job's frozen Audio is damaged.",
-                       "Saved frames are unaffected; start over to render with the current Audio."),
+    "frozen_missing": ("inspect_output", "This job's frozen Audio is missing.",
+                       "Saved frames are unaffected; use start_over to render with the current Audio."),
+    "frozen_corrupt": ("inspect_output", "This job's frozen Audio is damaged.",
+                       "Saved frames are unaffected; use start_over to render with the current Audio."),
     "frozen_identity": ("inspect_output", "The frozen Audio no longer matches this render.",
-                        "Read the status again; start over if it persists."),
-    "frozen_unavailable": ("check_destination", "The frozen Audio cannot be read right now.",
-                           "Check that drive, then try again."),
-    "frozen_mismatch": ("prepare_audio", "The Audio changed while it was being frozen.",
+                        "Read get_shader_sequence again; use start_over if it persists."),
+    "frozen_unavailable": ("check_worker", "The frozen Audio cannot be read right now.",
+                           "Check the Audio installation, then try again."),
+    "frozen_mismatch": ("inspect_output", "The Audio changed while it was being frozen.",
                         "Preflight and render the sequence again."),
     "companion_collision": ("check_destination", "Soundtrack files with these names exist and were not made by this render.",
-                            "Move or rename them, or choose another folder, then retry the soundtrack files."),
+                            "Move or rename them, or choose another folder."),
     "companion_conflict": ("check_destination", "A soundtrack file differs from this render's frozen Audio.",
-                           "Move or rename it, then retry the soundtrack files."),
+                           "Move or rename it, then retry_companions."),
     "companion_root_changed": ("check_destination", "The export folder changed since the frames were saved.",
-                               "Reopen the original folder, then retry the soundtrack files."),
+                               "Restore the original folder, then retry_companions."),
     "companion_destination_unavailable": ("check_destination", "The soundtrack destination is unavailable.",
-                                          "Check the folder and drive, then retry the soundtrack files."),
-    "companion_retry_stale": ("refresh_status", "The soundtrack state changed.",
+                                          "Check the folder and drive, then retry_companions."),
+    "companion_retry_stale": ("inspect_output", "The soundtrack state changed.",
                               "Read get_shader_sequence again before retrying the soundtrack files."),
-    "companion_frames_incomplete": ("poll_original", "Not every frame is published yet.",
-                                    "Finish rendering the frames before retrying the soundtrack files."),
-    "companion_not_required": ("show_output", "This render has no soundtrack files.",
+    "companion_frames_incomplete": ("inspect_output", "Not every frame is published yet.",
+                                    "Finish the frames before retrying the soundtrack files."),
+    "companion_not_required": ("inspect_output", "This render has no soundtrack files.",
                                "No soundtrack retry is needed."),
-    "companion_cancelled": ("retry_companions", "Writing the soundtrack files was cancelled.",
-                            "Retry the soundtrack files."),
-    "companion_staging_cleanup": ("retry_companions", "A temporary soundtrack file could not be removed.",
-                                  "Retry the soundtrack files to finish cleanup."),
-    "companion_receipt_mismatch": ("refresh_status", "The soundtrack record belongs to another render.",
+    "companion_cancelled": ("inspect_output", "Writing the soundtrack files was cancelled.",
+                            "Read get_shader_sequence, then retry_companions."),
+    "companion_staging_cleanup": ("check_destination", "A temporary soundtrack file could not be removed.",
+                                  "Check the folder, then retry_companions."),
+    "companion_receipt_mismatch": ("inspect_output", "The soundtrack record belongs to another render.",
                                    "Read get_shader_sequence again; frames are unaffected."),
-    "companion_receipt_version": ("retry_companions", "The soundtrack record is from an older version.",
-                                  "Retry the soundtrack files to rebuild them from the frozen Audio."),
-    "companion_status_unavailable": ("refresh_status", "The soundtrack record could not be read.",
+    "companion_status_unavailable": ("inspect_output", "The soundtrack record could not be read.",
                                      "Read get_shader_sequence again; frames are unaffected."),
-    "shader_sequence_busy": ("refresh_status", "This sequence is busy.",
-                             "Wait for the current operation to finish, then check the status again."),
+    "shader_sequence_busy": ("inspect_output", "This sequence is busy.",
+                             "Wait for the current operation to finish, then read get_shader_sequence again."),
 }
 _SHADER_FAILURE_MESSAGE = {
     "deadline_exceeded": "The Shader worker exceeded its deadline.",
@@ -1041,8 +1040,7 @@ def _shader_companion_status(value: Any) -> dict[str, Any] | None:
     exposing unvalidated native data.
     """
     if (type(value) is not dict
-            or not {"state", "error", "revision", "closure_sha256", "destination", "files",
-                    "attempt_id", "frames_complete", "retry_allowed"} <= set(value) <= _COMPANION_KEYS
+            or not _COMPANION_KEYS - {"publishing"} <= set(value) <= _COMPANION_KEYS
             or value["state"] not in _COMPANION_STATES
             or type(value["frames_complete"]) is not bool or type(value["retry_allowed"]) is not bool
             or "publishing" in value and type(value["publishing"]) is not bool):
@@ -5007,13 +5005,9 @@ class Client:
                 message = detail["message"]
             if type(detail.get("next_step")) is str and detail["next_step"].strip() and "\n" not in detail["next_step"]:
                 next_step = detail["next_step"]
-        # Closed Audio readiness/companion codes explain themselves even when native sends code only.
-        if code in _SHADER_FAILURE_GUIDANCE:
-            _action, known_message, known_step = _SHADER_FAILURE_GUIDANCE[code]
-            message = message or known_message
-            next_step = next_step or known_step
-        if code in _SHADER_FAILURE_MESSAGE:
-            message = message or _SHADER_FAILURE_MESSAGE[code]
+        if code in _SHADER_FAILURE_GUIDANCE:  # Closed vocabulary explains code-only native refusals.
+            _kind, known_message, known_step = _SHADER_FAILURE_GUIDANCE[code]
+            message, next_step = message or known_message, next_step or known_step
         receipt = {"code": code or "shader_sequence_refused"}
         if message:
             receipt["message"] = message
