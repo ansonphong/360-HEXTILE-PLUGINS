@@ -419,7 +419,7 @@ def test_call_hextile_api_uses_native_settings_and_openapi(tmp_path, monkeypatch
     # No HTTP-status envelope, header override or mutation retry was introduced.
     tool = next(row for row in TOOLS if row["name"] == "call_hextile_api")
     assert tool["annotations"]["readOnlyHint"] is False and tool["annotations"]["destructiveHint"] is True
-    assert len(TOOLS) == 129 and len(SHADER_EXTENSION_TOOLS) == 45
+    assert len(TOOLS) == 129 and len(SHADER_EXTENSION_TOOLS) == 54
 
 
 def test_trusted_local_file_contract() -> None:
@@ -1241,6 +1241,42 @@ def test_mcp_tools_list_rpc() -> None:
         response = server.handle_rpc({"jsonrpc": "2.0", "id": 2, "method": method, "params": {}})
         assert response["error"]["code"] == -32601
     assert names == list(EXPECTED_TOOLS) + [tool["name"] for tool in SHADER_EXTENSION_TOOLS]
+
+
+
+_AUDIO_TOOLS = {
+    "shader_get_audio": True, "audio_get_preparation": True, "audio_read_preview": True, "audio_read_signal": True,
+    "shader_edit_audio": False, "audio_prepare_resource": False, "audio_prepare_analysis": False,
+    "audio_prepare_signal": False, "audio_release_preparation": False,
+}
+
+
+def test_audio_tools_catalog_control_lane_and_guides() -> None:
+    server = HextileMcpServer(client=Client(opener=lambda *a, **k: None))
+    listed = {t["name"]: t for t in server.handle_rpc(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})["result"]["tools"]}
+    for name, read_only in _AUDIO_TOOLS.items():
+        assert listed[name]["annotations"] == {"readOnlyHint": read_only, "destructiveHint": False}, name
+        assert listed[name]["inputSchema"]["additionalProperties"] is False, name
+    # Preparation status/release stay serviceable in the reserved control lane; frozen companion retry too.
+    assert {"audio_get_preparation", "audio_release_preparation", "get_shader_sequence",
+            "control_shader_sequence"} <= hextile_mcp._CONTROL_TOOLS
+    actions = {action for row in listed["control_shader_sequence"]["inputSchema"]["oneOf"]
+               for action in row["properties"]["action"].get("enum", [row["properties"]["action"].get("const")])}
+    assert "retry_companions" in actions
+    latency = listed["update_app_preferences"]["inputSchema"]["properties"]["changes"]["properties"]
+    assert {"type": "integer", "minimum": 0, "maximum": 500} in latency["audio_monitor_latency_ms"]["anyOf"]
+    # Canonical guides name the real tools and the wait/refusal/paging/companion recovery.
+    guides = {name: load_guide(name)["markdown"] for name in ("recipes", "recipes-detail", "best-practices")}
+    shader_skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
+    authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
+    for text in (*guides.values(), shader_skill, authoring):
+        for phrase in ("audio-signals/1", "shader_get_audio", "audio_prepare_signal", "audio_get_preparation",
+                       "page_changed", "invalid_cursor", "next_step", "retry_companions"):
+            assert phrase in text, phrase
+    for name in _AUDIO_TOOLS:
+        assert name in guides["best-practices"] and name in guides["recipes-detail"] + guides["recipes"], name
+    assert '"wait_s":25' in guides["recipes"] and "invalid_arguments" in guides["recipes-detail"]
 
 
 def test_mcp_initialize() -> None:

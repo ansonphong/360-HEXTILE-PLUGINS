@@ -116,7 +116,7 @@ Skip any step for something you never installed. Start a new host session afterw
 
 ## All tools
 
-### `hextile` MCP server — 173 tools
+### `hextile` MCP server — 183 tools
 
 Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forwards to the running 360 Hextile app on `127.0.0.1:8000`, except `get_guide`, which reads the bundled guides. Full argument schemas come from the host's `tools/list`.
 
@@ -174,7 +174,7 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 </details>
 
 <details>
-<summary><strong>Shader</strong> (59)</summary>
+<summary><strong>Shader</strong> (60)</summary>
 
 | Tool | What it does |
 |:--|:--|
@@ -183,8 +183,8 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `preflight_shader_sequence` | Check a confirmed saved Shader revision and exact rational native interval without queuing. |
 | `inspect_shader_sequence_output` | Inspect one selected Shader destination with metadata only. |
 | `render_shader_sequence` | Queue only the exact saved Shader request already preflighted, with its caller-known idempotency_key and confirmed revision. |
-| `get_shader_sequence` | Read a source-free and path-free Shader sequence status by the caller-known ID. |
-| `control_shader_sequence` | Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request and fingerprint. |
+| `get_shader_sequence` | Read a source-free and path-free Shader sequence status by the caller-known ID, including soundtrack companions. |
+| `control_shader_sequence` | Stop the observed run_id, resume an admitted native job, or Continue the exact inspected request and fingerprint. retry_companions rewrites only the soundtrack files from the frozen Audio. |
 | `preflight_shader_sequence_export` | Check verified native masters and an explicitly chosen existing local destination folder. |
 | `export_shader_sequence` | Publish only the exact preflighted folder intent using its transaction_fingerprint. |
 | `open_shader_workspace` | Open one Shader workspace with shader_id and request_id only. Returns the lease, commit and revision. |
@@ -222,6 +222,7 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `shader_set_tags` | Assign or remove one existing personal Tag for one exact Shader through the native tag registry. |
 | `shader_set_project_conventions` | Replace Project convention profiles through the fixed native document writer with exact expected digest and Project witness. |
 | `shader_rename_asset` | Rename one saved Shader with an exact base, owner and request ID. |
+| `shader_change_id` | Change a My Library Shader's ID and folder name with an exact base and request ID. |
 | `shader_delete_asset` | Delete one exact saved Shader. |
 | `shader_get_operation` | Read one original Shader operation outcome by exact request ID and asset, creation, library, Project, or output scope without starting work. |
 | `shader_get_credits` | Read paged saved Credits and Sources for the current Shader identity without including source. |
@@ -236,6 +237,23 @@ Every tool the bundled `hextile` MCP proxy lists, grouped by area. Each one forw
 | `shader_set_capture` | Set a live uint32 seed or the complete authored capture defaults on the exact mounted Shader. |
 | `shader_control_clock` | Deliver play, pause or seek to the mounted v2 Shader Workshop. Seek takes time in seconds; this does not save. |
 | `shader_step_frame` | Deliver one forward or backward frame step to the mounted v2 Shader Workshop; this does not save. |
+
+</details>
+
+<details>
+<summary><strong>Shader Audio</strong> (9)</summary>
+
+| Tool | What it does |
+|:--|:--|
+| `shader_get_audio` | Read a saved Shader's source-free Audio tracks, signals or a four-signal set suggestion, with the owner witness. |
+| `shader_edit_audio` | Apply one closed Audio edit (attach, set, replace or remove a track; create, edit or remove a signal; create a set); it saves itself. |
+| `audio_prepare_resource` | Import one local audio, MIDI, CSV or Audacity label file, or re-admit a retained resource. |
+| `audio_prepare_analysis` | Start or join the whole-file analysis a spectrum preview reads. |
+| `audio_prepare_signal` | Prepare one immutable signal curve; it starts the analysis itself. |
+| `audio_get_preparation` | Read one preparation receipt by receipt or original request ID; pass wait_s 25 while pending. |
+| `audio_release_preparation` | Release one preparation demand; shared work continues for other demands. |
+| `audio_read_preview` | Read at most 128 waveform or data points, or one cached spectrum row, from a ready receipt. |
+| `audio_read_signal` | Read a ready signal curve at one exact time or in a window of at most 128 samples. |
 
 </details>
 

@@ -48,6 +48,10 @@ A modulator or control-channel alias the code still names cannot be renamed or r
 
 Playback is not an edit. `shader_control_clock` delivers `play`, `pause`, or `seek` (with `time` in seconds); `shader_step_frame` delivers `direction` 1 or -1. They return `applied` only after delivery to the mounted Workshop, or `refused` when no Workshop is connected. They do not take `seen` and do not save. If delivery is uncertain, inspect the Workshop before retrying a step. Changing `bpm`, `speed`, `start`, `end` or `loop` is an edit of the clock or timeline settings.
 
+## Audio
+
+Audio is a typed part of the saved Shader, edited only through `shader_edit_audio`, never through `shader_edit` addresses or package files. It needs `get_capabilities` `audio_signals` with `contract` `audio-signals/1` and `available:true`. `shader_get_audio` (selector `tracks`, `signals` or `set_suggestion`) returns the `owner` witness, `provenance` and source-free rows; pass `owner` unchanged to `audio_prepare_resource`, `audio_prepare_analysis`, `audio_prepare_signal`, `audio_read_signal` and `shader_edit_audio`, and read it again after each edit. Preparation never mutates the document: `audio_prepare_resource` admits a file, `audio_prepare_signal` makes one immutable curve and starts the analysis itself, and `audio_get_preparation` with `wait_s` 25 reports `pending`, `ready`, `error` or `cancelled` with `progress`. The edit commands are `attach_track`, `set_track`, `replace_track`, `remove_track`, `create_signal`, `edit_signal`, `create_set` and `remove_signal`; each accepted command is one native transaction. At most `supported_track_limit` (4) audio tracks attach; MIDI, CSV and label tracks are not counted. `create_set` commits four signals with aliases `<L>`, `<L>1`, `<L>2`, `<L>3` whole or not at all. Map the sampled modulators with existing drivers, expressions or `uniform float <alias>`. `offset_ms` (−1000..1000) shifts only the visual timing and is excluded from curve identity. A saved target autosaves and returns `save` and the next `base`; a mounted unsaved draft returns `state:"applied"` and stays unsaved. A person's Audio gesture borrows the code lease and the Workshop hands it back after about 8 s idle; an agent write meanwhile refuses `stale_lease` with a `next_step`, so retry with the same `request_id`. A render freezes its Audio at admission and writes soundtrack companions beside the frames; `control_shader_sequence` `retry_companions` repairs only those files. Steps and examples: `get_guide(name="recipes-detail")`, "Shader Audio".
+
 ## Credits and sources
 
 `shader_edit` cannot write `provenance.json`. `shader_propose_credits` stores a proposal and returns `state: proposed`. Nothing in `provenance.json` changes until a person applies it on the Credits card. Any other agent write to that file returns `human_only`. Propose credits for the Credits card.
@@ -119,6 +123,10 @@ Native Git diff/commit/checkout/push runs only on the user's explicit instructio
 | `skipped` | The edit was not adopted. An alias the code still names is the P12 case above. |
 | Unknown transport | Read `get_shader_update` for the original request id. Do not assume nothing changed. |
 | APP missing the route | Upgrade 360 Hextile, then retry. |
+| Audio refusal | Read `code` and `next_step`; `invalid_arguments` names the missing and unknown keys. |
+| `audio_outcome_unknown` | Read `audio_get_preparation` or `shader_get_operation` `scope:"asset"` with the original `request_id`, or resend the same payload with that id. Never a new id. |
+| `page_changed` / `invalid_cursor` | Read `shader_get_audio` again without `cursor`. |
+| `alias_collision` | Review the refreshed aliases in `details`, then send `create_set` again with a new `request_id`. |
 
 Preserve files on every refusal. Do not install software, change host permissions or claim that a failed call left the package untouched.
 

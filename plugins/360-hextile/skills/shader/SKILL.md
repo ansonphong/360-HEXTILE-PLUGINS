@@ -81,6 +81,9 @@ a folder: `preflight_shader_sequence` then `render_shader_sequence`, with
 top-level `width`, `height`, `supersampling`, `seed` and
 `folder_export.destination_folder`. `shader_capture_sequence_input` is optional
 for a Shader with no sequence input.
+Shader sequences have no agent total-frame cap: `frame_count` is an exact
+integer up to 2^53−1, native admission still decides, history replay stays at
+most 240 frames at 2048×1024, and Fractal stays 1 to 10,000 frames.
 
 Omit `render_route` for App – High precision. Otherwise send
 `{profile: "shader-render-route/1", route}` using
@@ -98,6 +101,28 @@ the original export request ID and profile. Read a sequence's status using
 the preflight sequence ID and match its request hash. Use the reported cause,
 phase, verified output and next action. For a source-policy refusal, open the
 reported file and line, then preflight the corrected saved revision.
+
+## Audio
+
+Audio drives a saved Shader from a sound, MIDI, CSV or label file. Check
+`get_capabilities` `audio_signals` (`audio-signals/1`, `available:true`,
+`supported_track_limit` 4 audio tracks; data tracks are not counted). Read
+`shader_get_audio` for the `owner` witness, tracks and signals; pass `owner`
+unchanged and read it again after each edit. Import with
+`audio_prepare_resource`, attach with `shader_edit_audio` `attach_track`, then
+prepare a curve with `audio_prepare_signal` (it starts the analysis itself) and
+commit it with `create_signal`, or four with `set_suggestion` and `create_set`.
+Wait with `audio_get_preparation` `wait_s` 25 and read `progress`; `pending`
+is never a ready zero. `audio_read_preview` and `audio_read_signal` read at most
+128 points; `audio_prepare_analysis` is only for a spectrum preview, and
+`audio_release_preparation` drops a demand you no longer need. Map a signal with
+a `shader_edit` driver, expression or `uniform float <alias>`. `offset_ms` is
+visual only; `audio_monitor_latency_ms` is a preview-only preference. A render
+freezes its Audio; `get_shader_sequence` reports soundtrack `companions` and
+`control_shader_sequence` `retry_companions` rewrites only those files. Read
+`code` and `next_step` on a refusal, restart paging without `cursor` on
+`page_changed` or `invalid_cursor`, and recover a lost reply with the same
+`request_id`. Full steps: `get_guide(name="recipes-detail")`, "Shader Audio".
 
 ## Edit rules
 
