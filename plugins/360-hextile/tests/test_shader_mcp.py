@@ -3885,6 +3885,25 @@ def test_shader_edit_audio_closed_commands_and_saved_or_mounted_replies(monkeypa
     assert payload["next_step"] == "Hand back, then retry with the same request_id."
 
 
+def test_audio_malformed_write_reply_is_outcome_unknown_with_recovery(monkeypatch) -> None:
+    """A post-write malformed reply is Unknown with the same code, step and receipt as a lost write."""
+    reply = {"schema": 1, "request_id": _AUDIO_REQUEST, "operation": "shader_edit_audio",
+             "state": "saved", "save": "saved", "shader": {"origin": "user", "shaderId": "aurora"},
+             "receipt": {"commit": 5, "revision": 4, "digest": "sha256:" + "c" * 64,
+                         "command": "edit_signal"},
+             "base": None}
+    server, _client = _audio_server(monkeypatch, lambda *_a, **_k: reply)
+    payload = json.loads(server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "edit_signal", "signal_id": "signal_" + "3" * 24, "offset_ms": 0}}
+    )["content"][0]["text"])
+    assert payload["error"] == "Malformed Audio edit reply"
+    assert (payload["kind"], payload["code"], payload["status_code"]) == ("audio_outcome_unknown",
+                                                                         "audio_outcome_unknown", None)
+    assert payload["receipt"] == {"request_id": _AUDIO_REQUEST}
+    assert "same request_id" in payload["next_step"]
+
+
 @pytest.mark.parametrize("kind,source,result_key", [
     ("resource", {"source": {"kind": "local_file", "path": "/music/song.wav"}}, "resource"),
     ("analysis", {"resource_id": "audio_" + "1" * 24}, "analysis"),

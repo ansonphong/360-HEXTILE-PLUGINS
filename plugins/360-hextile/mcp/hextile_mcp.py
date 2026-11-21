@@ -3497,7 +3497,9 @@ SHADER_EXTENSION_TOOLS = [
                "capture_defaults": _CAPTURE_DEFAULTS, "seen": _SEEN}, _MOUNTED_SHADER_REQUIRED + ["action"]),
     _tool_def("shader_control_clock", "Use to play, pause or seek the open Shader's preview clock. Pass shader, project_context_witness "
                                       "(freshness token, from get_live_context(view=\"shader\")), request_id and action; seek also needs "
-                                      "time in seconds. Playback only, not a saved edit. If the reply is lost, look at the Workshop.",
+                                      "time in seconds. Playback only, not a saved edit. The reply confirms the command was sent, not "
+                                      "that playback started or the seek landed (Audio may still be buffering); read "
+                                      "get_live_context(view=\"shader\") to observe the clock. If the reply is lost, look at the Workshop.",
               {**_NATIVE_SHADER_TARGET, "request_id": _NATIVE_SHADER_REQUEST_ID,
                "action": {"enum": ["play", "pause", "seek"]},
                "time": {"type": "number", "minimum": 0}},

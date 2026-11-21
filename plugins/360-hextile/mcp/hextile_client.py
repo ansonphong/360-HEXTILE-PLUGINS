@@ -8367,8 +8367,9 @@ class Client:
         try:
             return check(result)
         except HextileClientError as exc:
-            raise HextileClientError(str(exc), kind="audio_outcome_unknown",
-                                     receipt={"request_id": body["request_id"]}) from exc
+            raise HextileClientError(str(exc), status_code=exc.status_code, kind="audio_outcome_unknown",
+                                     receipt={"request_id": body["request_id"]}, code="audio_outcome_unknown",
+                                     next_step=_AUDIO_UNKNOWN_STEP) from exc
 
     def _audio_read(self, method: str, path: str, params: Optional[dict] = None, **kwargs: Any) -> Any:
         try:
