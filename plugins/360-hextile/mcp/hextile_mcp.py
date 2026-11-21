@@ -2488,9 +2488,13 @@ TOOLS: list[dict[str, Any]] = [
         "whole parent object. Examples: current value [\"values\",\"glow\"]; label "
         "[\"parameters\",\"glow\",\"label\"]; dropdown names [\"parameters\",\"mode\",\"option_labels\"] with value "
         "{\"0\":\"Blobs\",\"1\":\"Stripes\"} (send all labels); GLSL [\"code\"] with value "
-        "{\"source.glsl\":\"...\",\"modules/x.glsl\":\"...\"} (all files). Send lease (from "
-        "get_live_context(view=\"shader\") or open_shader_workspace) when the edit touches code, passes or "
-        "space, or creates, deletes or reshapes a parameter. Send seen [{address, human}] for any unit "
+        "{\"source.glsl\":\"...\",\"modules/x.glsl\":\"...\"} (all files; read them first with shader_get_asset_state "
+        "include [\"source\"]). Works on any My Library Shader by id, open or not. Set a value and save it as a Look in one "
+        "call: set [\"values\",\"<id>\"] plus create [\"looks\",\"warm\"] with value {name, values}. Parameter ids are "
+        "usually the label in snake_case. Send lease when the edit touches code, passes or "
+        "space, or creates, deletes or reshapes a parameter: on screen copy it from get_live_context(view=\"shader\"); "
+        "a Shader not on screen takes {\"holder\":\"agent\",\"generation\":0} (do not open_shader_workspace for it; "
+        "read the lease there only after 409 stale_lease). Send seen [{address, human}] for any unit "
         "the human edited (number from a read). It saves itself. Replies: if no edit applied, 400 "
         "nothing_saved with findings [{code, field, message}] and nothing saved; if some applied, the "
         "rest is saved and skipped rows carry results[].reason plus a warning. edit_counts summarizes kept "
@@ -2905,7 +2909,9 @@ SHADER_EXTENSION_TOOLS = [
                            "pattern": r"^(all|[A-Za-z0-9_-]{1,128}(,[A-Za-z0-9_-]{1,128}){0,49})$"}}),
     _tool_def("shader_get_asset_state", "Use to read a Shader's saved values and its saved base (working_revision, document_hash, "
                                         "source_hash: the exact saved version, needed by most write tools), plus title, tags, writable "
-                                        "and inputs. Pass shader {origin, shaderId} and project_context_witness. Any shelf, open or not "
+                                        "and inputs. Pass shader {origin, shaderId} and project_context_witness (project-wide: the one from "
+                                        "get_live_context(view=\"shader\") or shader_list_assets works for every Shader, even when "
+                                        "another is on screen). Any shelf, open or not "
                                         "(Built-ins too). include [\"parameters\"] adds every parameter definition (label, help, group, "
                                         "range, options); include [\"source\"] adds the saved GLSL as {\"source.glsl\": text, "
                                         "\"modules/x.glsl\": text} (up to 192 KB).",
@@ -3005,7 +3011,9 @@ SHADER_EXTENSION_TOOLS = [
                                   "project_context_witness (freshness token, from get_live_context(view=\"shader\")). Returns ids and "
                                   "envelope hashes, no source or pixels.",
               _NATIVE_SHADER_TARGET, ["shader", "project_context_witness"]),
-    _tool_def("shader_save_look", "Use to save the Shader's current saved values as a named Look. Pass shader, project_context_witness "
+    _tool_def("shader_save_look", "Use to save the Shader's current saved values as a named Look (to set a value and save "
+                                  "it as a Look in one call, use shader_edit: set [\"values\",\"<id>\"] plus create "
+                                  "[\"looks\",\"<look id>\"]). Pass shader, project_context_witness "
                                   "(freshness token, from get_live_context(view=\"shader\")), a fresh request_id and title. base is "
                                   "optional (omitted = the saved head; the person's edits still win). Optional look_id (or id) plus "
                                   "expected_look_envelope_hash replaces an existing Look. Library Shader: library_intent and "
