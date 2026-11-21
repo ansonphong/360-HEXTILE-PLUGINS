@@ -47,7 +47,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.19"
+SERVER_VERSION = "0.6.20"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 MCP_STATUS_TTL_S = 5.0
@@ -4120,6 +4120,11 @@ class HextileMcpServer:
                         "Orient with one get_live_context(view=\"shader\"); edit a Shader by shader_id with shader_edit, "
                         "it saves itself, and one shader_edit call can batch several edits (for example delete a parameter together with "
                         "the code change that stops using it); register_shader_update is only for the file-workspace flow. "
+                        "get_live_context only describes the Shader on screen: shader_edit and shader_get_asset_state work on any "
+                        "My Library Shader by id without opening it, and its project_context_witness is project-wide (valid for every Shader). "
+                        "A Shader not on screen takes lease {\"holder\":\"agent\",\"generation\":0}; do not call open_shader_workspace for it "
+                        "(read the lease there only after a 409 stale_lease). Set a value and save it as a Look in one shader_edit "
+                        "(set [\"values\",\"<id>\"] plus create [\"looks\",\"<look id>\"]). "
                         "A 403 \"No document is open\" or connected:false means nothing is open: do not poll or retry; "
                         "ask the user to open a document or the Shader Workshop, then try once. "
                         "Every Shader write reply carries base: pass it to the next write instead of re-reading. "

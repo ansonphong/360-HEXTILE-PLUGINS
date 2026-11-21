@@ -15,7 +15,7 @@ description: "Connect to the open Shader and inspect it, or edit a My Library Sh
 
 ## Top 20
 
-`W`, `B`, `S`, `U` and `L` are defined in `get_guide(name="recipes")` (longer examples: `recipes-detail`). Edits are `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[..]}`; when an edit needs the lease, `lease` is a top-level field next to `edits`, never inside an edit: `{"shader_id":"S","request_id":"U","lease":{"holder":"agent","generation":0},"edits":[..]}`. Copy `lease` from `get_live_context` (on screen) or `open_shader_workspace` (any Shader).
+`W`, `B`, `S`, `U` and `L` are defined in `get_guide(name="recipes")` (longer examples: `recipes-detail`). Edits are `shader_edit {"shader_id":"<id>","request_id":"<unique>","edits":[..]}`; when an edit needs the lease, `lease` is a top-level field next to `edits`, never inside an edit: `{"shader_id":"S","request_id":"U","lease":{"holder":"agent","generation":0},"edits":[..]}`. On screen, copy `lease` from `get_live_context`. A Shader not on screen takes `{"holder":"agent","generation":0}` as written; do not call `open_shader_workspace` for it (read the lease there only after a 409 `stale_lease`). `shader_edit` and `shader_get_asset_state` work on any My Library Shader by id without opening it; `get_live_context` only describes the Shader on screen, and its `project_context_witness` is project-wide (valid for every Shader). Looks: set a value and save it as a Look in one `shader_edit` (see 12).
 
 1. What Shader is open → `get_live_context(view="shader")`.
 2. Rename dropdown options → `{"op":"set","address":["parameters","<id>","option_labels"],"value":{"0":"A","1":"B"}}` — ids and option values from `get_shader_parameters`.

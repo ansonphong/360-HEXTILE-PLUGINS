@@ -12,8 +12,9 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 ## Placeholders
 
 - `W` = `project_context_witness`. `B` = `base` (`{"kind":"saved","working_revision":N,"document_hash":..,"source_hash":..}`). Every write reply returns the next `base`: chain with it, no re-reads. Looks, checkpoint and restore may omit `base`. `S` = `{"origin":"user","shaderId":"<id>"}`. `U` = a fresh UUIDv4.
-- `L` = the lease `{"holder":"agent","generation":0}`. Copy `lease` from `get_live_context {"view":"shader"}` (on screen) or from the `open_shader_workspace` reply (any Shader); a new Shader starts at agent generation 0. It goes at the top level of `shader_edit`, never inside an edit:
+- `L` = the lease `{"holder":"agent","generation":0}`. On screen, copy `lease` from `get_live_context {"view":"shader"}`. A Shader not on screen takes `L` as written: do not call `open_shader_workspace` for it; read the lease there only after a 409 `stale_lease`. It goes at the top level of `shader_edit`, never inside an edit:
   `{"shader_id":"S","request_id":"U","lease":{"holder":"agent","generation":0},"edits":[{"op":"set","address":["code"],"value":{"source.glsl":"<full file>"}}]}`
+- `shader_edit` and `shader_get_asset_state` work on any My Library Shader by id without opening it; `get_live_context` only describes the Shader on screen. `W` is project-wide: one witness works for every Shader.
 - On-screen Shader: `W` and `B` (= `saved_base`) come from `get_live_context {"view":"shader"}`. Any other Shader (or `get_live_context` shows a different one): `shader_list_assets {"search":"<name>"}` gives `W`, `S`, `base`; send the row's `base` as-is (not `saved_base`).
 - Every `shader_*` write except `shader_edit` takes a UUIDv4 `request_id`. `shader_edit` takes any unique string.
 - Library `library_intent` and `confirmation_scope` are filled for you on Looks, history tools and rename; send them only for delete (`"library_intent":"saved","confirmation_scope":{"operation":"delete","shader":S}`).
