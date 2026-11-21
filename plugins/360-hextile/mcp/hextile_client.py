@@ -792,6 +792,57 @@ _SHADER_FAILURE_GUIDANCE = {
                               "Refresh live context and match the requested Shader before trying again."),
     "unknown_failure": ("check_diagnostic_log", "The Shader export failed without a confirmed cause.",
                         "Find the diagnostic ID in the local backend log."),
+    # Audio readiness, frozen closure and soundtrack companion recovery (T8g.2).
+    "provider_unavailable": ("check_worker", "Audio is unavailable, so its curves cannot be frozen.",
+                             "Check the Audio provider, then preflight the sequence again."),
+    "audio_curve_not_ready": ("prepare_audio", "Audio curves are still preparing; the render was not admitted.",
+                              "Read the Audio preparation, then preflight again when every curve is ready."),
+    "audio_identity": ("edit_source", "This Shader's Audio sources no longer match its tracks.",
+                       "Save the Shader again, then preflight the sequence."),
+    "audio_frozen_invalid": ("prepare_audio", "The Audio curves could not be frozen for this render.",
+                             "Prepare the Audio sources again, then preflight the sequence."),
+    "audio_accumulation_unsupported": ("edit_source", "This Shader builds each frame from earlier frames and cannot replay an Audio source.",
+                                       "Remove the sampled input or choose a Shader without frame history before rendering."),
+    "audio_sample_unavailable": ("inspect_output", "The acknowledged sample's frozen Audio is unavailable.",
+                                 "Capture the sample again, then preflight the sequence."),
+    "audio_sample_stale": ("inspect_output", "The acknowledged sample's Audio identity changed.",
+                           "Capture a new sample, then preflight the sequence."),
+    "frozen_missing": ("start_over", "This job's frozen Audio is missing.",
+                       "Saved frames are unaffected; start over to render with the current Audio."),
+    "frozen_corrupt": ("start_over", "This job's frozen Audio is damaged.",
+                       "Saved frames are unaffected; start over to render with the current Audio."),
+    "frozen_identity": ("inspect_output", "The frozen Audio no longer matches this render.",
+                        "Read the status again; start over if it persists."),
+    "frozen_unavailable": ("check_destination", "The frozen Audio cannot be read right now.",
+                           "Check that drive, then try again."),
+    "frozen_mismatch": ("prepare_audio", "The Audio changed while it was being frozen.",
+                        "Preflight and render the sequence again."),
+    "companion_collision": ("check_destination", "Soundtrack files with these names exist and were not made by this render.",
+                            "Move or rename them, or choose another folder, then retry the soundtrack files."),
+    "companion_conflict": ("check_destination", "A soundtrack file differs from this render's frozen Audio.",
+                           "Move or rename it, then retry the soundtrack files."),
+    "companion_root_changed": ("check_destination", "The export folder changed since the frames were saved.",
+                               "Reopen the original folder, then retry the soundtrack files."),
+    "companion_destination_unavailable": ("check_destination", "The soundtrack destination is unavailable.",
+                                          "Check the folder and drive, then retry the soundtrack files."),
+    "companion_retry_stale": ("refresh_status", "The soundtrack state changed.",
+                              "Read get_shader_sequence again before retrying the soundtrack files."),
+    "companion_frames_incomplete": ("poll_original", "Not every frame is published yet.",
+                                    "Finish rendering the frames before retrying the soundtrack files."),
+    "companion_not_required": ("show_output", "This render has no soundtrack files.",
+                               "No soundtrack retry is needed."),
+    "companion_cancelled": ("retry_companions", "Writing the soundtrack files was cancelled.",
+                            "Retry the soundtrack files."),
+    "companion_staging_cleanup": ("retry_companions", "A temporary soundtrack file could not be removed.",
+                                  "Retry the soundtrack files to finish cleanup."),
+    "companion_receipt_mismatch": ("refresh_status", "The soundtrack record belongs to another render.",
+                                   "Read get_shader_sequence again; frames are unaffected."),
+    "companion_receipt_version": ("retry_companions", "The soundtrack record is from an older version.",
+                                  "Retry the soundtrack files to rebuild them from the frozen Audio."),
+    "companion_status_unavailable": ("refresh_status", "The soundtrack record could not be read.",
+                                     "Read get_shader_sequence again; frames are unaffected."),
+    "shader_sequence_busy": ("refresh_status", "This sequence is busy.",
+                             "Wait for the current operation to finish, then check the status again."),
 }
 _SHADER_FAILURE_MESSAGE = {
     "deadline_exceeded": "The Shader worker exceeded its deadline.",
@@ -956,6 +1007,66 @@ def _shader_guided_refusal(detail: Mapping[str, Any]) -> dict | None:
     return {**result, "code": code, "message": message, "next_step": step}
 
 
+_COMPANION_STATES = frozenset({"pending", "partial", "ready", "error"})
+_COMPANION_FILE = re.compile(r"(?:soundtrack-[a-z]+_[0-9a-f]{24}\.wav|timing\.json)")
+_COMPANION_KEYS = frozenset({"state", "error", "revision", "closure_sha256", "destination",
+                             "files", "attempt_id", "frames_complete", "retry_allowed", "publishing"})
+_COMPANION_RETRY_STEP = ('Pass sequence_id, action "retry_companions" and the companions status fields '
+                         "closure_sha256, receipt_revision, attempt_id and destination.")
+
+
+def _shader_companion_file(value: Any) -> dict[str, Any] | None:
+    """One bounded soundtrack artifact row; exact frozen bytes identity, never a path."""
+    if (type(value) is not dict or not {"name", "published"} <= set(value) <= {"name", "published", "sha256", "size"}
+            or type(value["name"]) is not str or _COMPANION_FILE.fullmatch(value["name"]) is None
+            or type(value["published"]) is not bool):
+        return None
+    out = {"name": value["name"], "published": value["published"]}
+    if "sha256" in value:
+        if type(value["sha256"]) is not str or re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is None:
+            return None
+        out["sha256"] = value["sha256"]
+    if "size" in value:
+        if type(value["size"]) is not int or not 1 <= value["size"] <= 2**53 - 1:
+            return None
+        out["size"] = value["size"]
+    return out
+
+
+def _shader_companion_status(value: Any) -> dict[str, Any] | None:
+    """Recorded soundtrack delivery for one job: state, frozen identity and retry fields.
+
+    The admitted destination is retained because a retry pins it; artifact rows stay relative
+    names. Any unknown field, state or out-of-bound value drops the whole projection instead of
+    exposing unvalidated native data.
+    """
+    if (type(value) is not dict
+            or not {"state", "error", "revision", "closure_sha256", "destination", "files",
+                    "attempt_id", "frames_complete", "retry_allowed"} <= set(value) <= _COMPANION_KEYS
+            or value["state"] not in _COMPANION_STATES
+            or type(value["frames_complete"]) is not bool or type(value["retry_allowed"]) is not bool
+            or "publishing" in value and type(value["publishing"]) is not bool):
+        return None
+    error, revision, closure = value["error"], value["revision"], value["closure_sha256"]
+    destination, attempt, files = value["destination"], value["attempt_id"], value["files"]
+    if (error is not None and (type(error) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error) is None)
+            or revision is not None and (type(revision) is not int or revision < 0)
+            or closure is not None and (type(closure) is not str or re.fullmatch(r"[0-9a-f]{64}", closure) is None)
+            or type(destination) is not str or not _absolute_task_path(destination)
+            or len(destination) > 4096 or "\x00" in destination
+            or attempt is not None and (type(attempt) is not str
+                or re.fullmatch(r"attempt_[0-9a-f]{32}", attempt) is None)
+            or type(files) is not list or len(files) > 260):
+        return None
+    rows = [_shader_companion_file(row) for row in files]
+    if any(row is None for row in rows):
+        return None
+    return {"state": value["state"], "error": error, "revision": revision, "closure_sha256": closure,
+            "destination": destination, "files": rows, "attempt_id": attempt,
+            "frames_complete": value["frames_complete"], "retry_allowed": value["retry_allowed"],
+            "publishing": value.get("publishing", False)}
+
+
 def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                            *, mutation: bool = False) -> dict:
     """Close the native output boundary, retaining its actual task destination."""
@@ -1036,7 +1147,7 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     })
                     result["error"] = {key: refusal[key] for key in ("code", "message", "next_step")}
             allowed = {"request_id", "profile", "job", "publication", "state", "output_name", "output_path", "reason",
-                       "route", "producer_state", "published_cursor", "error"}
+                       "route", "producer_state", "published_cursor", "error", "companions"}
             if (not {"request_id", "profile", "job"} <= keys or keys - allowed
                     or "error" in result and (type(result["error"]) is not dict
                         or set(result["error"]) != {"code", "message", "next_step"}
@@ -1060,6 +1171,11 @@ def _shader_output_receipt(operation: str, args: Mapping[str, Any], result: Any,
                     or "published_cursor" in result and (type(result["published_cursor"]) is not int
                         or result["published_cursor"] < 0)):
                 raise invalid()
+            if "companions" in result:
+                companions = _shader_companion_status(result["companions"])
+                if companions is None:
+                    raise invalid()
+                result["companions"] = companions
             job = result["job"]
             if operation in {"get_job", "still"} and job is None:
                 if (result.get("state") != "failed" or result.get("publication") != "failed"
@@ -4891,6 +5007,13 @@ class Client:
                 message = detail["message"]
             if type(detail.get("next_step")) is str and detail["next_step"].strip() and "\n" not in detail["next_step"]:
                 next_step = detail["next_step"]
+        # Closed Audio readiness/companion codes explain themselves even when native sends code only.
+        if code in _SHADER_FAILURE_GUIDANCE:
+            _action, known_message, known_step = _SHADER_FAILURE_GUIDANCE[code]
+            message = message or known_message
+            next_step = next_step or known_step
+        if code in _SHADER_FAILURE_MESSAGE:
+            message = message or _SHADER_FAILURE_MESSAGE[code]
         receipt = {"code": code or "shader_sequence_refused"}
         if message:
             receipt["message"] = message
@@ -5015,6 +5138,10 @@ class Client:
             value = data.get(key)
             if isinstance(value, Mapping) and all(type(value.get(part)) is str and re.fullmatch(r"[0-9]{1,32}", value[part]) for part in ("num", "den")):
                 result[key] = {part: value[part] for part in ("num", "den")}
+        # Soundtrack companion delivery is a separate recorded outcome from the frames.
+        companions = _shader_companion_status(data.get("companions"))
+        if companions is not None:
+            result["companions"] = companions
         output = data.get("output")
         if isinstance(output, Mapping) and output.get("projection") in ("equirectangular", "fulldome", "fulldome_angular"):
             projected = {"projection": output["projection"]}
@@ -5182,6 +5309,25 @@ class Client:
             if type(attempt) is not str or re.fullmatch(r"attempt_[0-9a-f]{32}", attempt) is None:
                 raise HextileClientError("Invalid Shader export attempt", kind="other", status_code=422)
             suffix, body = {"cancel_export": "export/cancel", "retry_export": "export/retry"}[action], {"attempt_id": attempt}
+        elif action == "retry_companions":
+            # Same closed body as the native CompanionRetry: exact frozen closure, owned receipt
+            # revision, observed attempt and pinned destination. Never starts rendering.
+            _closed_argument_error("Expected retry_companions arguments", args,
+                                   {"sequence_id", "action", "closure_sha256", "receipt_revision",
+                                    "attempt_id", "destination"}, set(), next_step=_COMPANION_RETRY_STEP)
+            closure, revision = args["closure_sha256"], args["receipt_revision"]
+            attempt, destination = args["attempt_id"], args["destination"]
+            if (type(closure) is not str or re.fullmatch(r"[0-9a-f]{64}", closure) is None
+                    or type(revision) is not int or revision < 0
+                    or (attempt is not None and (type(attempt) is not str
+                        or re.fullmatch(r"attempt_[0-9a-f]{32}", attempt) is None))
+                    or not _absolute_task_path(destination) or len(destination) > 4096
+                    or "\x00" in destination):
+                raise HextileClientError("Invalid companion retry intent", kind="other", status_code=422,
+                                         code="invalid_arguments", next_step=_COMPANION_RETRY_STEP)
+            suffix = "companions/retry"
+            body = {"intent": "companions_only", "closure_sha256": closure,
+                    "receipt_revision": revision, "attempt_id": attempt, "destination": destination}
         else:
             raise HextileClientError("Invalid closed Shader sequence control", kind="other", status_code=422)
         try:
@@ -5195,6 +5341,11 @@ class Client:
                 return {**result, "action": action, "replaced_sequence_id": sid}
             if not isinstance(data, Mapping) or data.get("sequence_id") != sid:
                 raise HextileClientError("Invalid Shader sequence control acknowledgement", kind="other", status_code=202)
+            if action == "retry_companions":
+                companions = _shader_companion_status(data.get("companions"))
+                if companions is None:
+                    raise HextileClientError("Invalid companion retry acknowledgement", kind="other", status_code=202)
+                return {"sequence_id": sid, "action": action, "companions": companions}
             statuses = {"queued", "processing", "completed", "completed_with_errors", "failed",
                         "cancelled", "paused", "incomplete", "stopped"} if action not in {"cancel_export", "retry_export"} else {
                         "queued", "running", "completed", "failed", "cancelled", "interrupted"}

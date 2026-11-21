@@ -55,7 +55,14 @@ MCP_STATUS_TTL_S = 5.0
 ACTIVITY_FLUSH_TIMEOUT_S = 5.0
 _RENDER_ACTIVE_STATUSES = frozenset({"queued", "running", "processing"})
 _SHADER_SEQUENCE_ACTIVE_STATUSES = frozenset({"queued", "processing", "publishing"})
-_SHADER_OUTPUT_ACTIVE_STATES = frozenset({"queued", "processing", "stop_requested", "recovered"})
+_SHADER_OUTPUT_ACTIVE_STATES = frozenset({"queued", "processing", "stop_requested", "recovered", "publishing"})
+
+
+def _shader_companions_publishing(result: Mapping[str, Any]) -> bool:
+    """True only while a live owner is still writing this job's soundtrack companions."""
+    companions = result.get("companions")
+    return isinstance(companions, Mapping) and companions.get("publishing") is True
+
 
 # Canonical tool names — drift tests assert SKILL.md ⊆ this list.
 TOOL_NAMES = (
@@ -864,6 +871,11 @@ _SHADER_SEQUENCE_CONTROL = {"type": "object", "oneOf": [
                     "confirmed": {"const": True}}),
     _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"enum": ["cancel_export", "retry_export"]},
                     "attempt_id": _SHADER_ATTEMPT_ID}),
+    _shader_closed({"sequence_id": _SHADER_SEQUENCE_ID, "action": {"const": "retry_companions"},
+                    "closure_sha256": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+                    "receipt_revision": {"type": "integer", "minimum": 0},
+                    "attempt_id": {"oneOf": [_SHADER_ATTEMPT_ID, {"type": "null"}]},
+                    "destination": _ABS_PATH}),
 ]}
 _SHADER_INSPECT = _shader_closed({"request": _SHADER_SEQUENCE_REQUEST})
 _FRACTAL_SHA = _SHADER_DIGEST
@@ -2557,7 +2569,9 @@ TOOLS: list[dict[str, Any]] = [
                     "that will be archived, and returns a new sequence_id. Recover a lost start_over by sending the "
                     "identical original request, or \"recover_start_over\" with the observed new_sequence_id, same "
                     "destination, current witness and confirmed:true. Publication controls need the attempt_id from "
-                    "get_shader_sequence. After a stale Stop, read get_shader_sequence again; never retry blindly.",
+                    "get_shader_sequence. After a stale Stop, read get_shader_sequence again; never retry blindly. "
+                    "action \"retry_companions\" rewrites only the soundtrack files from the frozen Audio, using the "
+                    "companions status fields closure_sha256, receipt_revision, attempt_id and destination.",
      "inputSchema": _SHADER_SEQUENCE_CONTROL,
      "annotations": _annotations("control_shader_sequence")},
     {"name": "preflight_shader_sequence_export",
@@ -4403,7 +4417,7 @@ class HextileMcpServer:
             "get_fractal_request", "get_fractal_sequence", "get_shader_sequence",
             "audio_get_preparation", "audio_release_preparation"} or (
             name in {"control_fractal_sequence", "control_shader_sequence"}
-            and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export")
+            and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export", "retry_companions")
                 or name == "control_shader_sequence" and arguments.get("action") in {"start_over", "recover_start_over"})
         )
         if (
@@ -5196,9 +5210,15 @@ class HextileMcpServer:
         return self.client.export_shader_still(args)
 
     def _shader_get_output_job(self, args: dict[str, Any]) -> Any:
+        def state(result: dict[str, Any]) -> Any:
+            if _shader_companions_publishing(result):
+                return "publishing"
+            if result.get("publication") in {"queued", "processing"}:
+                return "publishing"
+            job = result.get("job")
+            return result.get("state") or (job.get("state") if isinstance(job, dict) else None)
         return self._wait_read(args, lambda native_args, timeout: self.client.get_shader_output_job(native_args, timeout=timeout),
-                               lambda result: result.get("state") or (result.get("job") or {}).get("state"),
-                               _SHADER_OUTPUT_ACTIVE_STATES)
+                               state, _SHADER_OUTPUT_ACTIVE_STATES)
 
     def _shader_stop_output_job(self, args: dict[str, Any]) -> Any:
         return self.client.stop_shader_output_job(args)
@@ -5437,6 +5457,10 @@ class HextileMcpServer:
         def state(result: dict[str, Any]) -> Any:
             folder = result.get("folder_export")
             if isinstance(folder, dict) and folder.get("status") in {"queued", "running"}:
+                return "publishing"
+            # Companion delivery is active only while an owner is still writing the files;
+            # an unowned pending/partial/error receipt awaits retry_companions and ends the wait.
+            if _shader_companions_publishing(result):
                 return "publishing"
             return result.get("status")
         return self._wait_read(args, read, state, _SHADER_SEQUENCE_ACTIVE_STATUSES)

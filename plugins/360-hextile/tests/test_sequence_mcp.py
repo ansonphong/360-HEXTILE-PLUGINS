@@ -127,6 +127,114 @@ def test_shader_sequence_waits_for_folder_publication(monkeypatch, pending_statu
     assert result["waited_s"] == 1
     assert reads == [sid, sid]
 
+
+def test_shader_sequence_waits_while_companions_are_publishing(monkeypatch) -> None:
+    import hextile_mcp
+
+    now = [0.0]
+    reads = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class FakeClient:
+        def get_shader_sequence(self, sequence_id, timeout=None):
+            reads.append(sequence_id)
+            publishing = len(reads) == 1
+            return {"sequence_id": sequence_id, "status": "completed",
+                    "companions": {"state": "pending" if publishing else "ready",
+                                   "publishing": publishing, "retry_allowed": publishing}}
+
+    server = HextileMcpServer(client=FakeClient())
+    server._wait_shutdown = Event()
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    sid = "seq_" + "c" * 32
+    result = server._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
+    assert result["companions"] == {"state": "ready", "publishing": False, "retry_allowed": False}
+    assert result["waited_s"] == 1
+    assert reads == [sid, sid]
+
+
+@pytest.mark.parametrize("state", ["pending", "partial", "error", "ready"])
+def test_shader_sequence_wait_ends_on_recorded_companion_outcome(state) -> None:
+    reads = []
+
+    class FakeClient:
+        def get_shader_sequence(self, sequence_id, timeout=None):
+            reads.append(sequence_id)
+            return {"sequence_id": sequence_id, "status": "completed",
+                    "companions": {"state": state, "publishing": False,
+                                   "retry_allowed": state != "ready"}}
+
+    sid = "seq_" + "d" * 32
+    result = HextileMcpServer(client=FakeClient())._get_shader_sequence({"sequence_id": sid, "wait_s": 25})
+    assert result["waited_s"] == 0 and result["companions"]["state"] == state
+    assert reads == [sid]
+
+
+def test_output_job_wait_continues_while_companions_publish(monkeypatch) -> None:
+    import hextile_mcp
+
+    now = [0.0]
+    reads = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class FakeClient:
+        def get_shader_output_job(self, args, timeout=None):
+            reads.append(dict(args))
+            publishing = len(reads) == 1
+            return {"state": "completed", "job": {"state": "completed"},
+                    "companions": {"state": "pending" if publishing else "ready",
+                                   "publishing": publishing, "retry_allowed": publishing}}
+
+    server = HextileMcpServer(client=FakeClient())
+    server._wait_shutdown = Event()
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    result = server._shader_get_output_job({"request_id": "request-1", "wait_s": 25})
+    assert result["companions"]["state"] == "ready" and result["waited_s"] == 1
+    assert reads == [{"request_id": "request-1"}] * 2
+
+
+def test_output_job_wait_continues_while_publication_is_active(monkeypatch) -> None:
+    import hextile_mcp
+
+    now = [0.0]
+    reads = []
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    class FakeClient:
+        def get_shader_output_job(self, args, timeout=None):
+            reads.append(args)
+            active = len(reads) == 1
+            return {"state": "completed", "job": {"state": "completed"},
+                    "publication": "processing" if active else "complete"}
+
+    server = HextileMcpServer(client=FakeClient())
+    server._wait_shutdown = Event()
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    result = server._shader_get_output_job({"request_id": "request-1", "wait_s": 25})
+    assert result["publication"] == "complete" and result["waited_s"] == 1
+    assert len(reads) == 2
+
 # Full HextileConfig-shaped object (not a pipeline-only stub). Nested keys
 # prove create_sequence emits the complete object, not a subset.
 FULL_CONFIG: dict[str, Any] = {
@@ -769,6 +877,131 @@ def test_native_saved_frame_estimate_projection_drops_untrusted_fields():
         assert _native_sequence_fields({**data, "render_estimate": {**estimate, **patch}})["render_estimate"] is None
     assert _native_sequence_fields({**data, "render_estimate": None})["render_estimate"] is None
     assert "render_estimate" not in _native_sequence_fields({"producer": "shader"})
+
+
+def _companion_status(**patch: Any) -> dict[str, Any]:
+    row = {"state": "partial", "error": "companion_conflict", "revision": 3,
+           "closure_sha256": "a" * 64, "destination": "C:\\renders\\chosen",
+           "files": [{"name": "soundtrack-track_" + "0123456789abcdef01234567" + ".wav",
+                      "published": True, "sha256": "b" * 64, "size": 44},
+                     {"name": "timing.json", "published": False, "sha256": "c" * 64, "size": 128}],
+           "attempt_id": "attempt_" + "d" * 32, "frames_complete": True, "retry_allowed": True,
+           "publishing": False}
+    row.update(patch)
+    return row
+
+
+def test_get_shader_sequence_projects_frozen_audio_companions_and_large_estimate() -> None:
+    sid = "seq_" + "e" * 32
+    estimate = {"profile": "shader-render-estimate/1", "basis": "saved_frames", "approximate": True,
+                "frame_count": 54000, "remaining_frames": 0, "total_ms": 5_400_000,
+                "remaining_ms": 0, "sample_count": 3, "includes_output": True}
+    payload = {"sequence_id": sid, "status": "completed", "producer": "shader",
+               "companions": _companion_status(), "render_estimate": estimate}
+    seen: dict[str, Any] = {}
+    detail = _client(seen, payload).get_shader_sequence(sid)
+    assert seen["url"] == f"{BASE}/api/shaders/sequences/{sid}"
+    assert detail["companions"] == _companion_status()
+    # The exact frozen artifact identity and the admitted destination survive for retry_companions.
+    assert detail["companions"]["closure_sha256"] == "a" * 64
+    assert detail["companions"]["destination"] == "C:\\renders\\chosen"
+    assert detail["companions"]["files"][1] == {"name": "timing.json", "published": False,
+                                                "sha256": "c" * 64, "size": 128}
+    assert detail["render_estimate"]["frame_count"] == 54000
+
+
+@pytest.mark.parametrize("patch", [
+    {"state": "publishing"},
+    {"retry_allowed": "yes"},
+    {"destination": "relative/chosen"},
+    {"closure_sha256": "sha256:" + "a" * 64},
+    {"attempt_id": "d" * 32},
+    {"files": [{"name": "C:/private.wav", "published": True}]},
+    {"files": [{"name": "timing.json", "published": True, "size": 0}]},
+    {"private_key": "drop"},
+])
+def test_get_shader_sequence_drops_malformed_companion_projection(patch) -> None:
+    sid = "seq_" + "e" * 32
+    payload = {"sequence_id": sid, "status": "completed", "producer": "shader",
+               "companions": {**_companion_status(), **patch}}
+    assert "companions" not in _client({}, payload).get_shader_sequence(sid)
+
+
+def test_output_job_receipt_projects_companion_delivery() -> None:
+    from hextile_client import _shader_output_receipt
+
+    args = {"request_id": "11111111-1111-4111-8111-111111111111", "profile": "png-master/1",
+            "shader": {"origin": "user", "shaderId": "known"}, "project_context_witness": "w"}
+    result = {"request_id": args["request_id"], "profile": "png-master/1", "state": "processing",
+              "job": {"id": "a" * 32, "shader_ref": args["shader"], "state": "processing",
+                      "progress": 0.5, "output_identity": None},
+              "companions": _companion_status()}
+    assert _shader_output_receipt("get_job", args, result)["companions"] == _companion_status()
+    with pytest.raises(HextileClientError):
+        _shader_output_receipt("get_job", args,
+                               {**result, "companions": {**_companion_status(), "state": "publishing"}})
+
+
+def test_control_shader_sequence_retry_companions_maps_the_native_route() -> None:
+    sid = "seq_" + "f" * 32
+    body = {"sequence_id": sid, "action": "retry_companions", "closure_sha256": "a" * 64,
+            "receipt_revision": 3, "attempt_id": None, "destination": "C:\\renders\\chosen"}
+    seen: dict[str, Any] = {}
+    companions = _companion_status(state="ready", error=None, retry_allowed=False)
+    result = _client(seen, {"sequence_id": sid, "companions": companions}).control_shader_sequence(body)
+    assert seen["method"] == "POST"
+    assert seen["url"] == f"{BASE}/api/shaders/sequences/{sid}/companions/retry"
+    assert json.loads(seen["data"]) == {"intent": "companions_only", "closure_sha256": "a" * 64,
+                                        "receipt_revision": 3, "attempt_id": None,
+                                        "destination": "C:\\renders\\chosen"}
+    assert result == {"sequence_id": sid, "action": "retry_companions", "companions": companions}
+
+
+def test_control_shader_sequence_retry_companions_refusal_keeps_typed_guidance() -> None:
+    sid = "seq_" + "f" * 32
+    body = {"sequence_id": sid, "action": "retry_companions", "closure_sha256": "a" * 64,
+            "receipt_revision": 0, "attempt_id": None, "destination": "/renders/chosen"}
+
+    def opener(req, timeout=None):
+        raise urllib.error.HTTPError(url=req.full_url, code=409, msg="Conflict", hdrs=None,
+                                     fp=io.BytesIO(json.dumps({"detail": {"code": "companion_retry_stale"}}).encode()))
+
+    with pytest.raises(HextileClientError) as error:
+        Client(base_url=BASE, opener=opener).control_shader_sequence(body)
+    assert error.value.status_code == 409
+    assert error.value.receipt["code"] == "companion_retry_stale"
+    assert error.value.receipt["next_step"] == "Read get_shader_sequence again before retrying the soundtrack files."
+
+
+@pytest.mark.parametrize("bad", [
+    {"missing": "receipt_revision"},
+    {"closure_sha256": "not-hex"},
+    {"receipt_revision": -1},
+    {"receipt_revision": True},
+    {"attempt_id": "d" * 32},
+    {"destination": "relative/chosen"},
+    {"unknown": True},
+])
+def test_control_shader_sequence_retry_companions_bad_arguments(bad) -> None:
+    sid = "seq_" + "a" * 32
+    valid = {"sequence_id": sid, "action": "retry_companions", "closure_sha256": "a" * 64,
+             "receipt_revision": 0, "attempt_id": None, "destination": "/renders/chosen"}
+    args = dict(valid)
+    if "missing" in bad:
+        args.pop(bad["missing"])
+    else:
+        args.update(bad)
+    calls: list[str] = []
+    def opener(req, timeout=None):
+        calls.append(req.full_url)
+        return _Resp()
+
+    result = HextileMcpServer(client=Client(base_url=BASE, opener=opener)).call_tool(
+        "control_shader_sequence", args)
+    assert result["isError"]
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["code"] == "invalid_arguments" and payload["next_step"]
+    assert not any(url.endswith("/companions/retry") for url in calls)
 
 
 def test_native_render_new_semantics_require_advertised_contract() -> None:
