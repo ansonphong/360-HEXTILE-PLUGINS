@@ -1270,13 +1270,47 @@ def test_audio_tools_catalog_control_lane_and_guides() -> None:
     guides = {name: load_guide(name)["markdown"] for name in ("recipes", "recipes-detail", "best-practices")}
     shader_skill = (ROOT / "skills" / "shader" / "SKILL.md").read_text(encoding="utf-8")
     authoring = (ROOT / "skills" / "shader" / "references" / "authoring.md").read_text(encoding="utf-8")
-    for text in (*guides.values(), shader_skill, authoring):
+    for text in (*guides.values(), shader_skill):
         for phrase in ("audio-signals/1", "shader_get_audio", "audio_prepare_signal", "audio_get_preparation",
                        "page_changed", "invalid_cursor", "next_step", "retry_companions"):
             assert phrase in text, phrase
+    for phrase in ("shader_edit_audio", "stale_lease", "alias_in_code", "audio_outcome_unknown", "recipes-detail"):
+        assert phrase in authoring, phrase
     for name in _AUDIO_TOOLS:
         assert name in guides["best-practices"] and name in guides["recipes-detail"] + guides["recipes"], name
     assert '"wait_s":25' in guides["recipes"] and "invalid_arguments" in guides["recipes-detail"]
+
+
+
+_APP_AUDIO_OPERATIONS = """
+import json, sys, types
+try:
+    import mcp.client.stdio  # noqa: F401
+except ImportError:  # APP copilot imports the MCP SDK; discovery itself does not use it.
+    for name in ("mcp", "mcp.client", "mcp.client.stdio"):
+        sys.modules[name] = types.ModuleType(name)
+    sys.modules["mcp"].ClientSession = sys.modules["mcp"].StdioServerParameters = object
+    sys.modules["mcp.client.stdio"].stdio_client = None
+from backend.api.models.native_render_contract import audio_signal_capabilities
+print(json.dumps(audio_signal_capabilities()))
+"""
+
+
+def test_audio_tools_match_app_audio_signals_discovery() -> None:
+    """Canonical Audio tools and edit commands equal APP audio-signals/1, read in a child process."""
+    import subprocess
+
+    app = ROOT.parents[2] / "360-HEXTILE-APP"
+    assert (app / "backend").is_dir(), f"missing sibling APP: {app}"
+    done = subprocess.run([sys.executable, "-c", _APP_AUDIO_OPERATIONS], cwd=app, capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    capability = json.loads(done.stdout.strip().splitlines()[-1])
+    assert capability["contract"] == "audio-signals/1" and capability["available"] is True, capability
+    assert set(_AUDIO_TOOLS) == set(capability["operations"]["tools"])
+    edit = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_edit_audio")
+    commands = {row["properties"]["command"]["const"] for row in edit["inputSchema"]["properties"]["command"]["oneOf"]}
+    assert commands == set(capability["operations"]["edit_commands"])
 
 
 def test_mcp_initialize() -> None:
