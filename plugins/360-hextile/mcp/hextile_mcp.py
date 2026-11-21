@@ -39,6 +39,7 @@ from hextile_client import (  # noqa: E402
     UNSUPPORTED_CONNECTIVITY,
     Client,
     HextileClientError,
+    _closed_argument_error,
     _refusal_names,
     error_payload,
     validate_shader_doctor,
@@ -385,6 +386,8 @@ _CONTROL_TOOLS = frozenset(
         "cancel_model_download",
         "get_layer_generation",
         "cancel_layer_generation",
+        "audio_get_preparation",
+        "audio_release_preparation",
     }
 )
 _LAYER_TOOLS = frozenset({
@@ -482,7 +485,9 @@ def _annotations(name: str) -> dict[str, bool]:
     if name in _READ_ONLY or name in {"shader_get_asset_state", "shader_get_operation",
                                      "shader_get_credits", "shader_research_sources",
                                      "shader_get_library_organization", "shader_get_preview",
-                                     "shader_get_output_job"}:
+                                     "shader_get_output_job", "shader_get_audio",
+                                     "audio_get_preparation", "audio_read_preview",
+                                     "audio_read_signal"}:
         return {"readOnlyHint": True, "destructiveHint": False}
     if name in _DESTRUCTIVE or name in {"shader_set_resource", "shader_organize_library",
                                        "shader_set_project_conventions"}:
@@ -1229,6 +1234,7 @@ _PREFERENCE_CHANGES = {
         "worlds_favorites_per_project": _PREFERENCE_BOOL,
         "error_reporting_enabled": _PREFERENCE_BOOL,
         "telemetry_enabled": _PREFERENCE_BOOL,
+        "audio_monitor_latency_ms": _null_ok({"type": "integer", "minimum": 0, "maximum": 500}),
     },
 }
 
@@ -1277,7 +1283,9 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_capabilities",
-        "Use to check the workflow API version and supported features before relying on a newer option.",
+        "Use to check the workflow API version and supported features before relying on a newer option. "
+        "When the APP reports it, audio_signals (contract audio-signals/1) lists Audio resource kinds with "
+        "parser bounds, measurements, offset_ms bounds, supported_track_limit and operations.",
         {},
     ),
     _tool_def(
@@ -2895,6 +2903,111 @@ for _shape in _STILL_OUTPUT["anyOf"][2:4]:
         "if": {"properties": {"encoding": {"const": "png"}}},
         "then": {"properties": {"raster_policy": _SHADER_RASTER_PNG}},
         "else": {"properties": {"raster_policy": _SHADER_RASTER_PROCESSING}}})
+# ── Audio (T8g.1): closed schemas over the native Audio preparation/edit doors ────────────────
+# Sampling, bounds and references are native; these schemas only state the finite wire shape.
+_AUDIO_ID = {"type": "string", "pattern": r"^[a-z]+_[0-9a-f]{24}$"}
+_AUDIO_SIGNAL_ID = {"type": "string", "pattern": r"^signal_[0-9a-f]{24}$"}
+_AUDIO_TRACK_ID = {"type": "string", "pattern": r"^track_[0-9a-f]{24}$"}
+_AUDIO_HANDLE = {"type": "string", "pattern": r"^[A-Za-z0-9_-]{16,128}$"}
+_AUDIO_RECEIPT_REF = {"type": "string", "pattern": r"^[A-Za-z0-9_-]{1,128}$",
+                      "description": "receipt_id from a preparation reply, or its original request_id."}
+_AUDIO_DIGEST = {"type": "string", "pattern": r"^[0-9a-f]{64}$"}
+_AUDIO_PROFILE = {"const": "hann2048-hop512/1"}
+_AUDIO_TIME = _shader_closed({
+    "num": {"type": "string", "pattern": r"^(0|[1-9][0-9]*)$"},
+    "den": {"type": "string", "pattern": r"^[1-9][0-9]*$"}})
+_AUDIO_SIGNED_TIME = _shader_closed({
+    "num": {"type": "string", "pattern": r"^(0|-?[1-9][0-9]*)$"},
+    "den": {"type": "string", "pattern": r"^[1-9][0-9]*$"}})
+_AUDIO_OWNER = _shader_closed({
+    "kind": {"const": "shader"},
+    "origin": {"enum": ["builtin", "user", "project"]},
+    "shader_id": {"type": "string", "pattern": r"^[A-Za-z0-9_-]{1,128}$"},
+    "expected_working_revision": {"type": "integer", "minimum": 0},
+    "expected_document_hash": _AUDIO_DIGEST,
+    "project_context_witness": {"type": "string", "minLength": 1, "maxLength": 512},
+    "owner_generation": {"type": "integer", "minimum": 0}})
+_AUDIO_OUTPUT = {
+    "alias": _SHADER_ALIAS,
+    "label": {"type": "string", "minLength": 1, "maxLength": 128},
+    "output_min": {"type": "number"}, "output_max": {"type": "number"}}
+_AUDIO_MEASUREMENT = {"oneOf": [
+    _shader_closed({"kind": {"const": "rms"}, "profile_id": _AUDIO_PROFILE}),
+    _shader_closed({"kind": {"const": "band"}, "profile_id": _AUDIO_PROFILE,
+                    "low_hz": {"type": "number", "minimum": 0, "maximum": 24000},
+                    "high_hz": {"type": "number", "minimum": 0, "maximum": 24000}}),
+    _shader_closed({"kind": {"const": "midi_notes"}, "filter": {"const": "all"},
+                    "value": {"enum": ["trigger", "gate", "velocity"]}}),
+    _shader_closed({"kind": {"const": "midi_notes"}, "filter": {"const": "note"},
+                    "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "value": {"enum": ["trigger", "gate", "velocity"]}}),
+    _shader_closed({"kind": {"const": "midi_notes"}, "filter": {"const": "range"},
+                    "pitch_low": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "pitch_high": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "value": {"enum": ["trigger", "gate", "velocity"]}}),
+    _shader_closed({"kind": {"const": "curve"}, "column": {"type": "integer", "minimum": 1},
+                    "interpolation": {"enum": ["linear", "step"]},
+                    "input_min": {"type": "number"}, "input_max": {"type": "number"}}),
+    _shader_closed({"kind": {"const": "labels"}, "mode": {"enum": ["trigger", "hold"]},
+                    "text": {"anyOf": [{"type": "string", "maxLength": 256}, {"type": "null"}]}}),
+]}
+_AUDIO_SIGNAL_SPEC = _shader_closed({
+    "id": _AUDIO_SIGNAL_ID, "track_id": _AUDIO_TRACK_ID, "measurement": _AUDIO_MEASUREMENT,
+    "gain": {"type": "number", "minimum": 0, "maximum": 100},
+    "attack": {"type": "number", "minimum": 0, "maximum": 60},
+    "release": {"type": "number", "minimum": 0, "maximum": 60},
+    "normalization": {"const": "fixed_full_scale"},
+    "offset_ms": {"type": "integer", "minimum": -1000, "maximum": 1000}}, ("offset_ms",))
+_AUDIO_SOURCE = {"oneOf": [
+    _shader_closed({"kind": {"const": "local_file"}, "path": _ABS_PATH}),
+    _shader_closed({"kind": {"const": "retained"},
+                    "resource_id": {"type": "string", "pattern": r"^audio_[0-9a-f]{24}$"}}),
+]}
+_AUDIO_DEPENDENT_IDS = {"type": "array", "maxItems": 256, "uniqueItems": True, "items": _AUDIO_ID}
+_AUDIO_COMMAND = {"oneOf": [
+    _shader_closed({"command": {"const": "attach_track"}, "receipt_id": _AUDIO_HANDLE,
+                    "timeline_start": _AUDIO_TIME}),
+    _shader_closed({"command": {"const": "attach_track"}, "receipt_id": _AUDIO_HANDLE,
+                    "timeline_start": _AUDIO_TIME, "in_sample": {"type": "integer", "minimum": 0},
+                    "out_sample": {"type": "integer", "minimum": 0}}),
+    _shader_closed({"command": {"const": "set_track"}, "track_id": _AUDIO_TRACK_ID,
+                    "timeline_start": _AUDIO_TIME}),
+    _shader_closed({"command": {"const": "set_track"}, "track_id": _AUDIO_TRACK_ID,
+                    "timeline_start": _AUDIO_TIME, "in_sample": {"type": "integer", "minimum": 0},
+                    "out_sample": {"type": "integer", "minimum": 0},
+                    "monitor_gain": {"type": "number", "minimum": 0, "maximum": 1},
+                    "monitor_mute": {"type": "boolean"}}),
+    _shader_closed({"command": {"const": "replace_track"}, "track_id": _AUDIO_TRACK_ID,
+                    "receipt_id": _AUDIO_HANDLE, "timeline_start": _AUDIO_TIME}),
+    _shader_closed({"command": {"const": "replace_track"}, "track_id": _AUDIO_TRACK_ID,
+                    "receipt_id": _AUDIO_HANDLE, "timeline_start": _AUDIO_TIME,
+                    "in_sample": {"type": "integer", "minimum": 0},
+                    "out_sample": {"type": "integer", "minimum": 0}}),
+    _shader_closed({"command": {"const": "remove_track"}, "track_id": _AUDIO_TRACK_ID,
+                    "dependent_ids": _AUDIO_DEPENDENT_IDS}),
+    _shader_closed({"command": {"const": "create_signal"}, "receipt_id": _AUDIO_HANDLE,
+                    **_AUDIO_OUTPUT}),
+    _shader_closed({"command": {"const": "edit_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
+                    "offset_ms": {"type": "integer", "minimum": -1000, "maximum": 1000}}),
+    _shader_closed({"command": {"const": "edit_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
+                    "receipt_id": _AUDIO_HANDLE}),
+    _shader_closed({"command": {"const": "edit_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
+                    "receipt_id": _AUDIO_HANDLE, "modulator_id": _SHADER_MOD_ID,
+                    "label": {"type": "string", "minLength": 1, "maxLength": 128},
+                    "output_min": {"type": "number"}, "output_max": {"type": "number"}}),
+    _shader_closed({"command": {"const": "create_set"}, "specs": {
+        "type": "array", "minItems": 4, "maxItems": 4, "items": _shader_closed({
+            "receipt_id": _AUDIO_HANDLE, **_AUDIO_OUTPUT})}}),
+    _shader_closed({"command": {"const": "remove_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
+                    "dependent_ids": _AUDIO_DEPENDENT_IDS}),
+]}
+_AUDIO_SIGNAL_SELECTOR = {"oneOf": [
+    _shader_closed({"kind": {"const": "time"}, "time": _AUDIO_SIGNED_TIME}),
+    _shader_closed({"kind": {"const": "window"}, "start": _AUDIO_SIGNED_TIME, "end": _AUDIO_SIGNED_TIME,
+                    "max_samples": {"type": "integer", "minimum": 1, "maximum": 128}}),
+]}
+_AUDIO_WAIT_SENTENCE = "Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read."
+
 SHADER_EXTENSION_TOOLS = [
     _tool_def("shader_list_assets", "Use to list Shaders (saved, draft and incomplete) or find one by name. Optional shelf (builtin, "
                                     "user, project), search, limit and cursor. Omit project_context_witness the first time: the reply "
@@ -3388,6 +3501,78 @@ SHADER_EXTENSION_TOOLS = [
                    "source_epoch": {"type": "integer", "minimum": 0},
                }), "description": "Optional. Omit to step the preview owner mounted now."}},
               ["shader", "project_context_witness", "request_id", "direction"]),
+    _tool_def("shader_get_audio", "Use to read a saved Shader's source-free Audio tracks, signals or a set suggestion. "
+                                  "Pass shader, project_context_witness and selector tracks, signals or set_suggestion; "
+                                  "limit is 1 to 50 and follows next_cursor, and filters track_id/signal_id are exact IDs. "
+                                  "The reply carries the owner witness the Audio preparation and edit tools need. A changed "
+                                  "document or foreign cursor refuses 409 page_changed: read again without cursor. Signals "
+                                  "report committed readiness, offset_ms and mapped modulator IDs; no paths, media, curves or leases.",
+              {**_NATIVE_SHADER_TARGET, "selector": {"enum": ["tracks", "signals", "set_suggestion"]},
+               "cursor": {"type": "string", "minLength": 1, "maxLength": 160},
+               "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+               "track_id": _AUDIO_TRACK_ID, "signal_id": _AUDIO_SIGNAL_ID},
+              ["shader", "project_context_witness"]),
+    _tool_def("shader_edit_audio", "Use to apply one closed Audio edit to a saved Shader: attach_track, set_track, "
+                                   "replace_track, remove_track, create_signal, edit_signal, create_set or remove_signal. "
+                                   "Pass request_id, the owner witness shader_get_audio returns and command; prepared "
+                                   "receipts come from the audio_prepare_* tools. It saves itself; a saved reply carries "
+                                   "save and the next base. While the person holds the code lease it refuses stale_lease. "
+                                   "After a lost reply call shader_get_operation with scope \"asset\" and the same request_id; "
+                                   "never resend under a new id.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER, "command": _AUDIO_COMMAND},
+              ["request_id", "owner", "command"]),
+    _tool_def("audio_prepare_resource", "Use to import one local audio, MIDI, CSV or Audacity label file, or re-admit a "
+                                        "retained resource, for a Shader. Pass request_id, owner and source {kind, path} or "
+                                        "{kind, resource_id}; paths resolve in the app, not the proxy. The reply is a pending "
+                                        "or ready preparation receipt: read it with audio_get_preparation. It never attaches "
+                                        "a track, runs FFT or Saves.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER, "source": _AUDIO_SOURCE},
+              ["request_id", "owner", "source"]),
+    _tool_def("audio_prepare_analysis", "Use to start or join the whole-file Audio analysis a spectrum preview reads. "
+                                        "Pass request_id, owner, resource_id from a ready resource receipt, profile_id "
+                                        "hann2048-hop512/1 and a new demand_id. Signal preparation starts analysis by itself; "
+                                        "use this only before audio_read_preview kind spectrum. Read the receipt with "
+                                        "audio_get_preparation.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER,
+               "resource_id": {"type": "string", "pattern": r"^audio_[0-9a-f]{24}$"},
+               "profile_id": _AUDIO_PROFILE, "demand_id": _NATIVE_SHADER_REQUEST_ID},
+              ["request_id", "owner", "resource_id", "profile_id", "demand_id"]),
+    _tool_def("audio_prepare_signal", "Use to prepare one immutable Audio signal curve for a track. Pass request_id, "
+                                      "owner, demand_id and the complete signal_spec (id, track_id, measurement, gain, "
+                                      "attack, release, normalization fixed_full_scale, optional offset_ms). The first "
+                                      "demand starts analysis itself and the pending receipt carries progress; read it "
+                                      "with audio_get_preparation. No document mutation.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER,
+               "signal_spec": _AUDIO_SIGNAL_SPEC, "demand_id": _NATIVE_SHADER_REQUEST_ID},
+              ["request_id", "owner", "signal_spec", "demand_id"]),
+    _tool_def("audio_get_preparation", "Use to read one Audio preparation receipt by receipt_id or its original "
+                                       "request_id. It never starts or retries work, and pending/error/cancelled are real "
+                                       "states, never a ready zero. " + _AUDIO_WAIT_SENTENCE,
+              {"receipt": _AUDIO_RECEIPT_REF,
+               "wait_s": {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}},
+              ["receipt"]),
+    _tool_def("audio_release_preparation", "Use to release one Audio preparation or analysis demand by receipt_id or "
+                                           "its original request_id. Shared work keeps running while another demand needs "
+                                           "it; a pending release settles to cancelled. It never starts or retries work.",
+              {"receipt": _AUDIO_RECEIPT_REF}, ["receipt"]),
+    _tool_def("audio_read_preview", "Use to read bounded prepared Audio data from a ready receipt: kind waveform "
+                                    "(start_sample, end_sample, max_points at most 128), spectrum (center_sample, one "
+                                    "cached 1025-bin row) or data (start and end num/den seconds, max_points at most "
+                                    "128). No new decode or FFT.",
+              {"receipt": _AUDIO_RECEIPT_REF, "kind": {"enum": ["waveform", "spectrum", "data"]},
+               "start_sample": {"type": "integer", "minimum": 0},
+               "end_sample": {"type": "integer", "minimum": 0},
+               "max_points": {"type": "integer", "minimum": 1, "maximum": 128},
+               "center_sample": {"type": "integer", "minimum": 0},
+               "start": _AUDIO_TIME, "end": _AUDIO_TIME},
+              ["receipt", "kind"]),
+    _tool_def("audio_read_signal", "Use to read a ready Audio signal curve at one exact time or in a bounded window. "
+                                   "Pass request_id, owner, the ready curve_handle from audio_get_preparation and "
+                                   "selector {kind:\"time\", time} or {kind:\"window\", start, end, max_samples} with at "
+                                   "most 128 samples. Pending or missing is never a ready zero.",
+              {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER,
+               "curve_handle": _AUDIO_HANDLE, "selector": _AUDIO_SIGNAL_SELECTOR},
+              ["request_id", "owner", "curve_handle", "selector"]),
 ]
 
 next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_open_asset")["inputSchema"]["allOf"] = [
@@ -4061,6 +4246,15 @@ class HextileMcpServer:
             "shader_step_frame": self._shader_step_frame,
             "get_shader_parameters": self._get_shader_parameters,
             "shader_edit": self._shader_edit,
+            "shader_get_audio": self._shader_get_audio,
+            "shader_edit_audio": self._shader_edit_audio,
+            "audio_prepare_resource": self._audio_prepare_resource,
+            "audio_prepare_analysis": self._audio_prepare_analysis,
+            "audio_prepare_signal": self._audio_prepare_signal,
+            "audio_get_preparation": self._audio_get_preparation,
+            "audio_release_preparation": self._audio_release_preparation,
+            "audio_read_preview": self._audio_read_preview,
+            "audio_read_signal": self._audio_read_signal,
             "preflight_shader_sequence": self._preflight_shader_sequence,
             "inspect_shader_sequence_output": self._inspect_shader_sequence_output,
             "render_shader_sequence": self._render_shader_sequence,
@@ -4211,6 +4405,8 @@ class HextileMcpServer:
             and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export")
                 or name == "control_shader_sequence" and arguments.get("action") in {"start_over", "recover_start_over"})
         )
+        # Admitted Audio preparation status/release stay serviceable while MCP is disabled.
+        sequence_recovery = sequence_recovery or name in {"audio_get_preparation", "audio_release_preparation"}
         if (
             not self.internal_mode
             and not sequence_recovery
@@ -5188,6 +5384,45 @@ class HextileMcpServer:
     def _shader_edit(self, args: dict[str, Any]) -> Any:
         validate_shader_workspace("edit", args)
         return self.client.shader_edit(args)
+
+    def _shader_get_audio(self, args: dict[str, Any]) -> Any:
+        return self.client.get_shader_audio(args)
+
+    def _shader_edit_audio(self, args: dict[str, Any]) -> Any:
+        return self.client.edit_shader_audio(args)
+
+    def _audio_prepare_resource(self, args: dict[str, Any]) -> Any:
+        return self.client.prepare_audio_resource(args)
+
+    def _audio_prepare_analysis(self, args: dict[str, Any]) -> Any:
+        return self.client.prepare_audio_analysis(args)
+
+    def _audio_prepare_signal(self, args: dict[str, Any]) -> Any:
+        return self.client.prepare_audio_signal(args)
+
+    def _audio_get_preparation(self, args: dict[str, Any]) -> Any:
+        def read(native_args: dict[str, Any], timeout: Optional[float]) -> dict[str, Any]:
+            _closed_argument_error(
+                "Expected audio_get_preparation arguments", native_args, {"receipt"}, set(),
+                next_step="Pass receipt: the receipt_id from a preparation reply or its original request_id.")
+            return self.client.get_audio_preparation(native_args["receipt"], timeout=timeout)
+
+        def state(result: dict[str, Any]) -> Any:
+            return result.get("state") if isinstance(result, dict) else None
+
+        return self._wait_read(args, read, state, frozenset({"pending"}))
+
+    def _audio_release_preparation(self, args: dict[str, Any]) -> Any:
+        _closed_argument_error(
+            "Expected audio_release_preparation arguments", args, {"receipt"}, set(),
+            next_step="Pass receipt: the receipt_id from a preparation reply or its original request_id.")
+        return self.client.release_audio_preparation(args["receipt"])
+
+    def _audio_read_preview(self, args: dict[str, Any]) -> Any:
+        return self.client.read_audio_preview(args)
+
+    def _audio_read_signal(self, args: dict[str, Any]) -> Any:
+        return self.client.read_audio_signal(args)
 
     def _preflight_shader_sequence(self, args: dict[str, Any]) -> Any:
         return self.client.preflight_shader_sequence(args)

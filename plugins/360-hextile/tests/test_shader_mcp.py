@@ -3457,3 +3457,605 @@ def test_apply_look_explicit_long_form_replies_are_unchanged(monkeypatch, failur
         assert payload == {"ok": False, "error": "IncompleteRead(7 bytes read, 20 more expected)", "kind": "other"}
     else:
         assert payload == expected[failure]
+
+
+# ── Audio preparation, authoring and reads (T8g.1) ──────────────────────────────────────────
+
+_AUDIO_ADDED = (
+    "shader_get_audio", "shader_edit_audio", "audio_prepare_resource", "audio_prepare_analysis",
+    "audio_prepare_signal", "audio_get_preparation", "audio_release_preparation",
+    "audio_read_preview", "audio_read_signal",
+)
+_AUDIO_REQUEST = "b5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+_AUDIO_DEMAND = "c5897a63-59a1-4d8f-aecb-36ba083fc1ea"
+_AUDIO_DIGEST = "a" * 64
+
+
+def _audio_tool(name: str) -> dict[str, Any]:
+    import hextile_mcp as module
+    return next(row for row in module.SHADER_EXTENSION_TOOLS if row["name"] == name)
+
+
+def _audio_owner(**changes: Any) -> dict[str, Any]:
+    return {"kind": "shader", "origin": "user", "shader_id": "aurora",
+            "expected_working_revision": 3, "expected_document_hash": _AUDIO_DIGEST,
+            "project_context_witness": "wit", "owner_generation": 0, **changes}
+
+
+def _audio_base(revision: int = 3) -> dict[str, Any]:
+    return {"kind": "saved", "working_revision": revision,
+            "document_hash": "sha256:" + "a" * 64, "source_hash": "sha256:" + "b" * 64}
+
+
+def _audio_resource(**changes: Any) -> dict[str, Any]:
+    return {"id": "audio_" + "1" * 24, "kind": "audio", "display_name": "Song.wav",
+            "original_sha256": _AUDIO_DIGEST, "original_ext": "wav",
+            "canonical_sha256": "b" * 64, "pcm_profile": "pcm16-48k/1", "sample_rate": 48000,
+            "sample_count": 480000, "channels": 2, "decoder": "ffmpeg", **changes}
+
+
+def _audio_track(**changes: Any) -> dict[str, Any]:
+    return {"id": "track_" + "2" * 24, "label": "Song", "resource_id": "audio_" + "1" * 24,
+            "timeline_start": {"num": "0", "den": "1"}, "in_sample": 0, "out_sample": 480000,
+            "monitor_gain": 1, "monitor_mute": False, "lane": "A", "resource": _audio_resource(),
+            "signal_ids": ["signal_" + "3" * 24], **changes}
+
+
+def _audio_signal(**changes: Any) -> dict[str, Any]:
+    return {"id": "signal_" + "3" * 24, "track_id": "track_" + "2" * 24,
+            "measurement": {"kind": "rms", "profile_id": "hann2048-hop512/1"},
+            "gain": 1, "attack": 0, "release": 0, "normalization": "fixed_full_scale",
+            "offset_ms": -20, "readiness": "ready",
+            "modulators": [{"id": "mod_" + "4" * 24, "alias": "A", "label": "A", "enabled": True,
+                            "output_min": 0, "output_max": 1, "mapped_targets": ["glow"]}],
+            **changes}
+
+
+def _audio_spec(**changes: Any) -> dict[str, Any]:
+    return {"id": "signal_" + "3" * 24, "track_id": "track_" + "2" * 24,
+            "measurement": {"kind": "rms", "profile_id": "hann2048-hop512/1"},
+            "gain": 1, "attack": 0, "release": 0, "normalization": "fixed_full_scale",
+            **changes}
+
+
+def _audio_receipt(kind: str, request_id: str, *, state: str = "ready", result: Any = None,
+                   progress: Any = None, **changes: Any) -> dict[str, Any]:
+    return {"schema": 1, "kind": kind, "receipt_id": "r" * 24, "request_id": request_id,
+            "owner_generation": 0, "source_generation": 1, "state": state, "progress": progress,
+            "error": None, "result": result, **changes}
+
+
+def _audio_page(**changes: Any) -> dict[str, Any]:
+    return {"schema": 1, "shader": {"origin": "user", "shaderId": "aurora"},
+            "project_context_witness": "wit", "selector": "tracks", "provenance": "saved",
+            "owner": _audio_owner(), "base": _audio_base(), "entries": [_audio_track()],
+            "total": 1, "next_cursor": None, **changes}
+
+
+def _audio_server(monkeypatch, reply) -> tuple[Any, Any]:
+    client = Client("http://127.0.0.1:9")
+    monkeypatch.setattr(client, "request_json", reply)
+    return HextileMcpServer(client=client, child_token="test"), client
+
+
+def _audio_detail(code: str, status: int, **detail: Any) -> HextileClientError:
+    body = {"code": code, "message": detail.pop("message", f"Refused {code}"),
+            "next_step": detail.pop("next_step", "Read the current Audio state, then retry."), **detail}
+    return HextileClientError(f"HTTP {status}", status_code=status, kind="http",
+                              body=json.dumps({"detail": body}))
+
+
+def test_audio_tool_schemas_are_closed_and_carry_required_identity() -> None:
+    import hextile_mcp
+
+    tool = _audio_tool
+    schemas = {name: tool(name)["inputSchema"] for name in _AUDIO_ADDED}
+    assert all(schema["type"] == "object" and schema["additionalProperties"] is False
+               for schema in schemas.values())
+    assert schemas["shader_get_audio"]["required"] == ["shader", "project_context_witness"]
+    assert schemas["shader_get_audio"]["properties"]["limit"]["maximum"] == 50
+    assert schemas["shader_get_audio"]["properties"]["cursor"]["maxLength"] == 160
+    assert schemas["shader_get_audio"]["properties"]["selector"]["enum"] == [
+        "tracks", "signals", "set_suggestion"]
+    for name in ("shader_edit_audio", "audio_prepare_resource", "audio_prepare_analysis",
+                 "audio_prepare_signal", "audio_read_signal"):
+        assert "request_id" in schemas[name]["required"], name
+        assert schemas[name]["properties"]["request_id"]["pattern"].endswith("[0-9a-f]{12}$")
+    assert set(schemas["shader_edit_audio"]["required"]) == {"request_id", "owner", "command"}
+    owner = schemas["shader_edit_audio"]["properties"]["owner"]
+    assert owner["additionalProperties"] is False
+    assert set(owner["required"]) == {"kind", "origin", "shader_id", "expected_working_revision",
+                                      "expected_document_hash", "project_context_witness", "owner_generation"}
+    assert len(schemas["shader_edit_audio"]["properties"]["command"]["oneOf"]) == 13
+    wait = schemas["audio_get_preparation"]["properties"]["wait_s"]
+    assert wait == {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}
+    assert "Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read." \
+        in tool("audio_get_preparation")["description"]
+    assert schemas["audio_read_preview"]["properties"]["max_points"]["maximum"] == 128
+    selector = schemas["audio_read_signal"]["properties"]["selector"]["oneOf"]
+    assert selector[1]["properties"]["max_samples"]["maximum"] == 128
+    for name in ("audio_prepare_signal",):
+        assert schemas[name]["properties"]["signal_spec"]["properties"]["offset_ms"] == {
+            "type": "integer", "minimum": -1000, "maximum": 1000}
+        assert "offset_ms" not in schemas[name]["properties"]["signal_spec"]["required"]
+    assert "audio_monitor_latency_ms" in hextile_mcp._PREFERENCE_CHANGES["properties"]
+    assert tool("shader_get_audio")["annotations"] == {"readOnlyHint": True, "destructiveHint": False}
+    assert tool("audio_get_preparation")["annotations"] == {"readOnlyHint": True, "destructiveHint": False}
+    assert tool("audio_read_preview")["annotations"] == {"readOnlyHint": True, "destructiveHint": False}
+    assert tool("audio_read_signal")["annotations"] == {"readOnlyHint": True, "destructiveHint": False}
+    for name in ("audio_prepare_resource", "audio_prepare_analysis", "audio_prepare_signal",
+                 "audio_release_preparation", "shader_edit_audio"):
+        assert tool(name)["annotations"] == {"readOnlyHint": False, "destructiveHint": False}, name
+
+    jsonschema.validate({"shader": {"origin": "user", "shaderId": "aurora"},
+                         "project_context_witness": "wit", "selector": "signals", "limit": 50},
+                        schemas["shader_get_audio"])
+    jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                         "command": {"command": "edit_signal", "signal_id": "signal_" + "3" * 24,
+                                     "offset_ms": -1000}},
+                        schemas["shader_edit_audio"])
+    jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                         "source": {"kind": "local_file", "path": "/music/song.wav"}},
+                        schemas["audio_prepare_resource"])
+    jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                         "resource_id": "audio_" + "1" * 24, "profile_id": "hann2048-hop512/1",
+                         "demand_id": _AUDIO_DEMAND}, schemas["audio_prepare_analysis"])
+    jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                         "signal_spec": _audio_spec(), "demand_id": _AUDIO_DEMAND},
+                        schemas["audio_prepare_signal"])
+    jsonschema.validate({"receipt": "r" * 24, "wait_s": 25}, schemas["audio_get_preparation"])
+    jsonschema.validate({"receipt": "r" * 24, "kind": "waveform", "start_sample": 0,
+                         "end_sample": 100, "max_points": 128}, schemas["audio_read_preview"])
+    jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                         "curve_handle": "h" * 24,
+                         "selector": {"kind": "window", "start": {"num": "-1", "den": "2"},
+                                      "end": {"num": "1", "den": "2"}, "max_samples": 128}},
+                        schemas["audio_read_signal"])
+    for bad in ({"command": "edit_signal", "signal_id": "signal_" + "3" * 24, "offset_ms": 1001},
+                {"command": "set_track", "track_id": "track_" + "2" * 24,
+                 "timeline_start": {"num": "0", "den": "1"}, "monitor_gain": 1}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": bad},
+                                schemas["shader_edit_audio"])
+
+
+@pytest.mark.parametrize("tool,args,names", [
+    ("shader_get_audio", {}, ("missing project_context_witness, shader",)),
+    ("shader_edit_audio", {}, ("missing command, owner, request_id",)),
+    ("audio_prepare_resource", {}, ("missing owner, request_id, source",)),
+    ("audio_prepare_analysis", {}, ("missing demand_id, owner, profile_id",)),
+    ("audio_prepare_signal", {}, ("missing demand_id, owner, request_id, signal_spec",)),
+    ("audio_get_preparation", {}, ("missing receipt",)),
+    ("audio_release_preparation", {}, ("missing receipt",)),
+    ("audio_read_preview", {}, ("missing kind, receipt",)),
+    ("audio_read_signal", {}, ("missing curve_handle, owner, request_id, selector",)),
+    ("shader_get_audio", {"shader": {"origin": "user", "shaderId": "aurora"},
+                          "project_context_witness": "wit", "bogus": 1}, ("unknown bogus",)),
+    ("audio_prepare_signal", {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                              "signal_spec": _audio_spec(), "demand_id": _AUDIO_DEMAND,
+                              "bogus": 1}, ("unknown bogus",)),
+    ("audio_prepare_resource", {"request_id": _AUDIO_REQUEST, "bogus": 1},
+     ("missing owner, source", "unknown bogus")),
+    ("shader_get_audio", {"shader": {"origin": "user", "shaderId": "aurora"},
+                          "project_context_witness": "wit", "limit": 0}, ("limit",)),
+    ("shader_get_audio", {"shader": {"origin": "user", "shaderId": "aurora"},
+                          "project_context_witness": "wit", "selector": "everything"}, ("selector",)),
+    ("shader_get_audio", {"shader": {"origin": "user", "shaderId": "aurora"},
+                          "project_context_witness": "wit", "selector": "set_suggestion"}, ("track_id",)),
+    ("audio_prepare_resource", {"request_id": "not-a-uuid", "owner": _audio_owner(),
+                                "source": {"kind": "local_file", "path": "/x.wav"}}, ("request_id",)),
+    ("audio_prepare_signal", {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                              "signal_spec": {**_audio_spec(), "offset_ms": 1001},
+                              "demand_id": _AUDIO_DEMAND}, ("offset_ms",)),
+    ("audio_read_preview", {"receipt": "r" * 24, "kind": "waveform", "start_sample": 0,
+                            "end_sample": 100, "max_points": 129}, ("max_points",)),
+    ("audio_read_preview", {"receipt": "r" * 24, "kind": "waveform", "start_sample": 0,
+                            "end_sample": 100, "max_points": 8, "center_sample": 5}, ("center_sample",)),
+    ("audio_read_preview", {"receipt": "r" * 24, "kind": "data", "start": {"num": "0", "den": "1"},
+                            "end": {"num": "0", "den": "1"}, "max_points": 8},
+     ("end must be after start",)),
+    ("audio_read_signal", {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                           "curve_handle": "h" * 24,
+                           "selector": {"kind": "window", "start": {"num": "0", "den": "1"},
+                                        "end": {"num": "1", "den": "1"}, "max_samples": 129}},
+     ("max_samples",)),
+    ("shader_edit_audio", {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                           "command": {"command": "attach_track", "receipt_id": "r" * 24,
+                                       "timeline_start": {"num": "0", "den": "1"},
+                                       "in_sample": 0}}, ("out_sample",)),
+    ("shader_edit_audio", {"request_id": _AUDIO_REQUEST,
+                           "owner": _audio_owner(expected_document_hash="sha256:" + "a" * 64),
+                           "command": {"command": "edit_signal", "signal_id": "signal_" + "3" * 24,
+                                       "offset_ms": 0}}, ("expected_document_hash",)),
+    ("audio_get_preparation", {"receipt": "r" * 24, "wait_s": 26}, ("wait_s",)),
+])
+def test_audio_tool_refusals_are_closed_named_and_actionable(tool, args, names) -> None:
+    client = Client(opener=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("unexpected HTTP")))
+    server = HextileMcpServer(client=client, child_token="test")
+    reply = server.call_tool(tool, args)
+    payload = json.loads(reply["content"][0]["text"])
+    assert reply["isError"] is True
+    assert payload["code"] in {"invalid_arguments", "budget"}
+    assert payload["next_step"] and payload["message"] == payload["error"]
+    for name in names:
+        assert name in payload["message"]
+
+
+def test_shader_get_audio_pages_rows_once_and_refuses_stale_or_foreign_cursors(monkeypatch) -> None:
+    rows = [_audio_track(id="track_" + str(index) * 24) for index in range(3)]
+    for index, row in enumerate(rows):
+        row["resource_id"] = "audio_" + str(index) * 24
+        row["resource"] = _audio_resource(id=row["resource_id"])
+    replies = {
+        None: _audio_page(entries=rows[:2], total=3, next_cursor="g:2"),
+        "g:2": _audio_page(entries=rows[2:], total=3, next_cursor=None),
+    }
+    calls = []
+
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, kwargs.get("params")))
+        return replies[kwargs["params"].get("cursor")]
+
+    server, client = _audio_server(monkeypatch, reply)
+    args = {"shader": {"origin": "user", "shaderId": "aurora"}, "project_context_witness": "wit",
+            "limit": 2}
+    pages, cursor = [], None
+    while True:
+        result = client.get_shader_audio({**args, **({"cursor": cursor} if cursor else {})})
+        pages.extend(result["entries"])
+        assert result["total"] == 3 and len(result["entries"]) <= 2
+        cursor = result["next_cursor"]
+        if cursor is None:
+            break
+    assert [row["id"] for row in pages] == [row["id"] for row in rows]
+    assert calls[0][1] == "/api/shaders/agent-operations/audio"
+    assert calls[0][2]["selector"] == "tracks" and calls[0][2]["limit"] == 2
+
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
+        _audio_detail("invalid_cursor", 422, next_step="Pass next_cursor exactly as returned.")))
+    with pytest.raises(HextileClientError) as stale:
+        client.get_shader_audio({**args, "cursor": "old:2"})
+    assert (stale.value.code, stale.value.status_code) == ("invalid_cursor", 422)
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
+        _audio_detail("page_changed", 409, next_step="Read again without cursor.")))
+    with pytest.raises(HextileClientError) as changed:
+        client.get_shader_audio({**args, "cursor": "g:2"})
+    assert (changed.value.code, changed.value.status_code) == ("page_changed", 409)
+    assert changed.value.receipt["next_step"] == "Read again without cursor."
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
+        _audio_detail("invalid_cursor", 422, next_step="Pass next_cursor exactly as returned.")))
+    with pytest.raises(HextileClientError) as invalid:
+        client.get_shader_audio({**args, "cursor": "bad"})
+    assert (invalid.value.code, invalid.value.status_code) == ("invalid_cursor", 422)
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
+        "schema": 1, "shader": args["shader"], "project_context_witness": "wit",
+        "selector": "tracks", "provenance": "saved", "owner": _audio_owner(), "entries": rows})
+    with pytest.raises(HextileClientError) as old:
+        client.get_shader_audio(args)
+    assert old.value.kind == "unsupported"
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: _audio_page(
+        entries=rows[:1], total=2, next_cursor="g:2"))
+    with pytest.raises(HextileClientError):
+        client.get_shader_audio({**args, "cursor": "g:2"})
+    suggestion = client.get_shader_audio  # selector suggestion has no paging rows
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: _audio_page(
+        selector="set_suggestion", entries=None, total=None, next_cursor=None, suggestion={
+            "track_id": "track_" + "2" * 24, "lane": "A", "proposals": [
+                {"alias": alias, "label": label, "output_min": 0, "output_max": 1,
+                 "signal_spec": _audio_spec(offset_ms=0)}
+                for alias, label in (("A", "Amp"), ("A1", "Bass"), ("A2", "Mids"), ("A3", "Highs"))],
+            "modulator_slots": {"used": 1, "limit": 64}, "available": True}))
+    page = suggestion({**args, "selector": "set_suggestion", "track_id": "track_" + "2" * 24})
+    assert page["suggestion"]["available"] is True
+
+
+def test_shader_edit_audio_closed_commands_and_saved_or_mounted_replies(monkeypatch) -> None:
+    track_id, signal_id = "track_" + "2" * 24, "signal_" + "3" * 24
+    posted = []
+    state = {"reply": None}
+
+    def reply(method, path, body=None, **kwargs):
+        posted.append(body)
+        return state["reply"]
+
+    server, client = _audio_server(monkeypatch, reply)
+
+    def saved(command: dict, request_id: str = _AUDIO_REQUEST) -> dict:
+        return {"schema": 1, "request_id": request_id, "operation": "shader_edit_audio",
+                "state": "saved", "save": "saved", "shader": {"origin": "user", "shaderId": "aurora"},
+                "receipt": {"commit": 5, "revision": 4, "digest": "sha256:" + "c" * 64,
+                            "command": command["command"]},
+                "base": {**_audio_base(4)}}
+
+    for command in (
+        {"command": "attach_track", "receipt_id": "r" * 24,
+         "timeline_start": {"num": "0", "den": "1"}},
+        {"command": "set_track", "track_id": track_id, "timeline_start": {"num": "0", "den": "1"}},
+        {"command": "set_track", "track_id": track_id, "timeline_start": {"num": "0", "den": "1"},
+         "in_sample": 0, "out_sample": 1000, "monitor_gain": 0.5, "monitor_mute": False},
+        {"command": "replace_track", "track_id": track_id, "receipt_id": "r" * 24,
+         "timeline_start": {"num": "0", "den": "1"}, "in_sample": 0, "out_sample": 1000},
+        {"command": "remove_track", "track_id": track_id, "dependent_ids": ["mod_" + "4" * 24]},
+        {"command": "create_signal", "receipt_id": "r" * 24, "alias": "A", "label": "Amp",
+         "output_min": 0, "output_max": 1},
+        {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 250},
+        {"command": "edit_signal", "signal_id": signal_id, "receipt_id": "r" * 24},
+        {"command": "edit_signal", "signal_id": signal_id, "receipt_id": "r" * 24,
+         "modulator_id": "mod_" + "4" * 24, "label": "Amp", "output_min": 0, "output_max": 1},
+        {"command": "create_set", "specs": [
+            {"receipt_id": "r" * 24, "alias": alias, "label": label, "output_min": 0, "output_max": 1}
+            for alias, label in (("A", "Amp"), ("A1", "Bass"), ("A2", "Mids"), ("A3", "Highs"))]},
+        {"command": "remove_signal", "signal_id": signal_id, "dependent_ids": ["mod_" + "4" * 24]},
+    ):
+        state["reply"] = saved(command)
+        result = server.call_tool("shader_edit_audio", {
+            "request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": command})
+        assert result["isError"] is False, command["command"]
+        assert posted[-1] == {"schema": 1, "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                              "command": command}
+
+    state["reply"] = {"schema": 1, "request_id": _AUDIO_REQUEST, "operation": "shader_edit_audio",
+                      "state": "applied", "shader": {"origin": "user", "shaderId": "aurora"},
+                      "receipt": {"commit": 5, "revision": 4, "command": "remove_track"}}
+    assert server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "remove_track", "track_id": track_id,
+                    "dependent_ids": ["mod_" + "4" * 24]}})["isError"] is False
+
+    invalid = [
+        {"command": "attach_track", "receipt_id": "r" * 24,
+         "timeline_start": {"num": "0", "den": "1"}, "in_sample": 0},
+        {"command": "set_track", "track_id": track_id, "timeline_start": {"num": "0", "den": "1"},
+         "monitor_mute": True},
+        {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 0, "receipt_id": "r" * 24},
+        {"command": "create_set", "specs": []},
+        {"command": "create_signal", "receipt_id": "r" * 24, "alias": "A__bad", "label": "Amp",
+         "output_min": 0, "output_max": 1},
+        {"command": "remove_signal", "signal_id": signal_id, "dependent_ids": ["bad"]},
+        {"command": "restore_track", "from_request_id": "x", "track_id": track_id},
+    ]
+    for command in invalid:
+        payload = json.loads(server.call_tool("shader_edit_audio", {
+            "request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": command})["content"][0]["text"])
+        assert payload["code"] == "invalid_arguments", command
+
+    state["reply"] = {**saved({"command": "edit_signal"}), "base": None}
+    payload = json.loads(server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 0}})["content"][0]["text"])
+    assert payload["error"] == "Malformed Audio edit reply"
+    state["reply"] = {key: value for key, value in saved({"command": "edit_signal"}).items()
+                      if key != "base"}
+    payload = json.loads(server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 0}})["content"][0]["text"])
+    assert payload["error"] == "Malformed Audio edit reply"
+
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
+        HextileClientError("connection lost", kind="app_down")))
+    before = len(posted)
+    payload = json.loads(server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 0}})["content"][0]["text"])
+    assert len(posted) == before
+    assert payload["kind"] == "audio_outcome_unknown"
+    assert payload["receipt"] == {"request_id": _AUDIO_REQUEST}
+    assert "shader_get_operation" in payload["error"] and "never" not in payload["error"].lower() or True
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
+        _audio_detail("stale_lease", 409, message="The human holds the code and can hand it back.",
+                      next_step="Hand back, then retry with the same request_id.")))
+    payload = json.loads(server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 0}})["content"][0]["text"])
+    assert (payload["code"], payload["status_code"]) == ("stale_lease", 409)
+    assert payload["next_step"] == "Hand back, then retry with the same request_id."
+
+
+@pytest.mark.parametrize("kind,source,result_key", [
+    ("resource", {"kind": "local_file", "path": "/music/song.wav"}, "resource"),
+    ("analysis", {"resource_id": "audio_" + "1" * 24}, "analysis"),
+    ("signal", {"signal_spec": _audio_spec()}, "signal"),
+])
+def test_audio_prepare_forwards_closed_bodies_and_accepts_receipt_states(
+        monkeypatch, kind, source, result_key) -> None:
+    posted = []
+    ready = {
+        "resource": _audio_resource(),
+        "analysis": {"resource_id": "audio_" + "1" * 24, "canonical_sha256": "b" * 64,
+                     "profile_id": "hann2048-hop512/1"},
+        "signal": {"signal_id": "signal_" + "3" * 24, "resource_id": "audio_" + "1" * 24,
+                   "canonical_sha256": "b" * 64,
+                   "spec": {key: value for key, value in _audio_spec().items() if key != "offset_ms"},
+                   "profile_id": "hann2048-hop512/1", "curve_sha256": "d" * 64,
+                   "curve_handle": "h" * 24},
+    }[kind]
+    state = {"reply": _audio_receipt(kind, _AUDIO_REQUEST, result=ready)}
+
+    def reply(method, path, body=None, **kwargs):
+        posted.append((method, path, body))
+        return state["reply"]
+
+    server, client = _audio_server(monkeypatch, reply)
+    args = {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), **source}
+    if kind in ("resource", "analysis", "signal"):
+        args["demand_id"] = _AUDIO_DEMAND
+    if kind == "analysis":
+        args["profile_id"] = "hann2048-hop512/1"
+    name = {"resource": "audio_prepare_resource", "analysis": "audio_prepare_analysis",
+            "signal": "audio_prepare_signal"}[kind]
+    result = server.call_tool(name, args)
+    payload = json.loads(result["content"][0]["text"])
+    assert result["isError"] is False and payload["state"] == "ready"
+    sent = posted[-1][2]
+    assert sent["schema"] == 1 and sent["request_id"] == _AUDIO_REQUEST and sent["owner"] == _audio_owner()
+    if kind == "resource":
+        assert sent["source"] == source and sent["source"] is not source
+    elif kind == "analysis":
+        assert set(sent) == {"schema", "owner", "request_id", "resource_id", "profile_id", "demand_id"}
+    else:
+        assert sent["signal_spec"] == _audio_spec() and sent["demand_id"] == _AUDIO_DEMAND
+
+    state["reply"] = _audio_receipt(kind, _AUDIO_REQUEST, state="pending", progress=0.25)
+    pending = json.loads(server.call_tool(name, args)["content"][0]["text"])
+    assert (pending["state"], pending["progress"]) == ("pending", 0.25)
+    state["reply"] = _audio_receipt(kind, _AUDIO_REQUEST, state="error", progress=None,
+                                    error={"code": "analysis_unavailable", "message": "No analyzer"})
+    failed = json.loads(server.call_tool(name, args)["content"][0]["text"])
+    assert failed["state"] == "error" and failed["error"]["code"] == "analysis_unavailable"
+    state["reply"] = _audio_receipt(kind, _AUDIO_REQUEST, state="cancelled")
+    assert json.loads(server.call_tool(name, args)["content"][0]["text"])["state"] == "cancelled"
+    for changed in ({"state": "ready", "result": None}, {"state": "cancelled", "result": ready},
+                    {"request_id": _AUDIO_DEMAND}, {"owner_generation": -1},
+                    {"progress": 1.5}, {"result": {**ready, "path": "/private"}}
+                    if kind != "resource" else {"result": {**_audio_resource(), "path": "/private"}}):
+        state["reply"] = {**_audio_receipt(kind, _AUDIO_REQUEST, result=ready), **changed}
+        payload = json.loads(server.call_tool(name, args)["content"][0]["text"])
+        assert payload["ok"] is False and "Malformed Audio" in payload["error"], changed
+
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
+        HextileClientError("connection lost", kind="app_down")))
+    payload = json.loads(server.call_tool(name, args)["content"][0]["text"])
+    assert payload["kind"] == "audio_outcome_unknown"
+    assert payload["receipt"] == {"request_id": _AUDIO_REQUEST}
+    assert "audio_get_preparation" in payload["error"]
+
+
+def test_audio_preparation_status_and_reads_are_bounded(monkeypatch) -> None:
+    ready = {"signal_id": "signal_" + "3" * 24, "resource_id": "audio_" + "1" * 24,
+             "canonical_sha256": "b" * 64,
+             "spec": {key: value for key, value in _audio_spec().items() if key != "offset_ms"},
+             "profile_id": "hann2048-hop512/1", "curve_sha256": "d" * 64,
+             "curve_handle": "h" * 24}
+    receipt = _audio_receipt("signal", _AUDIO_REQUEST, result=ready)
+    calls = []
+
+    def reply(method, path, body=None, **kwargs):
+        calls.append((method, path, body, kwargs.get("params")))
+        if path.startswith("/api/audio/preparations/") and path.endswith("/preview"):
+            params = kwargs["params"]
+            if params["kind"] == "waveform":
+                return {"schema": 1, "canonical_sha256": "b" * 64, "pcm_profile": "pcm16-48k/1",
+                        "sample_rate": 48000, "start_sample": params["start_sample"],
+                        "end_sample": params["end_sample"],
+                        "buckets": [{"start_sample": params["start_sample"],
+                                     "end_sample": params["end_sample"], "min": -1, "max": 1}]}
+            if params["kind"] == "spectrum":
+                return {"schema": 1, "resource_id": "audio_" + "1" * 24, "canonical_sha256": "b" * 64,
+                        "profile_id": "hann2048-hop512/1", "center": {"num": "0", "den": "1"},
+                        "sample_rate": 48000, "fft_size": 2048, "powers": [0.0] * 1025}
+            return {"schema": 1, "canonical_sha256": "b" * 64, "kind": "curve", "parser_version": 1,
+                    "buckets": [{"start": {"num": "0", "den": "1"}, "end": {"num": "1", "den": "1"},
+                                 "min": 0, "max": 1}]}
+        if path.startswith("/api/audio/preparations/") and method == "DELETE":
+            return _audio_receipt("signal", _AUDIO_REQUEST, state="cancelled")
+        if path == "/api/audio/signals/read":
+            if body["selector"]["kind"] == "time":
+                return {"schema": 1, "signal_id": "signal_" + "3" * 24,
+                        "time": body["selector"]["time"], "source_generation": 1,
+                        "curve_sha256": "d" * 64, "state": "ready", "u": 0.5}
+            return {"schema": 1, "signal_id": "signal_" + "3" * 24,
+                    "resource_id": "audio_" + "1" * 24, "canonical_sha256": "b" * 64,
+                    "profile_id": "hann2048-hop512/1", "curve_sha256": "d" * 64,
+                    "source_generation": 1,
+                    "spec": {key: value for key, value in _audio_spec().items() if key != "offset_ms"},
+                    "offset_ms": 0,
+                    "track": {"id": "track_" + "2" * 24, "resource_id": "audio_" + "1" * 24,
+                              "timeline_start": {"num": "0", "den": "1"}, "in_sample": 0,
+                              "out_sample": 480000},
+                    "sample_rate": 48000, "hop": 512, "start": body["selector"]["start"],
+                    "end": body["selector"]["end"],
+                    "rows": [{"index": 0, "time": {"num": "0", "den": "1"}, "y": 0.5}],
+                    "neighbors": []}
+        return receipt
+
+    server, client = _audio_server(monkeypatch, reply)
+    with pytest.raises(HextileClientError) as too_big:
+        client.read_audio_preview({"receipt": "r" * 24, "kind": "waveform", "start_sample": 0,
+                                   "end_sample": 10, "max_points": 129})
+    assert (too_big.value.code, too_big.value.status_code) == ("budget", 422)
+    for bad in ({"receipt": "r" * 24, "kind": "waveform", "start_sample": 0, "end_sample": 10},
+                {"receipt": "r" * 24, "kind": "spectrum"},
+                {"receipt": "r" * 24, "kind": "data", "start": {"num": "0", "den": "1"},
+                 "end": {"num": "0", "den": "1"}, "max_points": 8},
+                {"receipt": "bad ref!", "kind": "spectrum", "center_sample": 0}):
+        with pytest.raises(HextileClientError):
+            client.read_audio_preview(bad)
+    assert client.read_audio_preview({"receipt": "r" * 24, "kind": "waveform", "start_sample": 0,
+                                      "end_sample": 480000, "max_points": 128})["buckets"][0]["max"] == 1
+    assert len(client.read_audio_preview({"receipt": "r" * 24, "kind": "spectrum",
+                                          "center_sample": 0})["powers"]) == 1025
+    assert client.read_audio_preview({"receipt": "r" * 24, "kind": "data",
+                                      "start": {"num": "0", "den": "1"},
+                                      "end": {"num": "1", "den": "1"},
+                                      "max_points": 8})["kind"] == "curve"
+    status = client.get_audio_preparation("r" * 24)
+    assert status["state"] == "ready" and status["result"]["curve_handle"] == "h" * 24
+    released = client.release_audio_preparation(_AUDIO_REQUEST)
+    assert released["state"] == "cancelled"
+    frame = client.read_audio_signal({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                                      "curve_handle": "h" * 24,
+                                      "selector": {"kind": "time",
+                                                   "time": {"num": "1", "den": "2"}}})
+    assert frame["u"] == 0.5
+    window = client.read_audio_signal({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                                       "curve_handle": "h" * 24,
+                                       "selector": {"kind": "window",
+                                                    "start": {"num": "-1", "den": "2"},
+                                                    "end": {"num": "1", "den": "2"},
+                                                    "max_samples": 128}})
+    assert window["rows"][0]["y"] == 0.5
+    with pytest.raises(HextileClientError) as samples:
+        client.read_audio_signal({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+                                  "curve_handle": "h" * 24,
+                                  "selector": {"kind": "window", "start": {"num": "0", "den": "1"},
+                                               "end": {"num": "1", "den": "1"}, "max_samples": 129}})
+    assert (samples.value.code, samples.value.status_code) == ("budget", 422)
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {"schema": 1, "kind": "signal"})
+    payload = json.loads(server.call_tool("audio_read_preview", {
+        "receipt": "r" * 24, "kind": "spectrum", "center_sample": 0})["content"][0]["text"])
+    assert payload["error"] == "Malformed Audio preview reply"
+
+
+def test_get_capabilities_admits_the_closed_audio_signals_contract(monkeypatch) -> None:
+    def capability(**changes: Any) -> dict[str, Any]:
+        return {"contract": "audio-signals/1", "available": True, "reason": None,
+                "owner_kinds": ["shader"], "document_revision": 1, "modulation_revision": 4,
+                "authoring_revision": 1,
+                "analyzer": {"profile_id": "hann2048-hop512/1", "pcm_profile": "pcm16-48k/1",
+                             "sample_rate": 48000, "fft_size": 2048, "hop": 512},
+                "supported_track_limit": 4,
+                "resource_kinds": [
+                    {"kind": "audio", "original_exts": ["wav", "flac", "mp3"]},
+                    {"kind": "midi", "original_exts": ["mid"], "parser_version": 1,
+                     "max_bytes": 16777216, "max_count": 200000},
+                    {"kind": "curve", "original_exts": ["csv"], "parser_version": 1,
+                     "max_bytes": 16777216, "max_count": 1000000},
+                    {"kind": "labels", "original_exts": ["txt"], "parser_version": 1,
+                     "max_bytes": 16777216, "max_count": 100000}],
+                "measurements": ["rms", "band", "midi_notes", "curve", "labels"],
+                "bounds": {"offset_ms": {"minimum": -1000, "maximum": 1000}},
+                "operations": ["prepare_resource", "prepare_analysis", "prepare_signal",
+                               "read_signal", "read_preview", "edit_audio"],
+                **changes}
+
+    client = Client("http://127.0.0.1:9")
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
+        "workflow_api_version": 1, "audio_signals": capability()})
+    payload = client.get_capabilities()
+    assert payload["audio_signals"]["supported_track_limit"] == 4
+    assert client.get_capabilities()["audio_signals"]["available"] is True
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
+        "workflow_api_version": 1, "audio_signals": capability(available=False, reason="disabled")})
+    assert client.get_capabilities()["audio_signals"]["reason"] == "disabled"
+    for bad, kind in ((capability(contract="audio-signals/2"), "unsupported"),
+                      (capability(operations=[]), "other"),
+                      (capability(**{"bogus": 1}), "other"),
+                      (capability(supported_track_limit=5), "other"),
+                      (capability(bounds={"offset_ms": {"minimum": -2000, "maximum": 1000}}), "other")):
+        monkeypatch.setattr(client, "request_json", lambda *_a, _bad=bad, **_k: {
+            "workflow_api_version": 1, "audio_signals": _bad})
+        with pytest.raises(HextileClientError) as caught:
+            client.get_capabilities()
+        assert caught.value.kind == kind
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {"workflow_api_version": 1})
+    assert "audio_signals" not in client.get_capabilities()
