@@ -22,7 +22,7 @@ def test_render_wait_returns_on_terminal_status_and_rejects_bad_duration(monkeyp
     sys.path.insert(0, str(ROOT / "mcp"))
     import hextile_mcp
 
-    for name in ("get_status", "shader_get_output_job", "get_shader_sequence"):
+    for name in ("get_status", "shader_get_output_job", "get_shader_sequence", "audio_get_preparation"):
         tool = next(row for row in hextile_mcp.TOOLS + hextile_mcp.SHADER_EXTENSION_TOOLS
                     if row["name"] == name)
         assert tool["inputSchema"]["properties"]["wait_s"] == {
@@ -760,3 +760,143 @@ def test_recorded_unchanged_edit_recovers_through_get_shader_update() -> None:
 
     value = {"save": "unchanged", "results": [], "commit": 1, "revision": 1, "changed": False}
     assert hextile_client._saved_result(dict(value))["save"] == "unchanged"
+
+
+# ── Audio preparation status reuses _wait_read and the control lane (T8g.1) ─────────────────
+
+class _AudioPreparations:
+    """audio_preparation(receipt, release=, timeout=) answering a scripted state sequence."""
+
+    def __init__(self, states, delay=0.0) -> None:  # noqa: ANN001
+        self.states, self.delay, self.calls = list(states), delay, []
+        self.started = threading.Event()
+
+    def audio_preparation(self, receipt, *, release=False, timeout=None):  # noqa: ANN001, ANN201
+        self.calls.append((receipt, release, timeout))
+        self.started.set()
+        if release:
+            return {"receipt_id": receipt, "state": "cancelled"}
+        if timeout is not None and self.delay:
+            time.sleep(timeout)
+            raise RuntimeError("timed out")
+        state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        return {"receipt_id": receipt, **({} if state is None else {"state": state})}
+
+
+def test_audio_preparation_wait_returns_on_terminal_or_unknown_state(monkeypatch) -> None:  # noqa: ANN001
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    now = [0.0]
+
+    class Event:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            now[0] += seconds
+            return False
+
+    monkeypatch.setattr(hextile_mcp, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    receipt = "r" * 24
+    for states, reads, waited in ((["pending", "ready"], 2, 1), (["pending", "error"], 2, 1),
+                                  (["cancelled"], 1, 0), (["future_native_state"], 1, 0), ([None], 1, 0)):
+        client = _AudioPreparations(states)
+        server = hextile_mcp.HextileMcpServer(client=client)
+        server._wait_shutdown = Event()
+        result = server._audio_get_preparation({"receipt": receipt, "wait_s": 25})
+        assert result["waited_s"] == waited and len(client.calls) == reads, states
+        assert client.calls[0] == (receipt, False, None)  # first read at the normal timeout; wait_s never sent
+    client = _AudioPreparations(["pending"])
+    server = hextile_mcp.HextileMcpServer(client=client)
+    assert server._wait_lock.acquire(blocking=False)  # another wait is running: answer at once
+    try:
+        assert server._audio_get_preparation({"receipt": receipt, "wait_s": 25})["waited_s"] == 0
+    finally:
+        server._wait_lock.release()
+    for bad in (-1, 26, 1.5, "1", True):
+        refusal = json.loads(server.call_tool("audio_get_preparation",
+                                              {"receipt": receipt, "wait_s": bad})["content"][0]["text"])
+        assert refusal["code"] == "invalid_arguments" and refusal["next_step"], bad
+    assert len(client.calls) == 1
+
+
+def test_audio_preparation_slow_reread_keeps_last_good_read_within_cap() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    client = _AudioPreparations(["pending"], delay=1.0)
+    server = hextile_mcp.HextileMcpServer(client=client)
+    before = threading.active_count()
+    started = time.monotonic()
+    result = server._audio_get_preparation({"receipt": "r" * 24, "wait_s": 2})
+    assert time.monotonic() - started <= 2.3
+    assert result["state"] == "pending" and 1.9 <= result["waited_s"] <= 2.3
+    assert threading.active_count() == before
+    timeouts = [call[2] for call in client.calls]
+    assert timeouts[0] is None and all(0 < t <= 1.5 for t in timeouts[1:])
+
+
+def test_audio_preparation_wait_keeps_release_and_ping_responsive(monkeypatch) -> None:  # noqa: ANN001
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_mcp
+
+    client = _AudioPreparations(["pending"])
+    server = hextile_mcp.HextileMcpServer(client=client)
+
+    class Input:
+        def __init__(self):
+            self.lines = queue.Queue()
+
+        def readline(self):
+            return self.lines.get()
+
+        def send(self, row):  # noqa: ANN001
+            self.lines.put(json.dumps(row) + "\n")
+
+    stdin, stdout = Input(), io.StringIO()
+    monkeypatch.setattr(hextile_mcp, "HextileMcpServer", lambda: server)
+    monkeypatch.setattr(hextile_mcp.sys, "stdin", stdin)
+    monkeypatch.setattr(hextile_mcp.sys, "stdout", stdout)
+    thread = threading.Thread(target=hextile_mcp.main)
+    thread.start()
+
+    def call(call_id, name, arguments):  # noqa: ANN001
+        stdin.send({"jsonrpc": "2.0", "id": call_id, "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments}})
+
+    def replies():
+        return {row["id"]: row for line in stdout.getvalue().splitlines()
+                if (row := json.loads(line)).get("id") is not None}
+
+    try:
+        call(1, "audio_get_preparation", {"receipt": "r" * 24, "wait_s": 25})
+        assert client.started.wait(1)
+        call(2, "audio_get_preparation", {"receipt": "s" * 24, "wait_s": 25})
+        call(3, "audio_release_preparation", {"receipt": "r" * 24})
+        stdin.send({"jsonrpc": "2.0", "id": 4, "method": "ping", "params": {}})
+        deadline = time.monotonic() + 1.5
+        while not {2, 3, 4} <= replies().keys() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        rows = replies()
+        assert {2, 3, 4} <= rows.keys() and 1 not in rows
+        assert json.loads(rows[2]["result"]["content"][0]["text"])["waited_s"] == 0
+        assert json.loads(rows[3]["result"]["content"][0]["text"])["state"] == "cancelled"
+        stdin.lines.put("")
+        thread.join(timeout=1.9)
+        assert not thread.is_alive() and 1 in replies()
+    finally:
+        if thread.is_alive():
+            stdin.lines.put("")
+            thread.join(timeout=3)
+
+
+def test_audio_preparation_status_and_release_answer_with_mcp_disabled() -> None:
+    client = _GateClient(lambda: {"enabled": False})
+    server = _gate_server(client, [])
+    answered = []
+    for name in ("audio_get_preparation", "audio_release_preparation"):
+        server._handlers[name] = lambda args, _name=name: answered.append(_name) or {"state": "cancelled"}
+        assert server.call_tool(name, {"receipt": "r" * 24})["isError"] is False, name
+    assert answered == ["audio_get_preparation", "audio_release_preparation"] and client.status_calls == 0
+    assert server.call_tool("audio_prepare_resource", {})["isError"] is True and client.status_calls == 1

@@ -1283,9 +1283,7 @@ TOOLS: list[dict[str, Any]] = [
     ),
     _tool_def(
         "get_capabilities",
-        "Use to check the workflow API version and supported features before relying on a newer option. "
-        "When the APP reports it, audio_signals (contract audio-signals/1) lists Audio resource kinds with "
-        "parser bounds, measurements, offset_ms bounds, supported_track_limit and operations.",
+        "Use to check the workflow API version and supported features before relying on a newer option.",
         {},
     ),
     _tool_def(
@@ -2909,7 +2907,7 @@ _AUDIO_ID = {"type": "string", "pattern": r"^[a-z]+_[0-9a-f]{24}$"}
 _AUDIO_SIGNAL_ID = {"type": "string", "pattern": r"^signal_[0-9a-f]{24}$"}
 _AUDIO_TRACK_ID = {"type": "string", "pattern": r"^track_[0-9a-f]{24}$"}
 _AUDIO_HANDLE = {"type": "string", "pattern": r"^[A-Za-z0-9_-]{16,128}$"}
-_AUDIO_RECEIPT_REF = {"type": "string", "pattern": r"^[A-Za-z0-9_-]{1,128}$",
+_AUDIO_RECEIPT_REF = {"type": "string", "pattern": r"^[A-Za-z0-9_-]{16,128}$",
                       "description": "receipt_id from a preparation reply, or its original request_id."}
 _AUDIO_DIGEST = {"type": "string", "pattern": r"^[0-9a-f]{64}$"}
 _AUDIO_PROFILE = {"const": "hann2048-hop512/1"}
@@ -2964,48 +2962,50 @@ _AUDIO_SOURCE = {"oneOf": [
                     "resource_id": {"type": "string", "pattern": r"^audio_[0-9a-f]{24}$"}}),
 ]}
 _AUDIO_DEPENDENT_IDS = {"type": "array", "maxItems": 256, "uniqueItems": True, "items": _AUDIO_ID}
+_AUDIO_SAMPLE = {"type": "integer", "minimum": 0}
+# in_sample/out_sample (and set_track's monitor fields) are sent together or not at all.
+_AUDIO_TRIM = {"in_sample": _AUDIO_SAMPLE, "out_sample": _AUDIO_SAMPLE}
+_AUDIO_TOGETHER = {"in_sample": ["out_sample"], "out_sample": ["in_sample"]}
+_AUDIO_LABEL = {"type": "string", "minLength": 1, "maxLength": 128}
+
+
+def _audio_command(name: str, properties: dict[str, Any], optional: tuple[str, ...] = (),
+                   together: Optional[dict[str, list[str]]] = None) -> dict[str, Any]:
+    shape = _shader_closed({"command": {"const": name}, **properties}, optional)
+    return {**shape, "dependentRequired": together} if together else shape
+
+
 _AUDIO_COMMAND = {"oneOf": [
-    _shader_closed({"command": {"const": "attach_track"}, "receipt_id": _AUDIO_HANDLE,
-                    "timeline_start": _AUDIO_TIME}),
-    _shader_closed({"command": {"const": "attach_track"}, "receipt_id": _AUDIO_HANDLE,
-                    "timeline_start": _AUDIO_TIME, "in_sample": {"type": "integer", "minimum": 0},
-                    "out_sample": {"type": "integer", "minimum": 0}}),
-    _shader_closed({"command": {"const": "set_track"}, "track_id": _AUDIO_TRACK_ID,
-                    "timeline_start": _AUDIO_TIME}),
-    _shader_closed({"command": {"const": "set_track"}, "track_id": _AUDIO_TRACK_ID,
-                    "timeline_start": _AUDIO_TIME, "in_sample": {"type": "integer", "minimum": 0},
-                    "out_sample": {"type": "integer", "minimum": 0},
-                    "monitor_gain": {"type": "number", "minimum": 0, "maximum": 1},
-                    "monitor_mute": {"type": "boolean"}}),
-    _shader_closed({"command": {"const": "replace_track"}, "track_id": _AUDIO_TRACK_ID,
-                    "receipt_id": _AUDIO_HANDLE, "timeline_start": _AUDIO_TIME}),
-    _shader_closed({"command": {"const": "replace_track"}, "track_id": _AUDIO_TRACK_ID,
-                    "receipt_id": _AUDIO_HANDLE, "timeline_start": _AUDIO_TIME,
-                    "in_sample": {"type": "integer", "minimum": 0},
-                    "out_sample": {"type": "integer", "minimum": 0}}),
-    _shader_closed({"command": {"const": "remove_track"}, "track_id": _AUDIO_TRACK_ID,
-                    "dependent_ids": _AUDIO_DEPENDENT_IDS}),
-    _shader_closed({"command": {"const": "create_signal"}, "receipt_id": _AUDIO_HANDLE,
-                    **_AUDIO_OUTPUT}),
-    _shader_closed({"command": {"const": "edit_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
-                    "offset_ms": {"type": "integer", "minimum": -1000, "maximum": 1000}}),
-    _shader_closed({"command": {"const": "edit_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
-                    "receipt_id": _AUDIO_HANDLE}),
-    _shader_closed({"command": {"const": "edit_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
-                    "receipt_id": _AUDIO_HANDLE, "modulator_id": _SHADER_MOD_ID,
-                    "label": {"type": "string", "minLength": 1, "maxLength": 128},
-                    "output_min": {"type": "number"}, "output_max": {"type": "number"}}),
-    _shader_closed({"command": {"const": "create_set"}, "specs": {
-        "type": "array", "minItems": 4, "maxItems": 4, "items": _shader_closed({
-            "receipt_id": _AUDIO_HANDLE, **_AUDIO_OUTPUT})}}),
-    _shader_closed({"command": {"const": "remove_signal"}, "signal_id": _AUDIO_SIGNAL_ID,
-                    "dependent_ids": _AUDIO_DEPENDENT_IDS}),
+    _audio_command("attach_track", {"receipt_id": _AUDIO_HANDLE, "timeline_start": _AUDIO_TIME, **_AUDIO_TRIM},
+                   tuple(_AUDIO_TRIM), _AUDIO_TOGETHER),
+    _audio_command("set_track", {"track_id": _AUDIO_TRACK_ID, "timeline_start": _AUDIO_TIME, **_AUDIO_TRIM,
+                                 "monitor_gain": {"type": "number", "minimum": 0, "maximum": 1},
+                                 "monitor_mute": {"type": "boolean"}},
+                   ("in_sample", "out_sample", "monitor_gain", "monitor_mute"),
+                   {key: [other for other in ("in_sample", "out_sample", "monitor_gain", "monitor_mute") if other != key]
+                    for key in ("in_sample", "out_sample", "monitor_gain", "monitor_mute")}),
+    _audio_command("replace_track", {"track_id": _AUDIO_TRACK_ID, "receipt_id": _AUDIO_HANDLE,
+                                     "timeline_start": _AUDIO_TIME, **_AUDIO_TRIM}, tuple(_AUDIO_TRIM), _AUDIO_TOGETHER),
+    _audio_command("remove_track", {"track_id": _AUDIO_TRACK_ID, "dependent_ids": _AUDIO_DEPENDENT_IDS}),
+    _audio_command("create_signal", {"receipt_id": _AUDIO_HANDLE, **_AUDIO_OUTPUT}),
+    _audio_command("edit_signal", {"signal_id": _AUDIO_SIGNAL_ID,
+                                   "offset_ms": {"type": "integer", "minimum": -1000, "maximum": 1000}}),
+    _audio_command("edit_signal", {"signal_id": _AUDIO_SIGNAL_ID, "receipt_id": _AUDIO_HANDLE,
+                                   "modulator_id": _SHADER_MOD_ID, "label": _AUDIO_LABEL,
+                                   "output_min": {"type": "number"}, "output_max": {"type": "number"}},
+                   ("modulator_id", "label", "output_min", "output_max"),
+                   {key: [other for other in ("modulator_id", "label", "output_min", "output_max") if other != key]
+                    for key in ("modulator_id", "label", "output_min", "output_max")}),
+    _audio_command("create_set", {"specs": {"type": "array", "minItems": 4, "maxItems": 4,
+                                            "items": _shader_closed({"receipt_id": _AUDIO_HANDLE, **_AUDIO_OUTPUT})}}),
+    _audio_command("remove_signal", {"signal_id": _AUDIO_SIGNAL_ID, "dependent_ids": _AUDIO_DEPENDENT_IDS}),
 ]}
 _AUDIO_SIGNAL_SELECTOR = {"oneOf": [
     _shader_closed({"kind": {"const": "time"}, "time": _AUDIO_SIGNED_TIME}),
     _shader_closed({"kind": {"const": "window"}, "start": _AUDIO_SIGNED_TIME, "end": _AUDIO_SIGNED_TIME,
                     "max_samples": {"type": "integer", "minimum": 1, "maximum": 128}}),
 ]}
+_AUDIO_RECEIPT_STEP = "Pass receipt: the receipt_id from a preparation reply or its original request_id."
 _AUDIO_WAIT_SENTENCE = "Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read."
 
 SHADER_EXTENSION_TOOLS = [
@@ -3567,12 +3567,11 @@ SHADER_EXTENSION_TOOLS = [
                "start": _AUDIO_TIME, "end": _AUDIO_TIME},
               ["receipt", "kind"]),
     _tool_def("audio_read_signal", "Use to read a ready Audio signal curve at one exact time or in a bounded window. "
-                                   "Pass request_id, owner, the ready curve_handle from audio_get_preparation and "
+                                   "Pass owner, the ready curve_handle from audio_get_preparation and "
                                    "selector {kind:\"time\", time} or {kind:\"window\", start, end, max_samples} with at "
                                    "most 128 samples. Pending or missing is never a ready zero.",
-              {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER,
-               "curve_handle": _AUDIO_HANDLE, "selector": _AUDIO_SIGNAL_SELECTOR},
-              ["request_id", "owner", "curve_handle", "selector"]),
+              {"owner": _AUDIO_OWNER, "curve_handle": _AUDIO_HANDLE, "selector": _AUDIO_SIGNAL_SELECTOR},
+              ["owner", "curve_handle", "selector"]),
 ]
 
 next(row for row in SHADER_EXTENSION_TOOLS if row["name"] == "shader_open_asset")["inputSchema"]["allOf"] = [
@@ -4400,13 +4399,13 @@ class HextileMcpServer:
         original_upscale_recovery = (name == "get_sequence_upscale_request" and isinstance(arguments, dict)
                                      and isinstance(arguments.get("request_id"), str)
                                      and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", arguments["request_id"]) is not None)
-        sequence_recovery = derived_sequence_control or original_upscale_recovery or name in {"get_fractal_request", "get_fractal_sequence", "get_shader_sequence"} or (
+        sequence_recovery = derived_sequence_control or original_upscale_recovery or name in {
+            "get_fractal_request", "get_fractal_sequence", "get_shader_sequence",
+            "audio_get_preparation", "audio_release_preparation"} or (
             name in {"control_fractal_sequence", "control_shader_sequence"}
             and isinstance(arguments, dict) and (arguments.get("action") in ("stop", "cancel_export")
                 or name == "control_shader_sequence" and arguments.get("action") in {"start_over", "recover_start_over"})
         )
-        # Admitted Audio preparation status/release stay serviceable while MCP is disabled.
-        sequence_recovery = sequence_recovery or name in {"audio_get_preparation", "audio_release_preparation"}
         if (
             not self.internal_mode
             and not sequence_recovery
@@ -5402,21 +5401,16 @@ class HextileMcpServer:
 
     def _audio_get_preparation(self, args: dict[str, Any]) -> Any:
         def read(native_args: dict[str, Any], timeout: Optional[float]) -> dict[str, Any]:
-            _closed_argument_error(
-                "Expected audio_get_preparation arguments", native_args, {"receipt"}, set(),
-                next_step="Pass receipt: the receipt_id from a preparation reply or its original request_id.")
-            return self.client.get_audio_preparation(native_args["receipt"], timeout=timeout)
+            _closed_argument_error("Expected audio_get_preparation arguments", native_args, {"receipt"}, set(),
+                                   next_step=_AUDIO_RECEIPT_STEP)
+            return self.client.audio_preparation(native_args["receipt"], timeout=timeout)
 
-        def state(result: dict[str, Any]) -> Any:
-            return result.get("state") if isinstance(result, dict) else None
-
-        return self._wait_read(args, read, state, frozenset({"pending"}))
+        return self._wait_read(args, read, lambda result: result.get("state"), frozenset({"pending"}))
 
     def _audio_release_preparation(self, args: dict[str, Any]) -> Any:
-        _closed_argument_error(
-            "Expected audio_release_preparation arguments", args, {"receipt"}, set(),
-            next_step="Pass receipt: the receipt_id from a preparation reply or its original request_id.")
-        return self.client.release_audio_preparation(args["receipt"])
+        _closed_argument_error("Expected audio_release_preparation arguments", args, {"receipt"}, set(),
+                               next_step=_AUDIO_RECEIPT_STEP)
+        return self.client.audio_preparation(args["receipt"], release=True)
 
     def _audio_read_preview(self, args: dict[str, Any]) -> Any:
         return self.client.read_audio_preview(args)

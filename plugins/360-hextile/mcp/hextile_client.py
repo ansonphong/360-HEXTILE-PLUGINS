@@ -1776,877 +1776,248 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None, lim
     return data
 
 
-# ── Audio analysis modulator adapters (T8g.1) ─────────────────────────────────────────────────
-# Closed wire shapes over the native Audio doors. Source-free identities, exact timing,
-# bounded receipts and prepared reads; never a path, media URL, private lease or full curve.
-
-_AUDIO_PROFILE = "hann2048-hop512/1"
-_AUDIO_PCM_PROFILE = "pcm16-48k/1"
-_AUDIO_SAMPLE_RATE = 48000
-_AUDIO_FFT_SIZE = 2048
+# ── Audio (T8g.1): closed adapters over the native Audio preparation and edit doors ──────────
+# Native validates every value and receipt. The proxy closes each object, checks identities and
+# the MCP read budgets, and closes reply envelopes: no paths, media, private leases or full curves.
+_AUDIO_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_AUDIO_REF = re.compile(r"[A-Za-z0-9_-]{16,128}")
+_AUDIO_ID = re.compile(r"[a-z]+_[0-9a-f]{24}")
 _AUDIO_MAX_POINTS = 128
-_AUDIO_RESULT_BYTES = 32768
-_AUDIO_MAX_SAFE = 9007199254740991
-_AUDIO_STATES = frozenset({"pending", "ready", "error", "cancelled"})
-_AUDIO_READINESS = frozenset({"ready", "pending", "error", "unavailable"})
-_AUDIO_MEASUREMENTS = {"rms": "audio", "band": "audio", "midi_notes": "midi",
-                       "curve": "curve", "labels": "labels"}
-_AUDIO_EXTENSIONS = {"audio": ("wav", "flac", "mp3"), "midi": ("mid",),
-                     "curve": ("csv",), "labels": ("txt",)}
-_AUDIO_RESOURCE_FIELDS = {
-    "audio": {"pcm_profile", "sample_rate", "sample_count", "channels", "decoder"},
-    "midi": {"parser_version", "duration", "note_count"},
-    "curve": {"parser_version", "duration", "row_count", "columns"},
-    "labels": {"parser_version", "duration", "label_count"},
+_AUDIO_STEP = "Read shader_get_audio for the current owner witness and IDs, then send the documented fields."
+_AUDIO_OWNER = frozenset({"kind", "origin", "shader_id", "expected_working_revision", "expected_document_hash",
+                          "project_context_witness", "owner_generation"})
+_AUDIO_TRIM = frozenset({"in_sample", "out_sample"})
+_AUDIO_SHAPING = frozenset({"label", "output_min", "output_max"})
+
+
+def _audio_time(value: Any) -> bool:
+    return (type(value) is dict and set(value) == {"num", "den"} and type(value["num"]) is str
+            and type(value["den"]) is str and re.fullmatch(r"0|-?[1-9][0-9]{0,18}", value["num"]) is not None
+            and re.fullmatch(r"[1-9][0-9]{0,18}", value["den"]) is not None)
+
+
+def _audio_number(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _audio_count(value: Any) -> bool:
+    return type(value) is int and value >= 0
+
+
+# Identity and bound checks on the fields the proxy closes; every other value is checked natively.
+_AUDIO_VALUES: dict[str, Callable[[Any], bool]] = {
+    **{key: lambda v: type(v) is str and _AUDIO_UUID.fullmatch(v) is not None for key in ("request_id", "demand_id")},
+    **{key: lambda v: type(v) is str and _AUDIO_REF.fullmatch(v) is not None
+       for key in ("receipt", "receipt_id", "curve_handle")},
+    **{key: lambda v: type(v) is str and _AUDIO_ID.fullmatch(v) is not None
+       for key in ("id", "track_id", "signal_id", "modulator_id", "resource_id")},
+    "dependent_ids": lambda v: (type(v) is list and len(v) <= 256 and len(set(map(str, v))) == len(v)
+                                and all(type(i) is str and _AUDIO_ID.fullmatch(i) for i in v)),
+    **{key: _audio_time for key in ("timeline_start", "time", "start", "end")},
+    **{key: _audio_count for key in ("in_sample", "out_sample", "start_sample", "end_sample", "center_sample",
+                                     "expected_working_revision", "owner_generation")},
+    **{key: _audio_number for key in ("output_min", "output_max", "gain", "attack", "release")},
+    "monitor_gain": lambda v: _audio_number(v) and 0 <= v <= 1,
+    "monitor_mute": lambda v: type(v) is bool,
+    "alias": lambda v: type(v) is str and "__" not in v and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,31}", v) is not None,
+    "label": lambda v: type(v) is str and 1 <= len(v) <= 128,
+    "offset_ms": lambda v: type(v) is int and -1000 <= v <= 1000,
+    "kind": lambda v: type(v) is str,
+    "origin": lambda v: v in {"builtin", "user", "project"},
+    **{key: lambda v: type(v) is str and 1 <= len(v) <= 512 for key in ("shader_id", "project_context_witness")},
+    "expected_document_hash": lambda v: type(v) is str and re.fullmatch(r"[0-9a-f]{64}", v) is not None,
+    "path": lambda v: type(v) is str and 1 <= len(v) <= 4096 and not re.match(r"[A-Za-z][A-Za-z0-9+.-]+:", v),
 }
-_AUDIO_RESOURCE_COMMON = {"id", "kind", "display_name", "original_sha256", "original_ext", "canonical_sha256"}
-_AUDIO_OWNER_FIELDS = frozenset({"kind", "origin", "shader_id", "expected_working_revision",
-                                 "expected_document_hash", "project_context_witness", "owner_generation"})
-_AUDIO_RECEIPT_FIELDS = frozenset({"schema", "kind", "receipt_id", "request_id", "owner_generation",
-                                   "source_generation", "state", "progress", "error", "result"})
-_AUDIO_COMMAND_NAMES = ("attach_track", "set_track", "replace_track", "remove_track",
-                        "create_signal", "edit_signal", "create_set", "remove_signal")
-_AUDIO_ID_RE = re.compile(r"[a-z]+_[0-9a-f]{24}")
-_AUDIO_HANDLE_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
-_AUDIO_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
-_AUDIO_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
-_AUDIO_ALIAS_RE = re.compile(r"(?!.*__)[A-Za-z][A-Za-z0-9_]{0,31}")
-_AUDIO_LANE_RE = re.compile(r"[A-Z]{1,4}")
-_AUDIO_STEP = ("Read shader_get_audio for the current owner witness and IDs, then send one "
-               "closed request with the documented arguments.")
-_AUDIO_OWNER_STEP = ("Pass the complete owner witness shader_get_audio returns (kind, origin, shader_id, "
-                     "expected_working_revision, expected_document_hash, project_context_witness, "
-                     "owner_generation).")
-_AUDIO_READ_STEP = ("Prepare the resource or signal first, wait for its receipt to be ready, then read "
-                    "with the returned reference.")
+# Closed variants: the value of the tag field selects alternative key sets (tag excluded).
+_AUDIO_COMMANDS = {
+    "attach_track": ({"receipt_id", "timeline_start"}, {"receipt_id", "timeline_start", *_AUDIO_TRIM}),
+    "set_track": ({"track_id", "timeline_start"},
+                  {"track_id", "timeline_start", *_AUDIO_TRIM, "monitor_gain", "monitor_mute"}),
+    "replace_track": ({"track_id", "receipt_id", "timeline_start"},
+                      {"track_id", "receipt_id", "timeline_start", *_AUDIO_TRIM}),
+    "remove_track": ({"track_id", "dependent_ids"},),
+    "create_signal": ({"receipt_id", "alias", *_AUDIO_SHAPING},),
+    "edit_signal": ({"signal_id", "offset_ms"}, {"signal_id", "receipt_id"},
+                    {"signal_id", "receipt_id", "modulator_id", *_AUDIO_SHAPING}),
+    "create_set": ({"specs"},),
+    "remove_signal": ({"signal_id", "dependent_ids"},),
+}
+_AUDIO_SOURCES = {"local_file": ({"path"},), "retained": ({"resource_id"},)}
+_AUDIO_SELECTORS = {"time": ({"time"},), "window": ({"start", "end", "max_samples"},)}
+_AUDIO_PREVIEWS = {"waveform": ({"receipt", "start_sample", "end_sample", "max_points"},),
+                   "spectrum": ({"receipt", "center_sample"},), "data": ({"receipt", "start", "end", "max_points"},)}
+_AUDIO_PREPARE_UNKNOWN = "Audio preparation outcome unknown; read audio_get_preparation with the original request_id."
+_AUDIO_SPEC = frozenset({"id", "track_id", "measurement", "gain", "attack", "release", "normalization"})
 
 
-def _audio_bad(label: str) -> HextileClientError:
-    return HextileClientError(f"Malformed Audio {label}", kind="other")
+def _audio_refused(message: str, next_step: str = _AUDIO_STEP, code: str = "invalid_arguments") -> HextileClientError:
+    return HextileClientError(message, status_code=422, kind="other", code=code, next_step=next_step)
 
 
-def _audio_invalid(message: str, next_step: str = _AUDIO_STEP) -> HextileClientError:
-    """A closed Audio argument or bound refused before any native request."""
-    return HextileClientError(message, status_code=422, kind="other", code="invalid_arguments",
-                              next_step=next_step)
+def _audio_closed(label: str, value: Any, required: set[str], optional: set[str] = frozenset(),
+                  next_step: str = _AUDIO_STEP) -> dict:
+    """Closed keys through the Wave B helper, then the identity/bound checks above."""
+    _closed_argument_error(label, value, set(required), set(optional), next_step=next_step)
+    for key, item in value.items():
+        check = _AUDIO_VALUES.get(key)
+        if check is not None and not check(item):
+            raise _audio_refused(f"{label}: invalid {_refusal_names([key])}", next_step)
+    return dict(value)
 
 
-def _audio_budget(message: str, next_step: str) -> HextileClientError:
-    return HextileClientError(message, status_code=422, kind="other", code="budget",
-                              next_step=next_step)
+def _audio_variant(label: str, value: Any, tag: str, variants: Mapping[str, tuple], next_step: str) -> dict:
+    """One closed tagged variant; a near miss names the fields of the closest variant."""
+    if isinstance(value, Mapping) and tag not in value:
+        _audio_closed(label, value, {tag, *set.intersection(*(set(s) for v in variants.values() for s in v))},
+                      set().union(*(s for v in variants.values() for s in v)), next_step)
+    if not isinstance(value, Mapping) or value.get(tag) not in variants:
+        raise _audio_refused(f"{label}: {tag} must be one of " + ", ".join(variants), next_step)
+    keys = set(value) - {tag}
+    options = variants[value[tag]]
+    shape = next((s for s in options if s == keys), None) or next(
+        (s for s in sorted(options, key=len) if keys <= s), max(options, key=len))
+    return _audio_closed(label, value, {tag, *shape}, set(), next_step)
 
 
-def _audio_number(value: Any, low: float, high: float, label: str) -> float:
-    if type(value) not in (int, float) or isinstance(value, bool):
-        raise _audio_invalid(f"{label} must be a finite number")
-    number = float(value)
-    if not math.isfinite(number) or not low <= number <= high:
-        raise _audio_invalid(f"{label} must be a finite number from {low} to {high}")
-    return number
-
-
-def _audio_integer(value: Any, low: int, high: int, label: str) -> int:
-    if type(value) is not int or not low <= value <= high:
-        raise _audio_invalid(f"{label} must be an integer from {low} to {high}")
+def _audio_budget(value: Any, label: str) -> int:
+    if type(value) is not int or value < 1:
+        raise _audio_refused(f"{label} must be a positive integer", f"Request 1 to {_AUDIO_MAX_POINTS} {label}.")
+    if value > _AUDIO_MAX_POINTS:
+        raise _audio_refused(f"MCP reads at most {_AUDIO_MAX_POINTS} {label}",
+                             f"Request at most {_AUDIO_MAX_POINTS} {label} and read again for the rest.", "budget")
     return value
 
 
-def _audio_text(value: Any, maximum: int, label: str, *, empty: bool = False) -> str:
-    if type(value) is not str or len(value) > maximum or (not value and not empty):
-        raise _audio_invalid(f"{label} must be text of at most {maximum} characters")
-    if any(ord(char) < 32 for char in value):
-        raise _audio_invalid(f"{label} must not contain control characters")
-    return value
+def _audio_owner_request(label: str, args: Any, required: set[str], step: str, *, write: bool = True) -> dict:
+    """A closed native envelope with the exact owner witness; writes require their caller request_id."""
+    body = _audio_closed(label, args, {"owner", *required, *(("request_id",) if write else ())}, set(), step)
+    body["owner"] = _audio_closed("Audio owner witness", body["owner"], set(_AUDIO_OWNER), set(),
+                                  "Pass the owner witness shader_get_audio returns, unchanged.")
+    if body["owner"]["kind"] != "shader":
+        raise _audio_refused("Audio owner witness: kind must be shader")
+    return {"schema": 1, **body}
 
 
-def _audio_uuid(value: Any, label: str = "request_id") -> str:
-    if type(value) is not str or _AUDIO_UUID_RE.fullmatch(value) is None:
-        raise _audio_invalid(f"{label} must be a canonical UUIDv4",
-                             "Mint one new UUIDv4 for this request; reuse the original id only to read its outcome.")
-    return value
+def _audio_signal_spec(value: Any) -> dict:
+    step = ("Pass the complete signal_spec: id, track_id, measurement, gain, attack, release, normalization "
+            "fixed_full_scale and optional offset_ms (-1000..1000).")
+    spec = _audio_closed("Audio signal_spec", value, set(_AUDIO_SPEC), {"offset_ms"}, step)
+    if not isinstance(spec["measurement"], Mapping) or type(spec["measurement"].get("kind")) is not str:
+        raise _audio_refused("Audio signal_spec: measurement must be a closed object with kind", step)
+    return spec
 
 
-def _audio_ref(value: Any, label: str = "receipt") -> str:
-    if type(value) is not str or not (1 <= len(value) <= 128):
-        raise _audio_invalid(f"{label} must be a preparation receipt id or its original request_id")
-    if _AUDIO_HANDLE_RE.fullmatch(value) is None and _AUDIO_UUID_RE.fullmatch(value) is None:
-        raise _audio_invalid(f"{label} must be a preparation receipt id or its original request_id")
-    return value
-
-
-def _audio_exact(value: Any, label: str, *, signed: bool = False) -> dict:
-    if type(value) is not dict or set(value) != {"num", "den"}:
-        raise _audio_invalid(f"{label} must be an exact time {{num, den}}")
-    num, den = value["num"], value["den"]
-    numbers = r"0|-?[1-9][0-9]*" if signed else r"0|[1-9][0-9]*"
-    if (type(num) is not str or type(den) is not str or len(num) > 20 or len(den) > 20
-            or re.fullmatch(numbers, num) is None or re.fullmatch(r"[1-9][0-9]*", den) is None):
-        raise _audio_invalid(f"{label} must be an exact time {{num, den}} of decimal strings")
-    return {"num": num, "den": den}
-
-
-def _audio_output(value: Mapping[str, Any], label: str) -> None:
-    low = _audio_number(value["output_min"], -1e6, 1e6, label + ".output_min")
-    high = _audio_number(value["output_max"], -1e6, 1e6, label + ".output_max")
-    if high <= low:
-        raise _audio_invalid(f"{label}.output_max must be greater than output_min")
-
-
-def _audio_alias_label(value: Mapping[str, Any], label: str) -> None:
-    alias = value["alias"]
-    if type(alias) is not str or _AUDIO_ALIAS_RE.fullmatch(alias) is None:
-        raise _audio_invalid(f"{label}.alias must start with a letter, avoid __ and be at most 32 characters")
-    _audio_text(value["label"], 128, label + ".label")
-
-
-def _audio_owner(value: Any) -> dict:
-    _closed_argument_error("Audio owner witness", value, set(_AUDIO_OWNER_FIELDS), set(),
-                           next_step=_AUDIO_OWNER_STEP)
-    if value["kind"] != "shader":
-        raise _audio_invalid("Audio owner witness kind must be shader", _AUDIO_OWNER_STEP)
-    if value["origin"] not in {"builtin", "user", "project"}:
-        raise _audio_invalid("Audio owner witness origin is not a Shader shelf", _AUDIO_OWNER_STEP)
-    if type(value["shader_id"]) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value["shader_id"]) is None:
-        raise _audio_invalid("Audio owner witness shader_id is invalid", _AUDIO_OWNER_STEP)
-    _audio_integer(value["expected_working_revision"], 0, _AUDIO_MAX_SAFE,
-                   "Audio owner witness expected_working_revision")
-    if type(value["expected_document_hash"]) is not str or _AUDIO_DIGEST_RE.fullmatch(
-            value["expected_document_hash"]) is None:
-        raise _audio_invalid("Audio owner witness expected_document_hash must be 64 lowercase hex digits",
-                             _AUDIO_OWNER_STEP)
-    _audio_text(value["project_context_witness"], 512, "Audio owner witness project_context_witness")
-    _audio_integer(value["owner_generation"], 0, _AUDIO_MAX_SAFE, "Audio owner witness owner_generation")
-    return {key: value[key] for key in _AUDIO_OWNER_FIELDS}
-
-
-def _audio_measurement(value: Any) -> dict:
-    step = "Use a measurement that fits the track kind: rms/band, midi_notes, curve or labels."
-    if type(value) is not dict or value.get("kind") not in _AUDIO_MEASUREMENTS:
-        raise _audio_invalid("measurement.kind must be rms, band, midi_notes, curve or labels", step)
-    kind = value["kind"]
-    if kind in ("rms", "band"):
-        required = {"kind", "profile_id"} | ({"low_hz", "high_hz"} if kind == "band" else set())
-        _closed_argument_error(f"Audio {kind} measurement", value, required, set(), next_step=step)
-        if value["profile_id"] != _AUDIO_PROFILE:
-            raise _audio_invalid(f"measurement.profile_id must be {_AUDIO_PROFILE}", step)
-        if kind == "band":
-            low = _audio_number(value["low_hz"], 0, _AUDIO_SAMPLE_RATE / 2, "measurement.low_hz")
-            high = _audio_number(value["high_hz"], 0, _AUDIO_SAMPLE_RATE / 2, "measurement.high_hz")
-            if low >= high:
-                raise _audio_invalid("measurement.low_hz must be less than high_hz", step)
-    elif kind == "midi_notes":
-        flt = value.get("filter")
-        if flt not in ("all", "note", "range"):
-            raise _audio_invalid("measurement.filter must be all, note or range", step)
-        required = {"kind", "filter", "value"} | ({"pitch"} if flt == "note"
-                                                  else {"pitch_low", "pitch_high"} if flt == "range" else set())
-        _closed_argument_error(f"Audio midi_notes measurement", value, required, set(), next_step=step)
-        if value["value"] not in ("trigger", "gate", "velocity"):
-            raise _audio_invalid("measurement.value must be trigger, gate or velocity", step)
-        if flt == "note":
-            _audio_integer(value["pitch"], 0, 127, "measurement.pitch")
-        elif flt == "range":
-            low = _audio_integer(value["pitch_low"], 0, 127, "measurement.pitch_low")
-            high = _audio_integer(value["pitch_high"], 0, 127, "measurement.pitch_high")
-            if low > high:
-                raise _audio_invalid("measurement.pitch_low must not exceed pitch_high", step)
-    elif kind == "curve":
-        _closed_argument_error("Audio curve measurement", value,
-                               {"kind", "column", "interpolation", "input_min", "input_max"}, set(),
-                               next_step=step)
-        _audio_integer(value["column"], 1, _AUDIO_MAX_SAFE, "measurement.column")
-        if value["interpolation"] not in ("linear", "step"):
-            raise _audio_invalid("measurement.interpolation must be linear or step", step)
-        low = _audio_number(value["input_min"], -1e308, 1e308, "measurement.input_min")
-        high = _audio_number(value["input_max"], -1e308, 1e308, "measurement.input_max")
-        if high <= low:
-            raise _audio_invalid("measurement.input_max must be greater than input_min", step)
-    else:
-        _closed_argument_error("Audio labels measurement", value, {"kind", "mode", "text"}, set(),
-                               next_step=step)
-        if value["mode"] not in ("trigger", "hold"):
-            raise _audio_invalid("measurement.mode must be trigger or hold", step)
-        if value["text"] is not None:
-            _audio_text(value["text"], 256, "measurement.text")
-    return {key: value[key] for key in value}
-
-
-def _audio_signal_spec(value: Any, *, curve_identity: bool = False) -> dict:
-    step = ("Pass the complete signal_spec: id, track_id, measurement, gain, attack, release, "
-            "normalization fixed_full_scale and optional offset_ms.")
-    fields = {"id", "track_id", "measurement", "gain", "attack", "release", "normalization"}
-    _closed_argument_error("Audio signal_spec", value, fields,
-                           set() if curve_identity else {"offset_ms"}, next_step=step)
-    if type(value["id"]) is not str or _AUDIO_ID_RE.fullmatch(value["id"]) is None:
-        raise _audio_invalid("signal_spec.id must be a signal ID", step)
-    if type(value["track_id"]) is not str or _AUDIO_ID_RE.fullmatch(value["track_id"]) is None:
-        raise _audio_invalid("signal_spec.track_id must be a track ID", step)
-    measurement = _audio_measurement(value["measurement"])
-    _audio_number(value["gain"], 0, 100, "signal_spec.gain")
-    _audio_number(value["attack"], 0, 60, "signal_spec.attack")
-    _audio_number(value["release"], 0, 60, "signal_spec.release")
-    if value["normalization"] != "fixed_full_scale":
-        raise _audio_invalid("signal_spec.normalization must be fixed_full_scale", step)
-    if "offset_ms" in value:
-        _audio_integer(value["offset_ms"], -1000, 1000, "signal_spec.offset_ms")
-    return {"id": value["id"], "track_id": value["track_id"], "measurement": measurement,
-            "gain": value["gain"], "attack": value["attack"], "release": value["release"],
-            "normalization": value["normalization"],
-            **({"offset_ms": value["offset_ms"]} if "offset_ms" in value else {})}
-
-
-def _audio_command(value: Any) -> dict:
-    step = "Send one closed Audio command valid for the current document; read shader_get_audio for IDs."
-    if type(value) is not dict or value.get("command") not in _AUDIO_COMMAND_NAMES:
-        raise _audio_invalid("command must be one of " + ", ".join(_AUDIO_COMMAND_NAMES), step)
-    kind = value["command"]
-    trim = {"in_sample", "out_sample"}
-    if kind == "attach_track":
-        _closed_argument_error("Audio attach_track command",
-                               value, {"command", "receipt_id", "timeline_start"}, trim, next_step=step)
-        _audio_handle(value["receipt_id"])
-        _audio_exact(value["timeline_start"], "command.timeline_start")
-        _audio_trim(value)
-    elif kind == "set_track":
-        audio = bool(trim & set(value)) or "monitor_gain" in value or "monitor_mute" in value
-        required = ({"command", "track_id", "timeline_start", "in_sample", "out_sample",
-                     "monitor_gain", "monitor_mute"} if audio else {"command", "track_id", "timeline_start"})
-        _closed_argument_error("Audio set_track command", value, required, set(), next_step=step)
-        _audio_id(value["track_id"], "command.track_id", "track")
-        _audio_exact(value["timeline_start"], "command.timeline_start")
-        if audio:
-            _audio_trim(value)
-            _audio_number(value["monitor_gain"], 0, 1, "command.monitor_gain")
-            if type(value["monitor_mute"]) is not bool:
-                raise _audio_invalid("command.monitor_mute must be a boolean", step)
-    elif kind == "replace_track":
-        _closed_argument_error("Audio replace_track command",
-                               value, {"command", "track_id", "receipt_id", "timeline_start"}, trim,
-                               next_step=step)
-        _audio_id(value["track_id"], "command.track_id", "track")
-        _audio_handle(value["receipt_id"])
-        _audio_exact(value["timeline_start"], "command.timeline_start")
-        _audio_trim(value)
-    elif kind in ("remove_track", "remove_signal"):
-        key = "track_id" if kind == "remove_track" else "signal_id"
-        _closed_argument_error(f"Audio {kind} command", value, {"command", key, "dependent_ids"}, set(),
-                               next_step=step)
-        _audio_id(value[key], "command." + key, key.split("_")[0])
-        _audio_ids(value["dependent_ids"], "command.dependent_ids")
-    elif kind == "create_signal":
-        _closed_argument_error("Audio create_signal command",
-                               value, {"command", "receipt_id", "alias", "label", "output_min", "output_max"},
-                               set(), next_step=step)
-        _audio_handle(value["receipt_id"])
-        _audio_alias_label(value, "command")
-        _audio_output(value, "command")
-    elif kind == "edit_signal":
-        if "offset_ms" in value:
-            _closed_argument_error("Audio edit_signal offset command",
-                                   value, {"command", "signal_id", "offset_ms"}, set(), next_step=step)
-            _audio_id(value["signal_id"], "command.signal_id", "signal")
-            _audio_integer(value["offset_ms"], -1000, 1000, "command.offset_ms")
-        elif "modulator_id" in value:
-            _closed_argument_error("Audio edit_signal command",
-                                   value, {"command", "signal_id", "receipt_id", "modulator_id", "label",
-                                           "output_min", "output_max"}, set(), next_step=step)
-            _audio_id(value["signal_id"], "command.signal_id", "signal")
-            _audio_handle(value["receipt_id"])
-            _audio_id(value["modulator_id"], "command.modulator_id", "mod")
-            _audio_text(value["label"], 128, "command.label")
-            _audio_output(value, "command")
-        else:
-            _closed_argument_error("Audio edit_signal command",
-                                   value, {"command", "signal_id", "receipt_id"}, set(), next_step=step)
-            _audio_id(value["signal_id"], "command.signal_id", "signal")
-            _audio_handle(value["receipt_id"])
-    elif kind == "create_set":
-        _closed_argument_error("Audio create_set command", value, {"command", "specs"}, set(), next_step=step)
-        specs = value["specs"]
-        if type(specs) is not list or len(specs) != 4:
-            raise _audio_invalid("command.specs must contain exactly four prepared signals", step)
-        aliases = set()
-        for spec in specs:
-            _closed_argument_error("Audio create_set spec", spec,
-                                   {"receipt_id", "alias", "label", "output_min", "output_max"}, set(),
-                                   next_step=step)
-            _audio_handle(spec["receipt_id"])
-            _audio_alias_label(spec, "command.spec")
-            _audio_output(spec, "command.spec")
-            if spec["alias"] in aliases:
-                raise _audio_invalid("command.specs aliases must be distinct", step)
-            aliases.add(spec["alias"])
-    else:  # remove_signal
-        _closed_argument_error("Audio remove_signal command",
-                               value, {"command", "signal_id", "dependent_ids"}, set(), next_step=step)
-        _audio_id(value["signal_id"], "command.signal_id", "signal")
-        _audio_ids(value["dependent_ids"], "command.dependent_ids")
-    return {key: value[key] for key in value}
-
-
-def _audio_handle(value: Any) -> str:
-    if type(value) is not str or _AUDIO_HANDLE_RE.fullmatch(value) is None:
-        raise _audio_invalid("receipt_id must be a preparation receipt id")
-    return value
-
-
-def _audio_id(value: Any, label: str, prefix: str) -> str:
-    if type(value) is not str or _AUDIO_ID_RE.fullmatch(value) is None or not value.startswith(prefix + "_"):
-        raise _audio_invalid(f"{label} must be an exact {prefix} ID")
-    return value
-
-
-def _audio_ids(value: Any, label: str) -> list:
-    if type(value) is not list or len(value) > 256 or len(set(value)) != len(value):
-        raise _audio_invalid(f"{label} must be at most 256 distinct IDs")
-    for item in value:
-        if type(item) is not str or _AUDIO_ID_RE.fullmatch(item) is None:
-            raise _audio_invalid(f"{label} must hold exact Audio IDs")
-    return list(value)
-
-
-def _audio_trim(value: Mapping[str, Any]) -> None:
-    if ("in_sample" in value) != ("out_sample" in value):
-        raise _audio_invalid("in_sample and out_sample must be sent together")
-    if "in_sample" in value:
-        low = _audio_integer(value["in_sample"], 0, _AUDIO_MAX_SAFE, "command.in_sample")
-        high = _audio_integer(value["out_sample"], 0, _AUDIO_MAX_SAFE, "command.out_sample")
-        if high <= low:
-            raise _audio_invalid("command.out_sample must be greater than in_sample")
-
-
-def _audio_resource(value: Any) -> dict:
-    if type(value) is not dict or value.get("kind") not in _AUDIO_EXTENSIONS:
-        raise _audio_bad("resource record")
-    kind = value["kind"]
-    if set(value) != _AUDIO_RESOURCE_COMMON | _AUDIO_RESOURCE_FIELDS[kind]:
-        raise _audio_bad("resource record")
-    if type(value["id"]) is not str or _AUDIO_ID_RE.fullmatch(value["id"]) is None:
-        raise _audio_bad("resource record")
-    if value["original_ext"] not in _AUDIO_EXTENSIONS[kind]:
-        raise _audio_bad("resource record")
-    if not all(type(value[key]) is str and _AUDIO_DIGEST_RE.fullmatch(value[key]) for key in
-               ("original_sha256", "canonical_sha256")):
-        raise _audio_bad("resource record")
-    if type(value["display_name"]) is not str or not 1 <= len(value["display_name"]) <= 255:
-        raise _audio_bad("resource record")
-    if kind == "audio":
-        if (value["pcm_profile"] != _AUDIO_PCM_PROFILE or value["sample_rate"] != _AUDIO_SAMPLE_RATE
-                or type(value["sample_count"]) is not int or value["sample_count"] < 1
-                or value["channels"] not in (1, 2)
-                or type(value["decoder"]) is not str or not 1 <= len(value["decoder"]) <= 128):
-            raise _audio_bad("resource record")
-    else:
-        if value["parser_version"] != 1 or type(value["duration"]) is not dict:
-            raise _audio_bad("resource record")
-        count = {"midi": "note_count", "curve": "row_count", "labels": "label_count"}[kind]
-        if type(value[count]) is not int or value[count] < 0:
-            raise _audio_bad("resource record")
-        if kind == "curve" and (type(value["columns"]) is not list or not 1 <= len(value["columns"]) <= 4096
-                                or any(type(row) is not dict or set(row) != {"min", "max"}
-                                       or not all(_audio_finite_number(row[key]) for key in ("min", "max"))
-                                       for row in value["columns"])):
-            raise _audio_bad("resource record")
-    return {key: value[key] for key in value}
-
-
-def _audio_finite_number(value: Any) -> bool:
-    return type(value) in (int, float) and not isinstance(value, bool) and math.isfinite(float(value))
-
-
-def _audio_receipt(value: Any, kind: str, request_id: Optional[str] = None) -> dict:
-    if type(value) is not dict or set(value) != _AUDIO_RECEIPT_FIELDS or value.get("schema") != 1:
-        raise _audio_bad("preparation receipt")
-    if value["kind"] != kind or value["state"] not in _AUDIO_STATES:
-        raise _audio_bad("preparation receipt")
-    if type(value["receipt_id"]) is not str or _AUDIO_HANDLE_RE.fullmatch(value["receipt_id"]) is None:
-        raise _audio_bad("preparation receipt")
-    if type(value["request_id"]) is not str or re.fullmatch(
-            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value["request_id"]) is None:
-        raise _audio_bad("preparation receipt")
-    if request_id is not None and value["request_id"] != request_id:
-        raise _audio_bad("preparation receipt")
-    if not all(type(value[key]) is int and value[key] >= 0 for key in ("owner_generation", "source_generation")):
-        raise _audio_bad("preparation receipt")
-    progress = value["progress"]
-    if progress is not None and not (_audio_finite_number(progress) and 0 <= float(progress) <= 1):
-        raise _audio_bad("preparation receipt")
-    error = value["error"]
-    if error is not None and (type(error) is not dict or set(error) != {"code", "message"}
-                              or not all(type(error[key]) is str for key in ("code", "message"))):
-        raise _audio_bad("preparation receipt")
-    result = value["result"]
-    if (value["state"] == "ready") != (result is not None) or (value["state"] == "error") != (error is not None):
-        raise _audio_bad("preparation receipt")
-    if result is not None:
-        if kind == "resource":
-            _audio_resource(result)
-        elif kind == "analysis":
-            if (type(result) is not dict
-                    or set(result) != {"resource_id", "canonical_sha256", "profile_id"}
-                    or type(result["resource_id"]) is not str or _AUDIO_ID_RE.fullmatch(result["resource_id"]) is None
-                    or type(result["canonical_sha256"]) is not str
-                    or _AUDIO_DIGEST_RE.fullmatch(result["canonical_sha256"]) is None
-                    or result["profile_id"] != _AUDIO_PROFILE):
-                raise _audio_bad("analysis receipt")
-        else:
-            _audio_signal_identity(result)
-    return _audio_sized({key: value[key] for key in _AUDIO_RECEIPT_FIELDS}, "preparation receipt")
-
-
-def _audio_signal_identity(value: Any) -> dict:
-    if type(value) is not dict or not {"signal_id", "resource_id", "canonical_sha256", "spec",
-                                       "curve_sha256", "curve_handle"} <= set(value):
-        raise _audio_bad("signal receipt")
-    extra = set(value) - {"signal_id", "resource_id", "canonical_sha256", "spec", "curve_sha256",
-                          "curve_handle", "profile_id", "parser_version"}
-    spec = _audio_signal_spec(value["spec"], curve_identity=True)
-    if extra or ("offset_ms" in value["spec"]):
-        raise _audio_bad("signal receipt")
-    data = _AUDIO_MEASUREMENTS[spec["measurement"]["kind"]] != "audio"
-    if set(value) != {"signal_id", "resource_id", "canonical_sha256", "spec", "curve_sha256",
-                      "curve_handle", "parser_version" if data else "profile_id"}:
-        raise _audio_bad("signal receipt")
-    if value["signal_id"] != spec["id"]:
-        raise _audio_bad("signal receipt")
-    if type(value["resource_id"]) is not str or _AUDIO_ID_RE.fullmatch(value["resource_id"]) is None:
-        raise _audio_bad("signal receipt")
-    if not all(type(value[key]) is str and _AUDIO_DIGEST_RE.fullmatch(value[key]) for key in
-               ("canonical_sha256", "curve_sha256")):
-        raise _audio_bad("signal receipt")
-    if type(value["curve_handle"]) is not str or _AUDIO_HANDLE_RE.fullmatch(value["curve_handle"]) is None:
-        raise _audio_bad("signal receipt")
-    if data:
-        if value["parser_version"] != 1:
-            raise _audio_bad("signal receipt")
-    elif value["profile_id"] != spec["measurement"]["profile_id"]:
-        raise _audio_bad("signal receipt")
-    return value
-
-
-def _audio_sized(value: Any, label: str) -> dict:
+def _audio_reply(value: Any, keys: set[str] | frozenset[str], label: str) -> dict:
+    """A closed schema-1 reply within the 32 KiB MCP result budget; nonfinite numbers refuse."""
     try:
         size = len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8"))
-    except (TypeError, ValueError, UnicodeError) as exc:
-        raise _audio_bad(label) from exc
-    if size > _AUDIO_RESULT_BYTES:
-        raise HextileClientError(f"Audio {label} exceeds the 32 KiB result limit", kind="other",
-                                 code="budget",
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        size = None
+    if type(value) is not dict or size is None or value.get("schema") != 1 or set(value) - keys:
+        raise HextileClientError(f"Malformed Audio {label}", kind="other")
+    if size > 32768:
+        raise HextileClientError(f"Audio {label} exceeds the 32 KiB result limit", kind="other", code="budget",
                                  next_step="Request a smaller page, window or preview range.")
     return value
 
 
-def _audio_witness(value: Any, *, origin: str, shader_id: str, witness: str) -> dict:
-    if (type(value) is not dict or set(value) != _AUDIO_OWNER_FIELDS or value.get("kind") != "shader"
-            or value.get("origin") != origin or value.get("shader_id") != shader_id
-            or value.get("project_context_witness") != witness
-            or type(value.get("owner_generation")) is not int or value["owner_generation"] < 0):
-        raise _audio_bad("owning witness")
-    return value
+_AUDIO_RECEIPT = frozenset({"schema", "kind", "receipt_id", "request_id", "owner_generation", "source_generation",
+                            "state", "progress", "error", "result"})
+_AUDIO_RESULTS = {
+    "resource": frozenset({"id", "kind", "display_name", "original_sha256", "original_ext", "canonical_sha256",
+                           "pcm_profile", "sample_rate", "sample_count", "channels", "decoder", "parser_version",
+                           "duration", "note_count", "row_count", "label_count", "columns"}),
+    "analysis": frozenset({"resource_id", "canonical_sha256", "profile_id"}),
+    "signal": frozenset({"signal_id", "resource_id", "canonical_sha256", "spec", "curve_sha256", "curve_handle",
+                         "profile_id", "parser_version"}),
+}
 
 
-def _audio_suggestion(value: Any) -> dict:
-    step = "Read shader_get_audio selector tracks for a track id, then ask for set_suggestion again."
-    if (type(value) is not dict or set(value) != {"track_id", "lane", "proposals", "modulator_slots", "available"}
-            or not isinstance(value.get("proposals"), list) or len(value["proposals"]) != 4
-            or type(value.get("modulator_slots")) is not dict
-            or set(value["modulator_slots"]) != {"used", "limit"} or type(value.get("available")) is not bool
-            or type(value.get("lane")) is not str or _AUDIO_LANE_RE.fullmatch(value["lane"]) is None
-            or type(value.get("track_id")) is not str):
-        raise _audio_bad("set suggestion")
-    for proposal in value["proposals"]:
-        if type(proposal) is not dict or set(proposal) != {"alias", "label", "output_min", "output_max",
-                                                           "signal_spec"}:
-            raise _audio_bad("set suggestion")
-        _audio_alias_label(proposal, "suggestion")
-        _audio_output(proposal, "suggestion")
-        _audio_signal_spec(proposal["signal_spec"])
-    return value
+def _audio_receipt(value: Any, request_id: Optional[str] = None) -> dict:
+    """Pending, ready, error and cancelled are real states; ready carries a result, never a ready zero."""
+    receipt = _audio_reply(value, _AUDIO_RECEIPT, "preparation receipt")
+    state, result, error, progress = (receipt.get(key) for key in ("state", "result", "error", "progress"))
+    if (set(receipt) != _AUDIO_RECEIPT or receipt["kind"] not in _AUDIO_RESULTS
+            or state not in {"pending", "ready", "error", "cancelled"}
+            or not _AUDIO_VALUES["receipt_id"](receipt["receipt_id"])
+            or not _AUDIO_VALUES["request_id"](receipt["request_id"])
+            or request_id is not None and receipt["request_id"] != request_id
+            or not all(_audio_count(receipt[key]) for key in ("owner_generation", "source_generation"))
+            or progress is not None and not (_audio_number(progress) and 0 <= progress <= 1)
+            or (state == "ready") != (result is not None) or (state == "error") != (error is not None)
+            or result is not None and (type(result) is not dict or set(result) - _AUDIO_RESULTS[receipt["kind"]])
+            or error is not None and (type(error) is not dict or set(error) != {"code", "message"})):
+        raise HextileClientError("Malformed Audio preparation receipt", kind="other")
+    return receipt
 
 
-def _audio_page(value: Any, args: Mapping[str, Any], limit: int) -> dict:
-    shader, witness, selector = args["shader"], args["project_context_witness"], args.get("selector", "tracks")
-    if type(value) is not dict or value.get("schema") != 1:
-        raise _audio_bad("audio page")
-    common = {"schema", "shader", "project_context_witness", "selector", "provenance", "owner"}
-    base = value.get("base")
-    if (set(value) - common - {"entries", "total", "next_cursor", "base", "suggestion"}
-            or value.get("shader") != shader or value.get("project_context_witness") != witness
-            or value.get("selector") != selector or value.get("provenance") not in {"saved", "mounted"}
-            or "owner" not in value or (base is not None and not _reply_base(base))):
-        raise _audio_bad("audio page")
-    _audio_witness(value["owner"], origin=shader["origin"], shader_id=shader["shaderId"], witness=witness)
+_AUDIO_PAGE = frozenset({"schema", "shader", "project_context_witness", "selector", "provenance", "owner", "base",
+                         "entries", "total", "next_cursor", "suggestion"})
+_AUDIO_ROWS = {
+    "tracks": frozenset({"id", "label", "resource_id", "timeline_start", "in_sample", "out_sample", "monitor_gain",
+                         "monitor_mute", "lane", "resource", "signal_ids"}),
+    "signals": frozenset({"id", "track_id", "measurement", "gain", "attack", "release", "normalization",
+                          "offset_ms", "readiness", "modulators"}),
+}
+# Native agent_operations._RESOURCE_FIELDS: the source-free projection of a track's resource.
+_AUDIO_TRACK_RESOURCE = frozenset({"kind", "display_name", "original_ext", "sample_rate", "sample_count", "channels",
+                                   "pcm_profile", "parser_version", "duration", "note_count", "row_count",
+                                   "label_count", "columns"})
+_AUDIO_MODULATOR = frozenset({"id", "alias", "label", "enabled", "output_min", "output_max", "mapped_targets"})
+_AUDIO_PROPOSAL = frozenset({"alias", "label", "output_min", "output_max", "signal_spec"})
+
+
+def _audio_page(value: Any, args: Mapping[str, Any], selector: str, limit: int) -> dict:
+    page = _audio_reply(value, _AUDIO_PAGE, "page")
+    owner = page.get("owner")
+    if (page.get("shader") != args["shader"] or page.get("project_context_witness") != args["project_context_witness"]
+            or page.get("selector") != selector or page.get("provenance") not in {"saved", "mounted"}
+            or type(owner) is not dict or set(owner) != _AUDIO_OWNER
+            or owner.get("shader_id") != args["shader"]["shaderId"] or owner.get("origin") != args["shader"]["origin"]
+            or "base" in page and not _reply_base(page["base"])):
+        raise HextileClientError("Malformed Audio page", kind="other")
     if selector == "set_suggestion":
-        if "entries" in value or "total" in value or "next_cursor" in value or "suggestion" not in value:
-            raise _audio_bad("audio page")
-        _audio_suggestion(value["suggestion"])
-        return _audio_sized(value, "audio page")
-    if "suggestion" in value or "next_cursor" not in value or "total" not in value:
+        suggestion = page.get("suggestion")
+        if ({"entries", "total", "next_cursor"} & set(page) or type(suggestion) is not dict
+                or set(suggestion) != {"track_id", "lane", "proposals", "modulator_slots", "available"}
+                or type(suggestion["proposals"]) is not list or len(suggestion["proposals"]) != 4
+                or any(type(row) is not dict or set(row) != _AUDIO_PROPOSAL for row in suggestion["proposals"])):
+            raise HextileClientError("Malformed Audio page", kind="other")
+        return page
+    if "suggestion" in page or "total" not in page or "next_cursor" not in page:
+        # An older APP returns every row: an explicit page must be honored, never sliced here.
         raise HextileClientError("Update 360 Hextile to read bounded Audio pages.", kind="unsupported",
                                  status_code=409)
-    entries, total, cursor_next = value.get("entries"), value["total"], value["next_cursor"]
-    if (type(entries) is not list or type(total) is not int or not len(entries) <= total
-            or type(cursor_next) not in (str, type(None))):
-        raise _audio_bad("audio page")
-    if (cursor_next is not None and (not 1 <= len(cursor_next) <= 160 or not entries
-                                     or cursor_next == args.get("cursor"))):
-        raise _audio_bad("audio page")
-    for entry in entries:
-        _audio_track(entry) if selector == "tracks" else _audio_signal(entry)
-    return _audio_sized(value, "audio page")
+    entries, cursor = page.get("entries"), page["next_cursor"]
+    if (type(entries) is not list or len(entries) > limit or not _audio_count(page["total"])
+            or any(type(row) is not dict or set(row) - _AUDIO_ROWS[selector]
+                   or selector == "tracks" and (type(row.get("resource")) is not dict
+                                                or set(row["resource"]) - _AUDIO_TRACK_RESOURCE)
+                   or selector == "signals" and (type(row.get("modulators")) is not list or any(
+                       type(mod) is not dict or set(mod) - _AUDIO_MODULATOR for mod in row["modulators"]))
+                   for row in entries)
+            or cursor is not None and (type(cursor) is not str or not 1 <= len(cursor) <= 160 or not entries
+                                       or cursor == args.get("cursor"))):
+        raise HextileClientError("Malformed Audio page", kind="other")
+    return page
 
 
-def _audio_track(value: Any) -> dict:
-    common = {"id", "label", "resource_id", "timeline_start", "lane", "resource", "signal_ids"}
-    if type(value) is not dict or not common <= set(value) or set(value) - common - {
-            "in_sample", "out_sample", "monitor_gain", "monitor_mute"}:
-        raise _audio_bad("track row")
-    resource = _audio_resource(value["resource"])
-    if value["resource_id"] != resource["id"] or type(value["label"]) is not str:
-        raise _audio_bad("track row")
-    if type(value["lane"]) is not str or _AUDIO_LANE_RE.fullmatch(value["lane"]) is None:
-        raise _audio_bad("track row")
-    _audio_exact(value["timeline_start"], "track.timeline_start")
-    _audio_ids(value["signal_ids"], "track.signal_ids")
-    audio = resource["kind"] == "audio"
-    if audio != ({"in_sample", "out_sample", "monitor_gain", "monitor_mute"} <= set(value)):
-        raise _audio_bad("track row")
-    if audio:
-        start = value["in_sample"]
-        if type(start) is not int or start < 0 or type(value["out_sample"]) is not int \
-                or value["out_sample"] <= start or value["out_sample"] > resource["sample_count"]:
-            raise _audio_bad("track row")
-        if not (_audio_finite_number(value["monitor_gain"]) and 0 <= float(value["monitor_gain"]) <= 1
-                and type(value["monitor_mute"]) is bool):
-            raise _audio_bad("track row")
-    return value
-
-
-def _audio_signal(value: Any) -> dict:
-    base = {"id", "track_id", "measurement", "gain", "attack", "release", "normalization", "offset_ms",
-            "readiness", "modulators"}
-    if type(value) is not dict or set(value) != base or value.get("readiness") not in _AUDIO_READINESS:
-        raise _audio_bad("signal row")
-    if type(value["id"]) is not str or _AUDIO_ID_RE.fullmatch(value["id"]) is None \
-            or type(value["track_id"]) is not str or _AUDIO_ID_RE.fullmatch(value["track_id"]) is None:
-        raise _audio_bad("signal row")
-    _audio_measurement(value["measurement"])
-    if not all(_audio_finite_number(value[key]) for key in ("gain", "attack", "release")):
-        raise _audio_bad("signal row")
-    if value["normalization"] != "fixed_full_scale" or type(value["offset_ms"]) is not int \
-            or not -1000 <= value["offset_ms"] <= 1000:
-        raise _audio_bad("signal row")
-    if type(value["modulators"]) is not list or len(value["modulators"]) > 256:
-        raise _audio_bad("signal row")
-    for modulator in value["modulators"]:
-        if (type(modulator) is not dict or not {"id", "mapped_targets"} <= set(modulator)
-                or set(modulator) - {"id", "alias", "label", "enabled", "output_min", "output_max",
-                                     "mapped_targets"}
-                or type(modulator["id"]) is not str or _AUDIO_ID_RE.fullmatch(modulator["id"]) is None
-                or modulator["id"].split("_")[0] != "mod"
-                or type(modulator["mapped_targets"]) is not list or len(modulator["mapped_targets"]) > 1024
-                or any(type(item) is not str or len(item) > 128 for item in modulator["mapped_targets"])):
-            raise _audio_bad("signal row")
-        if "alias" in modulator and (type(modulator["alias"]) is not str
-                                     or _AUDIO_ALIAS_RE.fullmatch(modulator["alias"]) is None):
-            raise _audio_bad("signal row")
-        if "enabled" in modulator and type(modulator["enabled"]) is not bool:
-            raise _audio_bad("signal row")
-        if "output_min" in modulator or "output_max" in modulator:
-            if not all(_audio_finite_number(modulator[key]) for key in ("output_min", "output_max")) \
-                    or modulator["output_max"] <= modulator["output_min"]:
-                raise _audio_bad("signal row")
-    return value
-
-
-def _audio_edit_reply(value: Any, request_id: str, owner: Mapping[str, Any], command: Mapping[str, Any]) -> dict:
-    shader = {"origin": owner["origin"], "shaderId": owner["shader_id"]}
-    common = {"schema", "request_id", "operation", "state", "shader", "receipt"}
-    if (type(value) is not dict or value.get("schema") != 1 or value.get("request_id") != request_id
-            or value.get("operation") != "shader_edit_audio" or value.get("shader") != shader
-            or not common <= set(value) or set(value) - common - {"save", "base"}):
-        raise _audio_bad("edit reply")
-    if value["state"] == "saved":
-        if value.get("save") not in {"saved", "unchanged"} or "base" not in value:
-            raise _audio_bad("edit reply")
-        if not _reply_base(value["base"]):
-            raise _audio_bad("edit reply")
-    elif value["state"] == "applied":
-        if "base" in value or "save" in value:
-            raise _audio_bad("edit reply")
-    else:
-        raise _audio_bad("edit reply")
-    receipt = value["receipt"]
-    fields = {"commit", "revision", "digest", "command", "track_id", "signal_ids", "modulator_ids", "aliases"}
-    if type(receipt) is not dict or set(receipt) - fields or receipt.get("command") != command["command"]:
-        raise _audio_bad("edit reply")
-    if not all(type(receipt[key]) is int and receipt[key] >= 0 for key in ("commit", "revision") if key in receipt):
-        raise _audio_bad("edit reply")
-    if "digest" in receipt and not _creation_digest(receipt["digest"]):
-        raise _audio_bad("edit reply")
-    if "track_id" in receipt and (type(receipt["track_id"]) is not str
-                                  or _AUDIO_ID_RE.fullmatch(receipt["track_id"]) is None):
-        raise _audio_bad("edit reply")
-    for key in ("signal_ids", "modulator_ids"):
-        if key in receipt and (type(receipt[key]) is not list or len(receipt[key]) > 256
-                               or any(type(item) is not str or _AUDIO_ID_RE.fullmatch(item) is None
-                                      for item in receipt[key])):
-            raise _audio_bad("edit reply")
-    if "aliases" in receipt and (type(receipt["aliases"]) is not list or len(receipt["aliases"]) > 256
-                                 or any(type(item) is not str or _AUDIO_ALIAS_RE.fullmatch(item) is None
-                                        for item in receipt["aliases"])):
-        raise _audio_bad("edit reply")
-    return _audio_sized(value, "edit receipt")
-
-
-def _audio_capability(value: Any) -> dict:
-    """audio-signals/1: descriptive only; admission still rechecks availability and ownership."""
-    def bad() -> HextileClientError:
-        return HextileClientError("Malformed Audio signal capability", kind="other")
-
-    if type(value) is not dict:
-        raise bad()
-    contract = value.get("contract")
-    if contract != "audio-signals/1":
-        raise HextileClientError("Update 360 Hextile to read the Audio signal contract.",
-                                 kind="unsupported", status_code=409)
-    fields = {"contract", "available", "reason", "owner_kinds", "document_revision", "modulation_revision",
-              "authoring_revision", "analyzer", "supported_track_limit", "resource_kinds", "measurements",
-              "bounds", "operations"}
-    if set(value) != fields or type(value.get("available")) is not bool:
-        raise bad()
-    reason = value.get("reason")
-    if reason is not None and (type(reason) is not str or not 1 <= len(reason) <= 300):
-        raise bad()
-    if value["available"] != (reason is None):
-        raise bad()
-    kinds = value.get("owner_kinds")
-    if type(kinds) is not list or not kinds or len(kinds) > 8 or any(item != "shader" for item in kinds):
-        raise bad()
-    if not all(type(value[key]) is int and 1 <= value[key] <= 1024
-               for key in ("document_revision", "modulation_revision", "authoring_revision")):
-        raise bad()
-    analyzer = value.get("analyzer")
-    if (type(analyzer) is not dict or set(analyzer) != {"profile_id", "pcm_profile", "sample_rate",
-                                                        "fft_size", "hop"}
-            or analyzer["profile_id"] != _AUDIO_PROFILE or analyzer["pcm_profile"] != _AUDIO_PCM_PROFILE
-            or analyzer["sample_rate"] != _AUDIO_SAMPLE_RATE or analyzer["fft_size"] != _AUDIO_FFT_SIZE
-            or analyzer["hop"] != 512):
-        raise bad()
-    if type(value.get("supported_track_limit")) is not int or value["supported_track_limit"] != 4:
-        raise bad()
-    resources = value.get("resource_kinds")
-    if type(resources) is not list or not resources or len(resources) > 8:
-        raise bad()
-    seen = set()
-    for row in resources:
-        if (type(row) is not dict or not {"kind", "original_exts"} <= set(row)
-                or set(row) - {"kind", "original_exts", "parser_version", "max_bytes", "max_count"}
-                or row["kind"] not in _AUDIO_EXTENSIONS or row["kind"] in seen):
-            raise bad()
-        seen.add(row["kind"])
-        if row["original_exts"] != list(_AUDIO_EXTENSIONS[row["kind"]]):
-            raise bad()
-        if "parser_version" in row and row["parser_version"] != 1:
-            raise bad()
-        if not all(type(row[key]) is int and 1 <= row[key] <= _AUDIO_MAX_SAFE
-                   for key in ("max_bytes", "max_count") if key in row):
-            raise bad()
-    if seen != set(_AUDIO_EXTENSIONS):
-        raise bad()
-    measurements = value.get("measurements")
-    if (type(measurements) is not list or len(measurements) != len(_AUDIO_MEASUREMENTS)
-            or set(measurements) != set(_AUDIO_MEASUREMENTS)):
-        raise bad()
-    bounds = value.get("bounds")
-    if (type(bounds) is not dict or set(bounds) != {"offset_ms"}
-            or type(bounds["offset_ms"]) is not dict
-            or set(bounds["offset_ms"]) != {"minimum", "maximum"}
-            or bounds["offset_ms"]["minimum"] != -1000 or bounds["offset_ms"]["maximum"] != 1000):
-        raise bad()
-    operations = value.get("operations")
-    if (type(operations) is not list or not operations or len(operations) > 32
-            or any(type(item) is not str or not 1 <= len(item) <= 64 for item in operations)):
-        raise bad()
-    return value
-
-
-def _audio_preview_request(args: Mapping[str, Any]) -> dict:
-    kind = args.get("kind")
-    step = "Pass kind waveform, spectrum or data with exactly that variant's fields."
-    if kind == "waveform":
-        _closed_argument_error("Audio waveform preview", args,
-                               {"receipt", "kind", "start_sample", "end_sample", "max_points"}, set(),
-                               next_step=step)
-        start = _audio_integer(args["start_sample"], 0, _AUDIO_MAX_SAFE, "start_sample")
-        end = _audio_integer(args["end_sample"], 0, _AUDIO_MAX_SAFE, "end_sample")
-        if end <= start:
-            raise _audio_invalid("end_sample must be greater than start_sample", step)
-        points = _audio_bucket_points(args["max_points"])
-        return {"kind": kind, "start_sample": start, "end_sample": end, "max_points": points}
-    if kind == "spectrum":
-        _closed_argument_error("Audio spectrum preview", args, {"receipt", "kind", "center_sample"}, set(),
-                               next_step=step)
-        return {"kind": kind, "center_sample": _audio_integer(args["center_sample"], 0, _AUDIO_MAX_SAFE,
-                                                              "center_sample")}
-    if kind == "data":
-        _closed_argument_error("Audio data preview", args, {"receipt", "kind", "start", "end", "max_points"},
-                               set(), next_step=step)
-        start = _audio_exact(args["start"], "start")
-        end = _audio_exact(args["end"], "end")
-        if int(end["num"]) * int(start["den"]) <= int(start["num"]) * int(end["den"]):
-            raise _audio_invalid("end must be after start", step)
-        points = _audio_bucket_points(args["max_points"])
-        return {"kind": kind, "start": start, "end": end, "max_points": points}
-    raise _audio_invalid("kind must be waveform, spectrum or data", step)
-
-
-def _audio_bucket_points(value: Any) -> int:
-    if type(value) is not int or isinstance(value, bool) or value < 1:
-        raise _audio_invalid("max_points must be a positive integer",
-                             "Request at most 128 buckets for one MCP preview.")
-    if value > _AUDIO_MAX_POINTS:
-        raise _audio_budget(f"max_points reads at most {_AUDIO_MAX_POINTS} buckets",
-                            "Request at most 128 buckets for one MCP preview.")
-    return value
-
-
-def _audio_preview_reply(value: Any, request: Mapping[str, Any]) -> dict:
-    kind = request["kind"]
-    if kind == "waveform":
-        if type(value) is not dict or set(value) != {"schema", "canonical_sha256", "pcm_profile",
-                                                     "sample_rate", "start_sample", "end_sample", "buckets"}:
-            raise _audio_bad("preview reply")
-        if (value["schema"] != 1 or value["pcm_profile"] != _AUDIO_PCM_PROFILE
-                or value["sample_rate"] != _AUDIO_SAMPLE_RATE
-                or value["start_sample"] != request["start_sample"] or value["end_sample"] != request["end_sample"]):
-            raise _audio_bad("preview reply")
-        cursor = request["start_sample"]
-        buckets = value.get("buckets")
-        if type(buckets) is not list or len(buckets) > request["max_points"]:
-            raise _audio_bad("preview reply")
-        for bucket in buckets:
-            if (type(bucket) is not dict or set(bucket) != {"start_sample", "end_sample", "min", "max"}
-                    or bucket["start_sample"] != cursor
-                    or not all(_audio_finite_number(bucket[key]) and -1 <= float(bucket[key]) <= 1
-                               for key in ("min", "max")) or bucket["max"] < bucket["min"]):
-                raise _audio_bad("preview reply")
-            cursor = bucket["end_sample"]
-            if type(cursor) is not int or not 1 <= cursor <= request["end_sample"]:
-                raise _audio_bad("preview reply")
-        if buckets and cursor != request["end_sample"]:
-            raise _audio_bad("preview reply")
-    elif kind == "spectrum":
-        if type(value) is not dict or set(value) != {"schema", "resource_id", "canonical_sha256", "profile_id",
-                                                     "center", "sample_rate", "fft_size", "powers"}:
-            raise _audio_bad("preview reply")
-        powers = value.get("powers")
-        if (value["schema"] != 1 or value["profile_id"] != _AUDIO_PROFILE
-                or value["sample_rate"] != _AUDIO_SAMPLE_RATE or value["fft_size"] != _AUDIO_FFT_SIZE
-                or type(powers) is not list or len(powers) != _AUDIO_FFT_SIZE // 2 + 1
-                or any(not _audio_finite_number(item) or float(item) < 0 for item in powers)
-                or type(value["resource_id"]) is not str or _AUDIO_ID_RE.fullmatch(value["resource_id"]) is None
-                or type(value["canonical_sha256"]) is not str
-                or _AUDIO_DIGEST_RE.fullmatch(value["canonical_sha256"]) is None):
-            raise _audio_bad("preview reply")
-        _audio_exact(value["center"], "center", signed=True)
-    else:
-        if type(value) is not dict or set(value) != {"schema", "canonical_sha256", "kind", "parser_version",
-                                                     "buckets"}:
-            raise _audio_bad("preview reply")
-        data_kind = value.get("kind")
-        if data_kind not in ("midi", "curve", "labels") or value["schema"] != 1 or value["parser_version"] != 1:
-            raise _audio_bad("preview reply")
-        buckets = value.get("buckets")
-        if type(buckets) is not list or len(buckets) > request["max_points"]:
-            raise _audio_bad("preview reply")
-        previous = (0, 1)
-        for bucket in buckets:
-            fields = {"midi": {"time", "pitch", "velocity"}, "curve": {"start", "end", "min", "max"},
-                      "labels": {"start", "end", "text"}}[data_kind]
-            if type(bucket) is not dict or set(bucket) != fields:
-                raise _audio_bad("preview reply")
-            start = _audio_exact(bucket["time" if data_kind == "midi" else "start"], "bucket.start")
-            if int(start["num"]) * previous[1] < previous[0] * int(start["den"]):
-                raise _audio_bad("preview reply")
-            previous = (int(start["num"]), int(start["den"]))
-            if data_kind == "midi":
-                if type(bucket["pitch"]) is not int or not 0 <= bucket["pitch"] <= 127 \
-                        or type(bucket["velocity"]) is not int or not 1 <= bucket["velocity"] <= 127:
-                    raise _audio_bad("preview reply")
-            else:
-                _audio_exact(bucket["end"], "bucket.end")
-                if data_kind == "curve":
-                    if not all(_audio_finite_number(bucket[key]) for key in ("min", "max")) \
-                            or bucket["max"] < bucket["min"]:
-                        raise _audio_bad("preview reply")
-                elif type(bucket["text"]) is not str or len(bucket["text"]) > 64:
-                    raise _audio_bad("preview reply")
-    if type(value["canonical_sha256"]) is not str or _AUDIO_DIGEST_RE.fullmatch(value["canonical_sha256"]) is None:
-        raise _audio_bad("preview reply")
-    return _audio_sized(value, "preview reply")
-
-
-def _audio_frame(value: Any) -> dict:
-    if (type(value) is not dict or set(value) != {"schema", "signal_id", "time", "source_generation",
-                                                  "curve_sha256", "state", "u"}
-            or value.get("schema") != 1 or value.get("state") != "ready"
-            or type(value.get("signal_id")) is not str or _AUDIO_ID_RE.fullmatch(value["signal_id"]) is None
-            or type(value.get("curve_sha256")) is not str
-            or _AUDIO_DIGEST_RE.fullmatch(value["curve_sha256"]) is None
-            or type(value.get("source_generation")) is not int or value["source_generation"] < 0
-            or not (_audio_finite_number(value.get("u")) and 0 <= float(value["u"]) <= 1)):
-        raise _audio_bad("signal frame")
-    _audio_exact(value["time"], "time", signed=True)
-    return _audio_sized(value, "signal frame")
-
-
-def _audio_row(value: Any) -> dict:
-    if (type(value) is not dict or set(value) != {"index", "time", "y"}
-            or type(value["index"]) is not int or value["index"] < 0
-            or not _audio_finite_number(value["y"])):
-        raise _audio_bad("curve window")
-    _audio_exact(value["time"], "row.time", signed=True)
-    return value
-
-
-def _audio_window(value: Any, request: Mapping[str, Any]) -> dict:
-    fields = {"schema", "signal_id", "resource_id", "canonical_sha256", "profile_id", "curve_sha256",
-              "source_generation", "spec", "offset_ms", "track", "sample_rate", "hop", "start", "end",
-              "rows", "neighbors"}
-    if (type(value) is not dict or set(value) != fields or value.get("schema") != 1
-            or value.get("sample_rate") != _AUDIO_SAMPLE_RATE or type(value.get("hop")) is not int
-            or value["hop"] < 1 or type(value.get("source_generation")) is not int
-            or value["source_generation"] < 0):
-        raise _audio_bad("curve window")
-    if value.get("spec") and "offset_ms" in value["spec"]:
-        raise _audio_bad("curve window")
-    _audio_signal_spec(value["spec"], curve_identity=True)
-    _audio_integer(value["offset_ms"], -1000, 1000, "offset_ms")
-    if not all(type(value[key]) is str for key in ("signal_id", "resource_id", "profile_id")):
-        raise _audio_bad("curve window")
-    if value["profile_id"] != _AUDIO_PROFILE:
-        raise _audio_bad("curve window")
-    if not all(type(value[key]) is str and _AUDIO_DIGEST_RE.fullmatch(value[key]) for key in
-               ("canonical_sha256", "curve_sha256")):
-        raise _audio_bad("curve window")
-    if (type(value["track"]) is not dict
-            or set(value["track"]) != {"id", "resource_id", "timeline_start", "in_sample", "out_sample"}):
-        raise _audio_bad("curve window")
-    start, end = _audio_exact(value["start"], "start", signed=True), _audio_exact(value["end"], "end", signed=True)
-    if int(end["num"]) * int(start["den"]) <= int(start["num"]) * int(end["den"]):
-        raise _audio_bad("curve window")
-    for got, sent in ((start, request["start"]), (end, request["end"])):
-        if int(got["num"]) * int(sent["den"]) != int(sent["num"]) * int(got["den"]):
-            raise _audio_bad("curve window")
-    rows, neighbors = value.get("rows"), value.get("neighbors")
-    if type(rows) is not list or type(neighbors) is not list:
-        raise _audio_bad("curve window")
-    if len(rows) + len(neighbors) > request["max_samples"]:
-        raise _audio_bad("curve window")
-    for row in rows + neighbors:
-        _audio_row(row)
-    return _audio_sized(value, "curve window")
+_AUDIO_EDIT = frozenset({"schema", "request_id", "operation", "state", "save", "shader", "receipt", "base"})
+_AUDIO_EDIT_RECEIPT = frozenset({"commit", "revision", "digest", "command", "track_id", "signal_ids",
+                                 "modulator_ids", "aliases"})
+_AUDIO_PREVIEW_REPLIES = {
+    "waveform": frozenset({"schema", "canonical_sha256", "pcm_profile", "sample_rate", "start_sample", "end_sample",
+                           "buckets"}),
+    "spectrum": frozenset({"schema", "resource_id", "canonical_sha256", "profile_id", "center", "sample_rate",
+                           "fft_size", "powers"}),
+    "data": frozenset({"schema", "canonical_sha256", "kind", "parser_version", "buckets"}),
+}
+_AUDIO_SIGNAL_REPLIES = {
+    "time": frozenset({"schema", "signal_id", "time", "source_generation", "curve_sha256", "state", "u"}),
+    "window": frozenset({"schema", "signal_id", "resource_id", "canonical_sha256", "profile_id", "curve_sha256",
+                         "source_generation", "spec", "offset_ms", "track", "sample_rate", "hop", "start", "end",
+                         "rows", "neighbors"}),
+}
 
 
 _PACKAGE_CREDIT_KEYS = {"licenses_append", "contributor", "contribution", "record", "retained", "lineage", "text"}
@@ -4919,11 +4290,8 @@ class Client:
         return self.get_json(f"/api/workflows/{o}/{wid}")
 
     def get_capabilities(self) -> Any:
-        """GET /api/workflows/capabilities. An Audio signal descriptor is optional and closed."""
-        payload = self.get_json("/api/workflows/capabilities")
-        if type(payload) is dict and "audio_signals" in payload:
-            return {**payload, "audio_signals": _audio_capability(payload["audio_signals"])}
-        return payload
+        """GET /api/workflows/capabilities."""
+        return self.get_json("/api/workflows/capabilities")
 
     def get_config_schema(self, model: Optional[str] = None) -> Any:
         """GET /api/workflows/config-schema. Names, or one model schema. No current config."""
@@ -8795,258 +8163,161 @@ class Client:
     def export_shader_to_project(self, args: Mapping[str, Any]) -> dict:
         return self._shader_output_post("project", args, "/api/shaders/agent-operations/output/project")
 
-    # ── Audio analysis modulator adapters (T8g.1) ───────────────────────
+    # ── Audio (T8g.1) ───────────────────────────────────────────────────
 
     @staticmethod
-    def _audio_read_failure(exc: HextileClientError) -> None:
-        """Relay a typed native Audio refusal; other read failures stay raw."""
+    def _audio_failure(exc: HextileClientError, request_id: Optional[str] = None, recovery: str = "") -> HextileClientError:
+        """A typed native refusal passes through; a lost write reply is Unknown under its original id."""
         if exc.kind == "http" and exc.status_code is not None and exc.status_code < 500:
-            _raise_plain_refusal(exc)
-        raise exc
-
-    @staticmethod
-    def _audio_write_failure(exc: HextileClientError, request_id: str, recovery: str) -> HextileClientError:
-        """Relay a typed native refusal; otherwise the exact request's outcome is Unknown."""
-        if exc.kind == "http":
             try:
                 _raise_plain_refusal(exc)
             except HextileClientError as typed:
-                if typed is not exc:
-                    return typed
-            if exc.status_code is not None and exc.status_code < 500:
-                return exc
+                return typed
+        if request_id is None:
+            return exc
         return HextileClientError(recovery, status_code=exc.status_code, kind="audio_outcome_unknown",
                                   receipt={"request_id": request_id})
 
-    def get_shader_audio(self, args: Mapping[str, Any]) -> dict:
-        step = ("Pass shader {origin, shaderId}, project_context_witness from shader_list_assets or "
-                "get_live_context(view=\"shader\"), and selector tracks, signals or set_suggestion.")
-        _closed_argument_error("Expected shader_get_audio arguments", args,
-                               {"shader", "project_context_witness"},
-                               {"selector", "cursor", "limit", "track_id", "signal_id"}, next_step=step)
-        shader, witness = args["shader"], args["project_context_witness"]
-        _native_shader_args("state", {"shader": shader, "project_context_witness": witness})
-        selector = args.get("selector", "tracks")
-        if selector not in {"tracks", "signals", "set_suggestion"}:
-            raise _audio_invalid("selector must be tracks, signals or set_suggestion", step)
-        limit = args.get("limit", 20)
-        if type(limit) is not int or isinstance(limit, bool) or not 1 <= limit <= 50:
-            raise _audio_invalid("limit must be an integer from 1 to 50",
-                                 "Pass limit 1 to 50 and follow next_cursor until it is null.")
-        cursor = args.get("cursor")
-        if cursor is not None and (type(cursor) is not str or not 1 <= len(cursor) <= 160):
-            raise _audio_invalid("cursor must be 1 to 160 characters from next_cursor",
-                                 "Pass next_cursor exactly as returned, or omit cursor to start again.")
-        for key in ("track_id", "signal_id"):
-            value = args.get(key)
-            if value is not None and (type(value) is not str or _AUDIO_ID_RE.fullmatch(value) is None):
-                raise _audio_invalid(f"{key} must be an exact Audio ID",
-                                     "Read shader_get_audio selector tracks or signals for the exact IDs.")
-        if selector == "set_suggestion":
-            if cursor is not None:
-                raise _audio_invalid("set_suggestion is not paged", "Omit cursor for set_suggestion.")
-            if "track_id" not in args:
-                raise _audio_invalid("set_suggestion needs track_id",
-                                     "Read selector tracks, then pass the chosen track_id.")
-            if "signal_id" in args:
-                raise _audio_invalid("signal_id is not used with set_suggestion",
-                                     "Omit signal_id for set_suggestion.")
-        elif selector == "tracks" and "signal_id" in args:
-            raise _audio_invalid("signal_id is only for selector signals", "Omit signal_id or use selector signals.")
-        params: dict[str, Any] = {"origin": shader["origin"], "shader_id": shader["shaderId"],
-                                  "project_context_witness": witness, "selector": selector, "limit": limit}
-        for key in ("cursor", "track_id", "signal_id"):
-            if key in args:
-                params[key] = args[key]
+    def _audio_write(self, path: str, body: dict, recovery: str, check: Callable[[Any], dict]) -> dict:
         try:
-            result = self.request_json("GET", "/api/shaders/agent-operations/audio", params=params,
-                                       max_bytes=65536, too_large_code="audio_page_too_large")
+            result = self.request_json("POST", path, body)
         except HextileClientError as exc:
-            self._audio_read_failure(exc)
-        return _audio_page(result, args, limit)
+            raise self._audio_failure(exc, body["request_id"], recovery + " Do not resend under a new id.") from exc
+        try:
+            return check(result)
+        except HextileClientError as exc:
+            raise HextileClientError(str(exc), kind="audio_outcome_unknown",
+                                     receipt={"request_id": body["request_id"]}) from exc
+
+    def _audio_read(self, method: str, path: str, params: Optional[dict] = None, **kwargs: Any) -> Any:
+        try:
+            return self.request_json(method, path, params=params, max_bytes=65536, **kwargs)
+        except HextileClientError as exc:
+            raise self._audio_failure(exc) from exc
+
+    def get_shader_audio(self, args: Mapping[str, Any]) -> dict:
+        step = ("Pass shader, project_context_witness and selector tracks, signals or set_suggestion "
+                "(set_suggestion needs track_id); follow next_cursor exactly.")
+        checked = _audio_closed("Expected shader_get_audio arguments", args, {"shader", "project_context_witness"},
+                                {"selector", "cursor", "limit", "track_id", "signal_id"}, step)
+        _native_shader_args("state", {"shader": checked["shader"],
+                                      "project_context_witness": checked["project_context_witness"]})
+        selector, limit, cursor = checked.get("selector", "tracks"), checked.get("limit", 20), checked.get("cursor")
+        if selector not in {"tracks", "signals", "set_suggestion"}:
+            raise _audio_refused("shader_get_audio: selector must be tracks, signals or set_suggestion", step)
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise _audio_refused("shader_get_audio: limit must be an integer from 1 to 50", step)
+        if cursor is not None and (type(cursor) is not str or not 1 <= len(cursor) <= 160):
+            raise _audio_refused("shader_get_audio: cursor must be next_cursor exactly as returned", step)
+        if selector == "set_suggestion" and ("track_id" not in checked or {"cursor", "signal_id"} & set(checked)):
+            raise _audio_refused("shader_get_audio: set_suggestion takes track_id and no cursor or signal_id", step)
+        if selector == "tracks" and "signal_id" in checked:
+            raise _audio_refused("shader_get_audio: signal_id filters selector signals only", step)
+        params = {"origin": checked["shader"]["origin"], "shader_id": checked["shader"]["shaderId"],
+                  "project_context_witness": checked["project_context_witness"], "selector": selector, "limit": limit,
+                  **{key: checked[key] for key in ("cursor", "track_id", "signal_id") if key in checked}}
+        result = self._audio_read("GET", "/api/shaders/agent-operations/audio", params,
+                                  too_large_code="audio_page_too_large")
+        return _audio_page(result, checked, selector, limit)
 
     def edit_shader_audio(self, args: Mapping[str, Any]) -> dict:
-        step = ("Pass request_id, the owner witness shader_get_audio returns, and one closed command "
-                "(attach_track, set_track, replace_track, remove_track, create_signal, edit_signal, "
-                "create_set or remove_signal).")
-        _closed_argument_error("Expected shader_edit_audio arguments", args,
-                               {"request_id", "owner", "command"}, set(), next_step=step)
-        request_id = _audio_uuid(args["request_id"])
-        owner = _audio_owner(args["owner"])
-        command = _audio_command(args["command"])
-        body = {"schema": 1, "request_id": request_id, "owner": owner, "command": command}
-        try:
-            result = self.request_json("POST", "/api/shaders/agent-operations/audio/edits", body)
-        except HextileClientError as exc:
-            raise self._audio_write_failure(
-                exc, request_id,
-                "Audio edit outcome unknown; read shader_get_operation with scope asset, the Shader and "
-                "the original request_id. Do not resend under a new id.") from exc
-        return _audio_edit_reply(result, request_id, owner, command)
+        step = ("Pass request_id, the owner witness shader_get_audio returns and one closed command: attach_track, "
+                "set_track, replace_track, remove_track, create_signal, edit_signal, create_set or remove_signal.")
+        body = _audio_owner_request("Expected shader_edit_audio arguments", args, {"command"}, step)
+        command = _audio_variant("Audio command", body["command"], "command", _AUDIO_COMMANDS, step)
+        if command["command"] == "create_set":
+            specs = command["specs"]
+            if type(specs) is not list or len(specs) != 4:
+                raise _audio_refused("Audio command: create_set takes exactly four specs", step)
+            command["specs"] = [_audio_closed("Audio create_set spec", spec, {"receipt_id", "alias", *_AUDIO_SHAPING},
+                                              set(), step) for spec in specs]
+        body["command"] = command
+        shader = {"origin": body["owner"]["origin"], "shaderId": body["owner"]["shader_id"]}
+
+        def check(value: Any) -> dict:
+            reply = _audio_reply(value, _AUDIO_EDIT, "edit reply")
+            receipt, state = reply.get("receipt"), reply.get("state")
+            if (reply.get("request_id") != body["request_id"] or reply.get("operation") != "shader_edit_audio"
+                    or reply.get("shader") != shader or type(receipt) is not dict
+                    or set(receipt) - _AUDIO_EDIT_RECEIPT or receipt.get("command") != command["command"]
+                    # Saved/unmounted targets autosave and hand the next base; a mounted draft is applied, unsaved.
+                    or not (state == "saved" and reply.get("save") in {"saved", "unchanged"}
+                            and _reply_base(reply.get("base"))
+                            or state == "applied" and not {"save", "base"} & set(reply))):
+                raise HextileClientError("Malformed Audio edit reply", kind="other")
+            return reply
+
+        return self._audio_write("/api/shaders/agent-operations/audio/edits", body,
+                                 "Audio edit outcome unknown; call shader_get_operation with scope asset, the Shader "
+                                 "and the original request_id.", check)
 
     def prepare_audio_resource(self, args: Mapping[str, Any]) -> dict:
-        step = ("Pass request_id, the owner witness from shader_get_audio and source "
-                "{kind:\"local_file\", path} or {kind:\"retained\", resource_id}.")
-        _closed_argument_error("Expected audio_prepare_resource arguments", args,
-                               {"request_id", "owner", "source"}, set(), next_step=step)
-        request_id = _audio_uuid(args["request_id"])
-        owner = _audio_owner(args["owner"])
-        source = args["source"]
-        if type(source) is not dict or source.get("kind") not in {"local_file", "retained"}:
-            raise _audio_invalid("source.kind must be local_file or retained", step)
-        if source["kind"] == "local_file":
-            _closed_argument_error("Audio local_file source", source, {"kind", "path"}, set(), next_step=step)
-            path = source["path"]
-            if (type(path) is not str or not 1 <= len(path) <= 4096
-                    or re.match(r"[A-Za-z][A-Za-z0-9+.-]+:", path)):
-                raise _audio_invalid("source.path must be an absolute local file path without a URL scheme",
-                                     "Pass the absolute native file path of one audio, MIDI, CSV or label file.")
-            checked = {"kind": "local_file", "path": path}
-        else:
-            _closed_argument_error("Audio retained source", source, {"kind", "resource_id"}, set(),
-                                   next_step=step)
-            checked = {"kind": "retained",
-                       "resource_id": _audio_id(source["resource_id"], "source.resource_id", "audio")}
-        body = {"schema": 1, "owner": owner, "request_id": request_id, "source": checked}
-        try:
-            result = self.request_json("POST", "/api/audio/resources/prepare", body)
-        except HextileClientError as exc:
-            raise self._audio_write_failure(
-                exc, request_id,
-                "Audio resource preparation outcome unknown; read audio_get_preparation with the original "
-                "request_id. Do not resend under a new id.") from exc
-        return _audio_receipt(result, "resource", request_id)
+        step = ("Pass request_id, the owner witness from shader_get_audio and source {kind:\"local_file\", path} "
+                "or {kind:\"retained\", resource_id}.")
+        body = _audio_owner_request("Expected audio_prepare_resource arguments", args, {"source"}, step)
+        body["source"] = _audio_variant("Audio source", body["source"], "kind", _AUDIO_SOURCES, step)
+        return self._audio_write("/api/audio/resources/prepare", body, _AUDIO_PREPARE_UNKNOWN,
+                                 lambda value: _audio_receipt(value, body["request_id"]))
 
     def prepare_audio_analysis(self, args: Mapping[str, Any]) -> dict:
-        step = ("Pass request_id, owner, resource_id from a ready resource receipt, profile_id "
-                "hann2048-hop512/1 and a new demand_id.")
-        _closed_argument_error("Expected audio_prepare_analysis arguments", args,
-                               {"request_id", "owner", "resource_id", "profile_id", "demand_id"}, set(),
-                               next_step=step)
-        request_id = _audio_uuid(args["request_id"])
-        owner = _audio_owner(args["owner"])
-        resource_id = _audio_id(args["resource_id"], "resource_id", "audio")
-        if args["profile_id"] != _AUDIO_PROFILE:
-            raise _audio_invalid(f"profile_id must be {_AUDIO_PROFILE}", step)
-        demand_id = _audio_uuid(args["demand_id"], "demand_id")
-        body = {"schema": 1, "owner": owner, "request_id": request_id, "resource_id": resource_id,
-                "profile_id": _AUDIO_PROFILE, "demand_id": demand_id}
-        try:
-            result = self.request_json("POST", "/api/audio/analysis/prepare", body)
-        except HextileClientError as exc:
-            raise self._audio_write_failure(
-                exc, request_id,
-                "Audio analysis preparation outcome unknown; read audio_get_preparation with the original "
-                "request_id. Do not resend under a new id.") from exc
-        return _audio_receipt(result, "analysis", request_id)
+        step = "Pass request_id, owner, resource_id from a ready resource receipt, profile_id and a new demand_id."
+        body = _audio_owner_request("Expected audio_prepare_analysis arguments", args,
+                                    {"resource_id", "profile_id", "demand_id"}, step)
+        return self._audio_write("/api/audio/analysis/prepare", body, _AUDIO_PREPARE_UNKNOWN,
+                                 lambda value: _audio_receipt(value, body["request_id"]))
 
     def prepare_audio_signal(self, args: Mapping[str, Any]) -> dict:
-        step = ("Pass request_id, owner, demand_id and the complete signal_spec (id, track_id, measurement, "
-                "gain, attack, release, normalization fixed_full_scale, optional offset_ms), then read "
-                "audio_get_preparation.")
-        _closed_argument_error("Expected audio_prepare_signal arguments", args,
-                               {"request_id", "owner", "signal_spec", "demand_id"}, set(), next_step=step)
-        request_id = _audio_uuid(args["request_id"])
-        owner = _audio_owner(args["owner"])
-        spec = _audio_signal_spec(args["signal_spec"])
-        demand_id = _audio_uuid(args["demand_id"], "demand_id")
-        body = {"schema": 1, "owner": owner, "request_id": request_id, "signal_spec": spec,
-                "demand_id": demand_id}
-        try:
-            result = self.request_json("POST", "/api/audio/signals/prepare", body)
-        except HextileClientError as exc:
-            raise self._audio_write_failure(
-                exc, request_id,
-                "Audio signal preparation outcome unknown; read audio_get_preparation with the original "
-                "request_id. Do not resend under a new id.") from exc
-        return _audio_receipt(result, "signal", request_id)
+        step = "Pass request_id, owner, demand_id and the complete signal_spec, then read audio_get_preparation."
+        body = _audio_owner_request("Expected audio_prepare_signal arguments", args, {"signal_spec", "demand_id"}, step)
+        body["signal_spec"] = _audio_signal_spec(body["signal_spec"])
+        return self._audio_write("/api/audio/signals/prepare", body, _AUDIO_PREPARE_UNKNOWN,
+                                 lambda value: _audio_receipt(value, body["request_id"]))
 
-    def get_audio_preparation(self, receipt: str, *, timeout: Optional[float] = None) -> dict:
-        ref = _audio_ref(receipt)
-        try:
-            result = self.request_json("GET", "/api/audio/preparations/" + urllib.parse.quote(ref, safe=""),
-                                       timeout=timeout, max_bytes=65536,
-                                       too_large_code="audio_receipt_too_large")
-        except HextileClientError as exc:
-            self._audio_read_failure(exc)
-        if type(result) is not dict or result.get("kind") not in {"resource", "analysis", "signal"}:
-            raise _audio_bad("preparation receipt")
-        return _audio_receipt(result, result["kind"])
-
-    def release_audio_preparation(self, receipt: str) -> dict:
-        ref = _audio_ref(receipt)
-        try:
-            result = self.request_json("DELETE", "/api/audio/preparations/" + urllib.parse.quote(ref, safe=""),
-                                       max_bytes=65536, too_large_code="audio_receipt_too_large")
-        except HextileClientError as exc:
-            self._audio_read_failure(exc)
-        if type(result) is not dict or result.get("kind") not in {"resource", "analysis", "signal"}:
-            raise _audio_bad("preparation receipt")
-        return _audio_receipt(result, result["kind"])
+    def audio_preparation(self, receipt: Any, *, release: bool = False, timeout: Optional[float] = None) -> dict:
+        """Status (GET) or release (DELETE) of one issued receipt by receipt_id or original request_id."""
+        if type(receipt) is not str or _AUDIO_REF.fullmatch(receipt) is None:
+            raise _audio_refused("receipt must be a receipt_id or the original request_id",
+                                 "Pass receipt_id from a preparation reply, or its original request_id.")
+        result = self._audio_read("DELETE" if release else "GET", "/api/audio/preparations/" + receipt,
+                                  timeout=timeout, too_large_code="audio_receipt_too_large")
+        return _audio_receipt(result)
 
     def read_audio_preview(self, args: Mapping[str, Any]) -> dict:
-        step = ("Pass receipt and kind, then exactly that variant's fields: waveform start_sample, "
-                "end_sample, max_points; spectrum center_sample; data start, end, max_points.")
-        _closed_argument_error("Expected audio_read_preview arguments", args, {"receipt", "kind"},
-                               {"start_sample", "end_sample", "max_points", "center_sample", "start", "end"},
-                               next_step=step)
-        ref = _audio_ref(args["receipt"])
-        request = _audio_preview_request(args)
-        params: dict[str, Any] = {"kind": request["kind"]}
-        if request["kind"] in ("waveform", "data"):
-            params["max_points"] = request["max_points"]
-        if request["kind"] == "waveform":
-            params.update(start_sample=request["start_sample"], end_sample=request["end_sample"])
-        elif request["kind"] == "spectrum":
-            params["center_sample"] = request["center_sample"]
-        else:
-            params.update(start=f"{request['start']['num']}/{request['start']['den']}",
-                          end=f"{request['end']['num']}/{request['end']['den']}")
-        try:
-            result = self.request_json(
-                "GET", "/api/audio/preparations/" + urllib.parse.quote(ref, safe="") + "/preview",
-                params=params, max_bytes=65536, too_large_code="audio_preview_too_large")
-        except HextileClientError as exc:
-            self._audio_read_failure(exc)
-        return _audio_preview_reply(result, request)
+        step = ("Pass receipt and kind with exactly that variant's fields: waveform start_sample, end_sample, "
+                "max_points; spectrum center_sample; data start, end, max_points.")
+        request = _audio_variant("Expected audio_read_preview arguments", args, "kind", _AUDIO_PREVIEWS, step)
+        if "max_points" in request:
+            _audio_budget(request["max_points"], "max_points")
+        params = {key: f"{value['num']}/{value['den']}" if key in {"start", "end"} else value
+                  for key, value in request.items() if key != "receipt"}
+        result = self._audio_read("GET", f"/api/audio/preparations/{request['receipt']}/preview", params,
+                                  too_large_code="audio_preview_too_large")
+        reply = _audio_reply(result, _AUDIO_PREVIEW_REPLIES[request["kind"]], "preview reply")
+        rows = reply.get("powers" if request["kind"] == "spectrum" else "buckets")
+        if (set(reply) != _AUDIO_PREVIEW_REPLIES[request["kind"]] or type(rows) is not list
+                or len(rows) > (1025 if request["kind"] == "spectrum" else request["max_points"])):
+            raise HextileClientError("Malformed Audio preview reply", kind="other")
+        return reply
 
     def read_audio_signal(self, args: Mapping[str, Any]) -> dict:
-        step = ("Pass request_id, owner, the ready curve_handle from audio_get_preparation and selector "
+        step = ("Pass owner, the ready curve_handle from audio_get_preparation and selector "
                 "{kind:\"time\", time} or {kind:\"window\", start, end, max_samples}.")
-        _closed_argument_error("Expected audio_read_signal arguments", args,
-                               {"request_id", "owner", "curve_handle", "selector"}, set(), next_step=step)
-        request_id = _audio_uuid(args["request_id"])
-        owner = _audio_owner(args["owner"])
-        handle = _audio_handle(args["curve_handle"])
-        selector = args["selector"]
-        if type(selector) is not dict or selector.get("kind") not in {"time", "window"}:
-            raise _audio_invalid("selector.kind must be time or window", step)
-        if selector["kind"] == "time":
-            _closed_argument_error("Audio time selector", selector, {"kind", "time"}, set(), next_step=step)
-            checked = {"kind": "time", "time": _audio_exact(selector["time"], "selector.time", signed=True)}
-        else:
-            _closed_argument_error("Audio window selector", selector,
-                                   {"kind", "start", "end", "max_samples"}, set(), next_step=step)
-            start = _audio_exact(selector["start"], "selector.start", signed=True)
-            end = _audio_exact(selector["end"], "selector.end", signed=True)
-            if int(end["num"]) * int(start["den"]) <= int(start["num"]) * int(end["den"]):
-                raise _audio_invalid("selector.end must be after selector.start", step)
-            samples = selector["max_samples"]
-            if type(samples) is not int or isinstance(samples, bool) or samples < 1:
-                raise _audio_invalid("selector.max_samples must be a positive integer", step)
-            if samples > _AUDIO_MAX_POINTS:
-                raise _audio_budget(f"selector.max_samples reads at most {_AUDIO_MAX_POINTS} samples",
-                                    "Request a window of at most 128 rows.")
-            checked = {"kind": "window", "start": start, "end": end, "max_samples": samples}
-        body = {"schema": 1, "owner": owner, "request_id": request_id, "curve_handle": handle,
-                "selector": checked}
+        body = _audio_owner_request("Expected audio_read_signal arguments", args, {"curve_handle", "selector"}, step,
+                                    write=False)
+        selector = body["selector"] = _audio_variant("Audio selector", body["selector"], "kind", _AUDIO_SELECTORS, step)
+        if selector["kind"] == "window":
+            _audio_budget(selector["max_samples"], "max_samples")
         try:
             result = self.request_json("POST", "/api/audio/signals/read", body)
         except HextileClientError as exc:
-            self._audio_read_failure(exc)
-        if checked["kind"] == "time":
-            return _audio_frame(result)
-        return _audio_window(result, checked)
+            raise self._audio_failure(exc) from exc
+        reply = _audio_reply(result, _AUDIO_SIGNAL_REPLIES[selector["kind"]], "signal read")
+        if set(reply) != _AUDIO_SIGNAL_REPLIES[selector["kind"]] or (
+                reply.get("state") != "ready" if selector["kind"] == "time" else
+                type(reply.get("rows")) is not list or type(reply.get("neighbors")) is not list
+                or len(reply["rows"]) + len(reply["neighbors"]) > selector["max_samples"]):
+            raise HextileClientError("Malformed Audio signal read", kind="other")
+        return reply
 
     # ── internals ───────────────────────────────────────────────────────
 

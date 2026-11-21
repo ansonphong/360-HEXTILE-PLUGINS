@@ -3494,10 +3494,16 @@ def _audio_resource(**changes: Any) -> dict[str, Any]:
             "sample_count": 480000, "channels": 2, "decoder": "ffmpeg", **changes}
 
 
+def _audio_track_resource() -> dict[str, Any]:
+    """Native agent_operations._RESOURCE_FIELDS projection: no id, digests or decoder."""
+    return {key: value for key, value in _audio_resource().items()
+            if key not in {"id", "original_sha256", "canonical_sha256", "decoder"}}
+
+
 def _audio_track(**changes: Any) -> dict[str, Any]:
     return {"id": "track_" + "2" * 24, "label": "Song", "resource_id": "audio_" + "1" * 24,
             "timeline_start": {"num": "0", "den": "1"}, "in_sample": 0, "out_sample": 480000,
-            "monitor_gain": 1, "monitor_mute": False, "lane": "A", "resource": _audio_resource(),
+            "monitor_gain": 1, "monitor_mute": False, "lane": "A", "resource": _audio_track_resource(),
             "signal_ids": ["signal_" + "3" * 24], **changes}
 
 
@@ -3557,8 +3563,9 @@ def test_audio_tool_schemas_are_closed_and_carry_required_identity() -> None:
     assert schemas["shader_get_audio"]["properties"]["cursor"]["maxLength"] == 160
     assert schemas["shader_get_audio"]["properties"]["selector"]["enum"] == [
         "tracks", "signals", "set_suggestion"]
+    assert "request_id" not in schemas["audio_read_signal"]["properties"]  # native read-signal is closed without it
     for name in ("shader_edit_audio", "audio_prepare_resource", "audio_prepare_analysis",
-                 "audio_prepare_signal", "audio_read_signal"):
+                 "audio_prepare_signal"):
         assert "request_id" in schemas[name]["required"], name
         assert schemas[name]["properties"]["request_id"]["pattern"].endswith("[0-9a-f]{12}$")
     assert set(schemas["shader_edit_audio"]["required"]) == {"request_id", "owner", "command"}
@@ -3566,7 +3573,7 @@ def test_audio_tool_schemas_are_closed_and_carry_required_identity() -> None:
     assert owner["additionalProperties"] is False
     assert set(owner["required"]) == {"kind", "origin", "shader_id", "expected_working_revision",
                                       "expected_document_hash", "project_context_witness", "owner_generation"}
-    assert len(schemas["shader_edit_audio"]["properties"]["command"]["oneOf"]) == 13
+    assert len(schemas["shader_edit_audio"]["properties"]["command"]["oneOf"]) == 9
     wait = schemas["audio_get_preparation"]["properties"]["wait_s"]
     assert wait == {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}
     assert "Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read." \
@@ -3606,14 +3613,15 @@ def test_audio_tool_schemas_are_closed_and_carry_required_identity() -> None:
     jsonschema.validate({"receipt": "r" * 24, "wait_s": 25}, schemas["audio_get_preparation"])
     jsonschema.validate({"receipt": "r" * 24, "kind": "waveform", "start_sample": 0,
                          "end_sample": 100, "max_points": 128}, schemas["audio_read_preview"])
-    jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
-                         "curve_handle": "h" * 24,
+    jsonschema.validate({"owner": _audio_owner(), "curve_handle": "h" * 24,
                          "selector": {"kind": "window", "start": {"num": "-1", "den": "2"},
                                       "end": {"num": "1", "den": "2"}, "max_samples": 128}},
                         schemas["audio_read_signal"])
     for bad in ({"command": "edit_signal", "signal_id": "signal_" + "3" * 24, "offset_ms": 1001},
                 {"command": "set_track", "track_id": "track_" + "2" * 24,
-                 "timeline_start": {"num": "0", "den": "1"}, "monitor_gain": 1}):
+                 "timeline_start": {"num": "0", "den": "1"}, "monitor_gain": 1},
+                {"command": "attach_track", "receipt_id": "r" * 24,
+                 "timeline_start": {"num": "0", "den": "1"}, "in_sample": 0}):
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": bad},
                                 schemas["shader_edit_audio"])
@@ -3628,7 +3636,7 @@ def test_audio_tool_schemas_are_closed_and_carry_required_identity() -> None:
     ("audio_get_preparation", {}, ("missing receipt",)),
     ("audio_release_preparation", {}, ("missing receipt",)),
     ("audio_read_preview", {}, ("missing kind, receipt",)),
-    ("audio_read_signal", {}, ("missing curve_handle, owner, request_id, selector",)),
+    ("audio_read_signal", {}, ("missing curve_handle, owner, selector",)),
     ("shader_get_audio", {"shader": {"origin": "user", "shaderId": "aurora"},
                           "project_context_witness": "wit", "bogus": 1}, ("unknown bogus",)),
     ("audio_prepare_signal", {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
@@ -3651,10 +3659,9 @@ def test_audio_tool_schemas_are_closed_and_carry_required_identity() -> None:
                             "end_sample": 100, "max_points": 129}, ("max_points",)),
     ("audio_read_preview", {"receipt": "r" * 24, "kind": "waveform", "start_sample": 0,
                             "end_sample": 100, "max_points": 8, "center_sample": 5}, ("center_sample",)),
-    ("audio_read_preview", {"receipt": "r" * 24, "kind": "data", "start": {"num": "0", "den": "1"},
-                            "end": {"num": "0", "den": "1"}, "max_points": 8},
-     ("end must be after start",)),
-    ("audio_read_signal", {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+    ("audio_read_preview", {"receipt": "r" * 24, "kind": "data", "start": {"num": "x", "den": "1"},
+                            "end": {"num": "1", "den": "1"}, "max_points": 8}, ("invalid start",)),
+    ("audio_read_signal", {"owner": _audio_owner(),
                            "curve_handle": "h" * 24,
                            "selector": {"kind": "window", "start": {"num": "0", "den": "1"},
                                         "end": {"num": "1", "den": "1"}, "max_samples": 129}},
@@ -3685,7 +3692,6 @@ def test_shader_get_audio_pages_rows_once_and_refuses_stale_or_foreign_cursors(m
     rows = [_audio_track(id="track_" + str(index) * 24) for index in range(3)]
     for index, row in enumerate(rows):
         row["resource_id"] = "audio_" + str(index) * 24
-        row["resource"] = _audio_resource(id=row["resource_id"])
     replies = {
         None: _audio_page(entries=rows[:2], total=3, next_cursor="g:2"),
         "g:2": _audio_page(entries=rows[2:], total=3, next_cursor=None),
@@ -3715,18 +3721,18 @@ def test_shader_get_audio_pages_rows_once_and_refuses_stale_or_foreign_cursors(m
         _audio_detail("invalid_cursor", 422, next_step="Pass next_cursor exactly as returned.")))
     with pytest.raises(HextileClientError) as stale:
         client.get_shader_audio({**args, "cursor": "old:2"})
-    assert (stale.value.code, stale.value.status_code) == ("invalid_cursor", 422)
+    assert (stale.value.receipt["code"], stale.value.status_code) == ("invalid_cursor", 422)
     monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
         _audio_detail("page_changed", 409, next_step="Read again without cursor.")))
     with pytest.raises(HextileClientError) as changed:
         client.get_shader_audio({**args, "cursor": "g:2"})
-    assert (changed.value.code, changed.value.status_code) == ("page_changed", 409)
+    assert (changed.value.receipt["code"], changed.value.status_code) == ("page_changed", 409)
     assert changed.value.receipt["next_step"] == "Read again without cursor."
     monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
         _audio_detail("invalid_cursor", 422, next_step="Pass next_cursor exactly as returned.")))
     with pytest.raises(HextileClientError) as invalid:
         client.get_shader_audio({**args, "cursor": "bad"})
-    assert (invalid.value.code, invalid.value.status_code) == ("invalid_cursor", 422)
+    assert (invalid.value.receipt["code"], invalid.value.status_code) == ("invalid_cursor", 422)
     monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
         "schema": 1, "shader": args["shader"], "project_context_witness": "wit",
         "selector": "tracks", "provenance": "saved", "owner": _audio_owner(), "entries": rows})
@@ -3738,13 +3744,14 @@ def test_shader_get_audio_pages_rows_once_and_refuses_stale_or_foreign_cursors(m
     with pytest.raises(HextileClientError):
         client.get_shader_audio({**args, "cursor": "g:2"})
     suggestion = client.get_shader_audio  # selector suggestion has no paging rows
-    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: _audio_page(
-        selector="set_suggestion", entries=None, total=None, next_cursor=None, suggestion={
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {**{
+        key: value for key, value in _audio_page().items() if key not in {"entries", "total", "next_cursor"}},
+        "selector": "set_suggestion", "suggestion": {
             "track_id": "track_" + "2" * 24, "lane": "A", "proposals": [
                 {"alias": alias, "label": label, "output_min": 0, "output_max": 1,
                  "signal_spec": _audio_spec(offset_ms=0)}
                 for alias, label in (("A", "Amp"), ("A1", "Bass"), ("A2", "Mids"), ("A3", "Highs"))],
-            "modulator_slots": {"used": 1, "limit": 64}, "available": True}))
+            "modulator_slots": {"used": 1, "limit": 64}, "available": True}})
     page = suggestion({**args, "selector": "set_suggestion", "track_id": "track_" + "2" * 24})
     assert page["suggestion"]["available"] is True
 
@@ -3840,7 +3847,7 @@ def test_shader_edit_audio_closed_commands_and_saved_or_mounted_replies(monkeypa
     assert len(posted) == before
     assert payload["kind"] == "audio_outcome_unknown"
     assert payload["receipt"] == {"request_id": _AUDIO_REQUEST}
-    assert "shader_get_operation" in payload["error"] and "never" not in payload["error"].lower() or True
+    assert "shader_get_operation" in payload["error"] and "new id" in payload["error"]
     monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
         _audio_detail("stale_lease", 409, message="The human holds the code and can hand it back.",
                       next_step="Hand back, then retry with the same request_id.")))
@@ -3852,7 +3859,7 @@ def test_shader_edit_audio_closed_commands_and_saved_or_mounted_replies(monkeypa
 
 
 @pytest.mark.parametrize("kind,source,result_key", [
-    ("resource", {"kind": "local_file", "path": "/music/song.wav"}, "resource"),
+    ("resource", {"source": {"kind": "local_file", "path": "/music/song.wav"}}, "resource"),
     ("analysis", {"resource_id": "audio_" + "1" * 24}, "analysis"),
     ("signal", {"signal_spec": _audio_spec()}, "signal"),
 ])
@@ -3877,7 +3884,7 @@ def test_audio_prepare_forwards_closed_bodies_and_accepts_receipt_states(
 
     server, client = _audio_server(monkeypatch, reply)
     args = {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), **source}
-    if kind in ("resource", "analysis", "signal"):
+    if kind in ("analysis", "signal"):
         args["demand_id"] = _AUDIO_DEMAND
     if kind == "analysis":
         args["profile_id"] = "hann2048-hop512/1"
@@ -3889,7 +3896,7 @@ def test_audio_prepare_forwards_closed_bodies_and_accepts_receipt_states(
     sent = posted[-1][2]
     assert sent["schema"] == 1 and sent["request_id"] == _AUDIO_REQUEST and sent["owner"] == _audio_owner()
     if kind == "resource":
-        assert sent["source"] == source and sent["source"] is not source
+        assert sent["source"] == source["source"] and sent["source"] is not source["source"]
     elif kind == "analysis":
         assert set(sent) == {"schema", "owner", "request_id", "resource_id", "profile_id", "demand_id"}
     else:
@@ -3976,7 +3983,7 @@ def test_audio_preparation_status_and_reads_are_bounded(monkeypatch) -> None:
     for bad in ({"receipt": "r" * 24, "kind": "waveform", "start_sample": 0, "end_sample": 10},
                 {"receipt": "r" * 24, "kind": "spectrum"},
                 {"receipt": "r" * 24, "kind": "data", "start": {"num": "0", "den": "1"},
-                 "end": {"num": "0", "den": "1"}, "max_points": 8},
+                 "end": {"num": "1", "den": "1"}, "max_points": 129},
                 {"receipt": "bad ref!", "kind": "spectrum", "center_sample": 0}):
         with pytest.raises(HextileClientError):
             client.read_audio_preview(bad)
@@ -3988,16 +3995,16 @@ def test_audio_preparation_status_and_reads_are_bounded(monkeypatch) -> None:
                                       "start": {"num": "0", "den": "1"},
                                       "end": {"num": "1", "den": "1"},
                                       "max_points": 8})["kind"] == "curve"
-    status = client.get_audio_preparation("r" * 24)
+    status = client.audio_preparation("r" * 24)
     assert status["state"] == "ready" and status["result"]["curve_handle"] == "h" * 24
-    released = client.release_audio_preparation(_AUDIO_REQUEST)
+    released = client.audio_preparation(_AUDIO_REQUEST, release=True)
     assert released["state"] == "cancelled"
-    frame = client.read_audio_signal({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+    frame = client.read_audio_signal({"owner": _audio_owner(),
                                       "curve_handle": "h" * 24,
                                       "selector": {"kind": "time",
                                                    "time": {"num": "1", "den": "2"}}})
     assert frame["u"] == 0.5
-    window = client.read_audio_signal({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+    window = client.read_audio_signal({"owner": _audio_owner(),
                                        "curve_handle": "h" * 24,
                                        "selector": {"kind": "window",
                                                     "start": {"num": "-1", "den": "2"},
@@ -4005,57 +4012,11 @@ def test_audio_preparation_status_and_reads_are_bounded(monkeypatch) -> None:
                                                     "max_samples": 128}})
     assert window["rows"][0]["y"] == 0.5
     with pytest.raises(HextileClientError) as samples:
-        client.read_audio_signal({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        client.read_audio_signal({"owner": _audio_owner(),
                                   "curve_handle": "h" * 24,
                                   "selector": {"kind": "window", "start": {"num": "0", "den": "1"},
                                                "end": {"num": "1", "den": "1"}, "max_samples": 129}})
     assert (samples.value.code, samples.value.status_code) == ("budget", 422)
     monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {"schema": 1, "kind": "signal"})
-    payload = json.loads(server.call_tool("audio_read_preview", {
-        "receipt": "r" * 24, "kind": "spectrum", "center_sample": 0})["content"][0]["text"])
-    assert payload["error"] == "Malformed Audio preview reply"
-
-
-def test_get_capabilities_admits_the_closed_audio_signals_contract(monkeypatch) -> None:
-    def capability(**changes: Any) -> dict[str, Any]:
-        return {"contract": "audio-signals/1", "available": True, "reason": None,
-                "owner_kinds": ["shader"], "document_revision": 1, "modulation_revision": 4,
-                "authoring_revision": 1,
-                "analyzer": {"profile_id": "hann2048-hop512/1", "pcm_profile": "pcm16-48k/1",
-                             "sample_rate": 48000, "fft_size": 2048, "hop": 512},
-                "supported_track_limit": 4,
-                "resource_kinds": [
-                    {"kind": "audio", "original_exts": ["wav", "flac", "mp3"]},
-                    {"kind": "midi", "original_exts": ["mid"], "parser_version": 1,
-                     "max_bytes": 16777216, "max_count": 200000},
-                    {"kind": "curve", "original_exts": ["csv"], "parser_version": 1,
-                     "max_bytes": 16777216, "max_count": 1000000},
-                    {"kind": "labels", "original_exts": ["txt"], "parser_version": 1,
-                     "max_bytes": 16777216, "max_count": 100000}],
-                "measurements": ["rms", "band", "midi_notes", "curve", "labels"],
-                "bounds": {"offset_ms": {"minimum": -1000, "maximum": 1000}},
-                "operations": ["prepare_resource", "prepare_analysis", "prepare_signal",
-                               "read_signal", "read_preview", "edit_audio"],
-                **changes}
-
-    client = Client("http://127.0.0.1:9")
-    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
-        "workflow_api_version": 1, "audio_signals": capability()})
-    payload = client.get_capabilities()
-    assert payload["audio_signals"]["supported_track_limit"] == 4
-    assert client.get_capabilities()["audio_signals"]["available"] is True
-    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
-        "workflow_api_version": 1, "audio_signals": capability(available=False, reason="disabled")})
-    assert client.get_capabilities()["audio_signals"]["reason"] == "disabled"
-    for bad, kind in ((capability(contract="audio-signals/2"), "unsupported"),
-                      (capability(operations=[]), "other"),
-                      (capability(**{"bogus": 1}), "other"),
-                      (capability(supported_track_limit=5), "other"),
-                      (capability(bounds={"offset_ms": {"minimum": -2000, "maximum": 1000}}), "other")):
-        monkeypatch.setattr(client, "request_json", lambda *_a, _bad=bad, **_k: {
-            "workflow_api_version": 1, "audio_signals": _bad})
-        with pytest.raises(HextileClientError) as caught:
-            client.get_capabilities()
-        assert caught.value.kind == kind
-    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {"workflow_api_version": 1})
-    assert "audio_signals" not in client.get_capabilities()
+    with pytest.raises(HextileClientError, match="^Malformed Audio preview reply$"):
+        client.read_audio_preview({"receipt": "r" * 24, "kind": "spectrum", "center_sample": 0})
