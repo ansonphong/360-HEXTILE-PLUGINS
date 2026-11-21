@@ -949,6 +949,16 @@ def test_control_shader_sequence_retry_companions_refusal_keeps_typed_guidance(c
     assert error.value.receipt["next_step"] == step
 
 
+def test_sequence_refusal_codes_stay_out_of_render_diagnostic_causes() -> None:
+    from hextile_client import _shader_render_diagnostic
+
+    diagnostic = {"cause": "storage_no_space", "phase": "publishing", "terminal": True,
+                  "output": {"published": None, "verified": None, "basis": "unknown"},
+                  "message": "native", "next_action": {}}
+    assert _shader_render_diagnostic(diagnostic) is not None
+    assert _shader_render_diagnostic({**diagnostic, "cause": "companion_collision"}) is None
+
+
 @pytest.mark.parametrize("bad", [
     {"missing": "receipt_revision"},
     {"closure_sha256": "not-hex"},
