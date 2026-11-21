@@ -3573,7 +3573,7 @@ def test_audio_tool_schemas_are_closed_and_carry_required_identity() -> None:
     assert owner["additionalProperties"] is False
     assert set(owner["required"]) == {"kind", "origin", "shader_id", "expected_working_revision",
                                       "expected_document_hash", "project_context_witness", "owner_generation"}
-    assert len(schemas["shader_edit_audio"]["properties"]["command"]["oneOf"]) == 9
+    assert len(schemas["shader_edit_audio"]["properties"]["command"]["oneOf"]) == 10  # TS4.1 adds receipt-less shaping
     wait = schemas["audio_get_preparation"]["properties"]["wait_s"]
     assert wait == {"type": "integer", "minimum": 0, "maximum": 25, "default": 0}
     assert "Pass wait_s 25 instead of calling again. wait_s bounds the re-reads after the first, normal read." \
@@ -4104,3 +4104,193 @@ def test_existing_shader_edit_takes_sampled_modulator_ids(monkeypatch) -> None:
     result = client.shader_edit(_package_args(edits=edits))
     assert sent[0][1] == "/api/shaders/aurora/agent/edits" and sent[0][2]["edits"] == edits
     assert [row["address"] for row in result["results"]] == [edit["address"] for edit in edits]
+
+
+# ── Spectrum measurement, History and bounded reads (TS4.1) ─────────────────────────────────
+
+def _spectrum_measurement(**changes: Any) -> dict[str, Any]:
+    return {"kind": "spectrum", "profile_id": "hann2048-hop512/1", "bands": 32, "low_hz": 40, "high_hz": 16000,
+            "floor_db": -80, "ceiling_db": 0, "peak": {"hold_ms": 500, "fall_db_per_s": 24}, **changes}
+
+
+def _command_schema(name: str) -> list[dict[str, Any]]:
+    return _audio_tool("shader_edit_audio")["inputSchema"]["properties"]["command"]["oneOf"]
+
+
+def _admits(schema: dict[str, Any], value: Any) -> bool:
+    try:
+        jsonschema.validate(value, schema)
+    except jsonschema.ValidationError:
+        return False
+    return True
+
+
+def test_audio_prepare_signal_schema_admits_closed_spectrum_measurement() -> None:
+    schema = _audio_tool("audio_prepare_signal")["inputSchema"]
+    measurement = schema["properties"]["signal_spec"]["properties"]["measurement"]
+    spectrum = next(row for row in measurement["oneOf"] if row["properties"]["kind"].get("const") == "spectrum")
+    assert spectrum["properties"]["bands"]["enum"] == [8, 16, 31, 32, 64] and spectrum["additionalProperties"] is False
+    assert set(spectrum["required"]) == {"kind", "profile_id", "bands", "low_hz", "high_hz", "floor_db",
+                                         "ceiling_db", "peak"}
+    call = {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "demand_id": _AUDIO_DEMAND}
+    assert _admits(schema, {**call, "signal_spec": _audio_spec(measurement=_spectrum_measurement())})
+    assert _admits(schema, {**call, "signal_spec": _audio_spec(measurement=_spectrum_measurement(peak=None))})
+    for bad in (_spectrum_measurement(bands=12), {**_spectrum_measurement(), "extra": 1},
+                _spectrum_measurement(peak={"hold_ms": 500}), _spectrum_measurement(profile_id="other/1"),
+                {key: value for key, value in _spectrum_measurement().items() if key != "peak"}):
+        assert not _admits(schema, {**call, "signal_spec": _audio_spec(measurement=bad)}), bad
+
+
+def test_shader_edit_audio_schema_admits_spectrum_history_lengths_only_where_shaping_exists() -> None:
+    schema = _audio_tool("shader_edit_audio")["inputSchema"]
+    signal, modulator = "signal_" + "3" * 24, "mod_" + "4" * 24
+    shaping = {"label": "Bars", "output_min": 0, "output_max": 1}
+
+    def ok(command: dict[str, Any]) -> bool:
+        return _admits(schema, {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": command})
+
+    for length in (1000, 2000, 4000, 8000, None):
+        history = {"spectrum_history": None if length is None else {"length_ms": length}}
+        assert ok({"command": "create_signal", "receipt_id": "r" * 24, "alias": "S", **shaping, **history})
+        assert ok({"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping, **history})
+        assert ok({"command": "edit_signal", "signal_id": signal, "receipt_id": "r" * 24,
+                   "modulator_id": modulator, **shaping, **history})
+    assert ok({"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping})  # receipt-less
+    for bad in ({"length_ms": 3000}, {"length_ms": 2000, "extra": 1}, {}, 2000):
+        assert not ok({"command": "create_signal", "receipt_id": "r" * 24, "alias": "S", **shaping,
+                       "spectrum_history": bad}), bad
+    spectrum_history = {"spectrum_history": {"length_ms": 2000}}
+    assert not ok({"command": "edit_signal", "signal_id": signal, "offset_ms": 5, **spectrum_history})
+    assert not ok({"command": "edit_signal", "signal_id": signal, "receipt_id": "r" * 24, **spectrum_history})
+    assert not ok({"command": "edit_signal", "signal_id": signal, "modulator_id": modulator,
+                   "label": "Bars", **spectrum_history})  # partial shaping stays refused
+    assert not ok({"command": "create_set", "specs": [
+        {"receipt_id": "r" * 24, "alias": f"S{n}", **shaping, **spectrum_history} for n in range(4)]})
+    # Exactly one branch admits each call (oneOf).
+    command = {"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping}
+    assert sum(_admits(branch, command) for branch in _command_schema("shader_edit_audio")) == 1
+
+
+def test_spectrum_tool_descriptions_append_without_rewording() -> None:
+    sentences = {
+        "audio_prepare_signal": "No document mutation.",
+        "audio_read_signal": "Pending or missing is never a ready zero.",
+        "shader_get_audio": "no paths, media, curves or leases.",
+        "shader_edit_audio": "never resend under a new id.",
+    }
+    for name, original in sentences.items():
+        description = _audio_tool(name)["description"]
+        assert original in description, name
+    prepare = _audio_tool("audio_prepare_signal")["description"]
+    assert "spectrum" in prepare and "spectrum_budget" in prepare
+    read = _audio_tool("audio_read_signal")["description"]
+    assert "max_samples x bands x planes" in read and "1024" in read and "budget" in read
+    assert "interface" in _audio_tool("shader_get_audio")["description"]
+    edit = _audio_tool("shader_edit_audio")["description"]
+    assert "spectrum_history" in edit and "history_unsupported" in edit and "measurement_shape" in edit
+
+
+def test_client_forwards_spectrum_history_and_receipt_less_shaping(monkeypatch) -> None:
+    posted = []
+    signal, modulator = "signal_" + "3" * 24, "mod_" + "4" * 24
+
+    def reply(method, path, body=None, **kwargs):
+        posted.append(body["command"])
+        return {"schema": 1, "request_id": body["request_id"], "operation": "shader_edit_audio", "state": "saved",
+                "save": "saved", "shader": {"origin": "user", "shaderId": "aurora"},
+                "receipt": {"commit": 5, "revision": 4, "digest": "sha256:" + "c" * 64,
+                            "command": body["command"]["command"]}, "base": _audio_base(4)}
+
+    server, client = _audio_server(monkeypatch, reply)
+    shaping = {"label": "Bars", "output_min": 0, "output_max": 1}
+    commands = [
+        {"command": "create_signal", "receipt_id": "r" * 24, "alias": "S", **shaping,
+         "spectrum_history": {"length_ms": 4000}},
+        {"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping},
+        {"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping,
+         "spectrum_history": {"length_ms": 8000}},
+        {"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping,
+         "spectrum_history": None},
+        {"command": "edit_signal", "signal_id": signal, "receipt_id": "r" * 24, "modulator_id": modulator,
+         **shaping, "spectrum_history": {"length_ms": 1000}},
+    ]
+    for command in commands:
+        client.edit_shader_audio({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": command})
+    assert posted == commands
+    for bad in ({"command": "edit_signal", "signal_id": signal, "offset_ms": 5, "spectrum_history": None},
+                {"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping,
+                 "spectrum_history": {"length_ms": 3000}},
+                {"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, **shaping,
+                 "spectrum_history": {"length_ms": True}},
+                {"command": "edit_signal", "signal_id": signal, "modulator_id": modulator, "label": "Bars",
+                 "spectrum_history": {"length_ms": 2000}}):
+        with pytest.raises(HextileClientError):
+            client.edit_shader_audio({"request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": bad})
+    assert len(posted) == len(commands)  # nothing refused was sent
+
+
+def test_client_reads_spectrum_frames_and_windows_and_lists_interface_rows(monkeypatch) -> None:
+    bands = [0.25] * 32
+    frame = {"schema": 1, "signal_id": "signal_" + "3" * 24, "time": {"num": "1", "den": "2"},
+             "source_generation": 1, "curve_sha256": "d" * 64, "state": "ready", "u": 0.25,
+             "values": bands, "peaks": None}
+    state = {"reply": frame}
+    server, client = _audio_server(monkeypatch, lambda *_a, **_k: state["reply"])
+    selector = {"kind": "time", "time": {"num": "1", "den": "2"}}
+    read = {"owner": _audio_owner(), "curve_handle": "h" * 24, "selector": selector}
+    assert client.read_audio_signal(read)["values"] == bands
+    for broken in ({key: value for key, value in frame.items() if key != "peaks"},
+                   {**frame, "extra": 1}, {**frame, "values": "x"}, {**frame, "values": [0.5] * 65}):
+        state["reply"] = broken
+        with pytest.raises(HextileClientError, match="Malformed Audio signal read|Malformed Audio signal"):
+            client.read_audio_signal(read)
+    state["reply"] = {"schema": 1, "signal_id": "signal_" + "3" * 24, "resource_id": "audio_" + "1" * 24,
+                      "canonical_sha256": "b" * 64, "profile_id": "hann2048-hop512/1", "curve_sha256": "d" * 64,
+                      "source_generation": 1, "spec": _audio_spec(measurement=_spectrum_measurement()),
+                      "offset_ms": 0, "track": {"id": "track_" + "2" * 24}, "sample_rate": 48000, "hop": 512,
+                      "start": {"num": "0", "den": "1"}, "end": {"num": "1", "den": "8"},
+                      "rows": [{"index": 0, "time": {"num": "0", "den": "1"}, "bands": bands, "peaks": bands}],
+                      "neighbors": []}
+    window = client.read_audio_signal({**read, "selector": {"kind": "window", "start": {"num": "0", "den": "1"},
+                                                             "end": {"num": "1", "den": "8"}, "max_samples": 8}})
+    assert window["rows"][0]["bands"] == bands
+    interface = {"type": "spectrum", "names": ["S", "SCount", "SPeak"], "peak": True, "bands": 32,
+                 "history": {"length_ms": 2000, "rows": 128, "spacing_ms": 15.75}, "units": 35}
+    row = _audio_signal(measurement=_spectrum_measurement())
+    row["modulators"][0]["interface"] = interface
+    state["reply"] = _audio_page(selector="signals", entries=[row])
+    page = client.get_shader_audio({"shader": {"origin": "user", "shaderId": "aurora"},
+                                    "project_context_witness": "wit", "selector": "signals"})
+    assert page["entries"][0]["modulators"][0]["interface"] == interface
+    row["modulators"][0]["interface"] = {**interface, "hxSpectrum_S": 1}
+    state["reply"] = _audio_page(selector="signals", entries=[row])
+    with pytest.raises(HextileClientError, match="Malformed Audio page"):
+        client.get_shader_audio({"shader": {"origin": "user", "shaderId": "aurora"},
+                                 "project_context_witness": "wit", "selector": "signals"})
+
+
+def test_spectrum_refusals_relay_code_and_next_step(monkeypatch) -> None:
+    signal, modulator = "signal_" + "3" * 24, "mod_" + "4" * 24
+    refused = {}
+    server, client = _audio_server(monkeypatch, lambda *_a, **_k: (_ for _ in ()).throw(refused["error"]))
+    calls = {
+        "measurement_shape": lambda: client.edit_shader_audio({
+            "request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": {
+                "command": "edit_signal", "signal_id": signal, "receipt_id": "r" * 24}}),
+        "history_unsupported": lambda: client.edit_shader_audio({
+            "request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "command": {
+                "command": "edit_signal", "signal_id": signal, "modulator_id": modulator, "label": "Bars",
+                "output_min": 0, "output_max": 1, "spectrum_history": {"length_ms": 2000}}}),
+        "spectrum_budget": lambda: client.prepare_audio_signal({
+            "request_id": _AUDIO_REQUEST, "owner": _audio_owner(), "demand_id": _AUDIO_DEMAND,
+            "signal_spec": _audio_spec(measurement=_spectrum_measurement())}),
+        "budget": lambda: client.read_audio_signal({
+            "owner": _audio_owner(), "curve_handle": "h" * 24, "selector": {
+                "kind": "window", "start": {"num": "0", "den": "1"}, "end": {"num": "1", "den": "1"},
+                "max_samples": 9}}),
+    }
+    for code, call in calls.items():
+        refused["error"] = _audio_detail(code, 422, message="Refused " + code, next_step="Do the typed next step.")
+        with pytest.raises(HextileClientError) as caught:
+            call()
+        assert caught.value.receipt["code"] == code and caught.value.receipt["next_step"] == "Do the typed next step."

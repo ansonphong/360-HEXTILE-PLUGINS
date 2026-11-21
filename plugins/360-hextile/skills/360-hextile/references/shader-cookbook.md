@@ -10,6 +10,7 @@ image, sprite, photo, warp: still-on-sphere, still-image, coordinates
 playable, fly control, pointer: playable-flight, playable-pose, sphere-trace
 pattern, tiles, cells, print, kaleidoscope, streamlines: graphic-print, poles-seam, direction-ramp
 trails, feedback, history: history, palette-fog-light
+audio, spectrum, music, visualizer, waterfall: the section Using the spectrum in a shader (detail:true; not a card)
 tunnel-flight includes neon rings, organic cave, mechanical lattice and twisting corridor variations.
 Future only: clouds and water.
 
@@ -271,6 +272,112 @@ Combinations: tunnel-flight or landscape-flythrough as the world under this pose
 Provenance: The shipped recipes guide is the native helper contract. The shelf pose stays under its anonymous research alias. [PBRT Cameras and Film](https://pbr-book.org/4ed/Cameras_and_Film) (named section: chapter introduction only, not a Hextile camera).
 Evidence: static-native camera helpers. Shelf pose is source-inspected. Capture and pixels were not tested.
 Adaptation: a sample that stores position in a screen-space camera from frame to frame does not transfer. Drop article samplers, uniforms, and preprocessor forms.
+
+## Using the spectrum in a shader
+
+Names below use alias `S`; the real alias is whatever the modulator's code name is. Create the Spectrum signal with `audio_prepare_signal` and `shader_edit_audio` (get_guide recipes, Audio), then read its generated names from `shader_get_audio` `interface`.
+
+**What the binding gives you.** A Spectrum modulator with alias `S` makes these names available in GLSL:
+
+| Name | Type | Meaning |
+| --- | --- | --- |
+| `SCount` | `int` | Current band count (8, 16, 31, 32 or 64). Never hardcode N. |
+| `S(int band)` | `float` | Band level 0..1. Returns 0 outside `0..SCount-1` (safe to over-index). |
+| `S(float x)` | `float` | Smooth level at `x` in 0..1 across the bands, interpolated between band centres. |
+| `SPeak(int band)`, `SPeak(float x)` | `float` | Peak-hold level. With Peak hold off it returns the current level `S`. |
+| `SHistory(int band, int row)`, `SHistory(float x, float age)` | `float` | History. Level `row` steps ago (0 = now, 127 = oldest), or at `age` 0 (now)..1 (oldest). |
+| `SHistoryPeak(...)` | `float` | History with Peak hold. Peak level at that past time (returns `SHistory` when peak is off). |
+| `SHistorySeconds`, `SHistoryRows` | `float`, `int` | History length in seconds (1, 2, 4 or 8) and the fixed row count 128. |
+
+The bands are already log-spaced between the modulator's Low and High (or ISO 1/3-octave), so `x` is a log-frequency axis. Don't apply another `log` yourself. Levels are dB-normalized by the modulator's floor/ceiling and smoothed by its Raw/Punchy/Smooth response; Code min/max do not apply to these accessors. The shader does no audio math. You don't declare these names, and declaring any of them is a compile error. They are host uniforms (packed `vec4[16]`, plus one float texture when you use History), identical in preview and export. Changing the band count or History length is a value change, not a recompile, so code written against `SCount` adapts automatically. Turning Peak hold on or off recompiles. There is no History switch: just call `SHistory` (or use any History name) and History turns on; shaders that don't use it pay nothing. The modulator's History length (1, 2, 4 or 8 s, default 2 s) sets how far back it reaches.
+
+**Hard bars vs smooth.** `S(int(x * float(SCount)))` gives flat bars. `S(x)` gives a continuous curve, which is good for fills and lines. Mix them for bars with soft tops.
+
+**Bars with peak caps around the horizon (equirect and dome).** This version uses `hx.direction`, so the same code is correct for equirectangular and fulldome output:
+
+```glsl
+const float PI = 3.14159265359;
+
+vec4 hxMain(in HxFrag hx) {
+    vec3 d = normalize(hx.direction);
+    float x = fract(atan(d.x, d.z) / (2.0 * PI) + 0.5);        // 0..1 around the horizon
+    float h = asin(clamp(d.y, -1.0, 1.0)) / (0.5 * PI);         // -1 nadir .. 0 horizon .. 1 zenith
+    float n = float(SCount);
+    int band = int(floor(x * n));                               // adaptive: no literal N anywhere
+    float cell = fract(x * n);                                  // position inside the bar
+    float gap = step(0.12, cell) * step(cell, 0.88);            // thin gap between bars
+    float top = 0.6 * S(band);                                  // bar height above the horizon
+    float bar = step(0.0, h) * step(h, top) * gap;
+    float cap = 0.6 * SPeak(band);                              // equals the bar top when Peak hold is off
+    float capLine = (1.0 - smoothstep(0.004, 0.012, abs(h - cap))) * gap;
+    vec3 base = mix(vec3(0.05, 0.08, 0.12), vec3(0.2, 0.7, 1.0), x);
+    vec3 color = base * bar + vec3(1.0) * capLine;
+    return vec4(color, 1.0);
+}
+```
+
+**Radial spectrum around the zenith (dome-friendly ring).** The bars point outward from a ring at a fixed polar angle, and smooth interpolation gives a continuous outline:
+
+```glsl
+const float PI = 3.14159265359;
+
+vec4 hxMain(in HxFrag hx) {
+    vec3 d = normalize(hx.direction);
+    float polar = acos(clamp(d.y, -1.0, 1.0)) / PI;             // 0 zenith .. 1 nadir
+    float x = fract(atan(d.x, d.z) / (2.0 * PI) + 0.5);
+    float m = abs(2.0 * x - 1.0);                               // mirror so the ring is seamless
+    float level = S(m);                                         // smooth across bands
+    float inner = 0.18;
+    float outer = inner + 0.22 * level;
+    float ring = step(inner, polar) * step(polar, outer);
+    float peak = inner + 0.22 * SPeak(m);
+    float rim = 1.0 - smoothstep(0.002, 0.008, abs(polar - peak));
+    vec3 color = mix(vec3(0.9, 0.3, 0.6), vec3(0.3, 0.8, 1.0), m) * ring + vec3(rim);
+    return vec4(color, 1.0);
+}
+```
+
+**Scrolling waterfall (uses History).** Frequency runs around the horizon, time runs down from the horizon toward the nadir, newest at the top:
+
+```glsl
+const float PI = 3.14159265359;
+
+vec4 hxMain(in HxFrag hx) {
+    vec3 d = normalize(hx.direction);
+    float x = fract(atan(d.x, d.z) / (2.0 * PI) + 0.5);
+    float below = -asin(clamp(d.y, -1.0, 1.0)) / (0.5 * PI);    // 0 horizon .. 1 nadir
+    if (below < 0.0) return vec4(vec3(S(x)) * 0.2, 1.0);         // sky: faint current level
+    float level = SHistory(x, below);                            // age 0 at the horizon
+    vec3 color = mix(vec3(0.02, 0.02, 0.08), vec3(1.0, 0.6, 0.2), level);
+    return vec4(color, 1.0);
+}
+```
+
+**Spectrum landscape (uses History, height function).** Use History as a heightfield; any raymarch or displacement can call it. A cheap shaded relief:
+
+```glsl
+float height(vec2 uv) { return SHistory(uv.x, uv.y); }          // uv.x = frequency, uv.y = age
+
+vec4 hxMain(in HxFrag hx) {
+    vec2 uv = hx.uv;
+    float e = 1.0 / float(SHistoryRows);
+    float h = height(uv);
+    vec2 g = vec2(height(uv + vec2(e, 0.0)) - h, height(uv + vec2(0.0, e)) - h) / e;
+    vec3 n = normalize(vec3(-g * 0.05, 1.0));
+    float light = clamp(dot(n, normalize(vec3(0.4, 0.6, 0.7))), 0.0, 1.0);
+    vec3 color = mix(vec3(0.05, 0.1, 0.2), vec3(0.3, 0.9, 0.6), h) * (0.3 + 0.7 * light);
+    return vec4(color, 1.0);
+}
+```
+
+Tips:
+
+- Clamp is built in, so `S(band)` for `band >= SCount` is 0. For neighbour mixing, use `mix(S(i), S(i + 1), f)` freely.
+- For a log-frequency x axis in a flat panel, use `hx.uv.x` directly: it is already log-spaced by construction.
+- History rows are point samples spaced `SHistorySeconds / 127` apart; longer lengths can skip narrow transients.
+- Use the `SHistory` helpers, not `texture()` on the sampler: the helpers handle band/row centres and the peak plane.
+- Interface budget (64 units in total, shared with mouse 16, camera 4 and individual parameters): a spectrum costs 17, 33 with Peak hold, +2 when your code uses History. In an otherwise empty interface that is at most 3 plain spectra, and at most 1 with Peak hold. Each alias has its own `Count`.
+- Don't declare `float S[64]` or `uniform`s yourself. The host owns the declarations, and preprocessor directives are not allowed in shader bodies.
 
 ## Gaps
 

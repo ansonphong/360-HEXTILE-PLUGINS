@@ -475,8 +475,8 @@ _GUIDE_INDEX = (
 )
 _WORKFLOW_SCHEMA_SPLIT = "## Native render requests"
 _COOKBOOK_SPLIT = "## Cards"
-_COOKBOOK_RAW_CAP = 40_000
-_COOKBOOK_READ_CAP = 40_001
+_COOKBOOK_RAW_CAP = 50_000
+_COOKBOOK_READ_CAP = 50_001
 _COOKBOOK_INDEX_CAP = 6_000
 _COOKBOOK_JSON_CAP = 65_536
 _FIELD_GUIDE_TOOLS = (
@@ -2939,6 +2939,8 @@ _AUDIO_OWNER = _shader_closed({
     "expected_document_hash": _AUDIO_DIGEST,
     "project_context_witness": {"type": "string", "minLength": 1, "maxLength": 512},
     "owner_generation": {"type": "integer", "minimum": 0}})
+# Shader-owned History length of a Spectrum modulator: length only, null restores the 2000 ms default.
+_AUDIO_HISTORY = {"anyOf": [{"type": "null"}, _shader_closed({"length_ms": {"enum": [1000, 2000, 4000, 8000]}})]}
 _AUDIO_OUTPUT = {
     "alias": _SHADER_ALIAS,
     "label": {"type": "string", "minLength": 1, "maxLength": 128},
@@ -2948,6 +2950,16 @@ _AUDIO_MEASUREMENT = {"oneOf": [
     _shader_closed({"kind": {"const": "band"}, "profile_id": _AUDIO_PROFILE,
                     "low_hz": {"type": "number", "minimum": 0, "maximum": 24000},
                     "high_hz": {"type": "number", "minimum": 0, "maximum": 24000}}),
+    _shader_closed({"kind": {"const": "spectrum"}, "profile_id": _AUDIO_PROFILE,
+                    "bands": {"enum": [8, 16, 31, 32, 64]},
+                    "low_hz": {"type": "number", "minimum": 10, "maximum": 24000},
+                    "high_hz": {"type": "number", "minimum": 20, "maximum": 24000},
+                    "floor_db": {"type": "number", "minimum": -120, "maximum": 6},
+                    "ceiling_db": {"type": "number", "minimum": -114, "maximum": 12},
+                    "peak": {"anyOf": [{"type": "null"},
+                                       _shader_closed({"hold_ms": {"type": "integer", "minimum": 0, "maximum": 5000},
+                                                       "fall_db_per_s": {"type": "number", "minimum": 1,
+                                                                         "maximum": 200}})]}}),
     _shader_closed({"kind": {"const": "midi_notes"}, "filter": {"const": "all"},
                     "value": {"enum": ["trigger", "gate", "velocity"]}}),
     _shader_closed({"kind": {"const": "midi_notes"}, "filter": {"const": "note"},
@@ -3001,15 +3013,23 @@ _AUDIO_COMMAND = {"oneOf": [
     _audio_command("replace_track", {"track_id": _AUDIO_TRACK_ID, "receipt_id": _AUDIO_HANDLE,
                                      "timeline_start": _AUDIO_TIME, **_AUDIO_TRIM}, tuple(_AUDIO_TRIM), _AUDIO_TOGETHER),
     _audio_command("remove_track", {"track_id": _AUDIO_TRACK_ID, "dependent_ids": _AUDIO_DEPENDENT_IDS}),
-    _audio_command("create_signal", {"receipt_id": _AUDIO_HANDLE, **_AUDIO_OUTPUT}),
+    _audio_command("create_signal", {"receipt_id": _AUDIO_HANDLE, **_AUDIO_OUTPUT, "spectrum_history": _AUDIO_HISTORY},
+                   ("spectrum_history",)),
     _audio_command("edit_signal", {"signal_id": _AUDIO_SIGNAL_ID,
                                    "offset_ms": {"type": "integer", "minimum": -1000, "maximum": 1000}}),
     _audio_command("edit_signal", {"signal_id": _AUDIO_SIGNAL_ID, "receipt_id": _AUDIO_HANDLE,
                                    "modulator_id": _SHADER_MOD_ID, "label": _AUDIO_LABEL,
-                                   "output_min": {"type": "number"}, "output_max": {"type": "number"}},
-                   ("modulator_id", "label", "output_min", "output_max"),
-                   {key: [other for other in ("modulator_id", "label", "output_min", "output_max") if other != key]
-                    for key in ("modulator_id", "label", "output_min", "output_max")}),
+                                   "output_min": {"type": "number"}, "output_max": {"type": "number"},
+                                   "spectrum_history": _AUDIO_HISTORY},
+                   ("modulator_id", "label", "output_min", "output_max", "spectrum_history"),
+                   {**{key: [other for other in ("modulator_id", "label", "output_min", "output_max") if other != key]
+                       for key in ("modulator_id", "label", "output_min", "output_max")},
+                    "spectrum_history": ["modulator_id", "label", "output_min", "output_max"]}),
+    # Shaping alone: the signal spec and its curve are kept, so no receipt (the way History length changes).
+    _audio_command("edit_signal", {"signal_id": _AUDIO_SIGNAL_ID, "modulator_id": _SHADER_MOD_ID,
+                                   "label": _AUDIO_LABEL, "output_min": {"type": "number"},
+                                   "output_max": {"type": "number"}, "spectrum_history": _AUDIO_HISTORY},
+                   ("spectrum_history",)),
     _audio_command("create_set", {"specs": {"type": "array", "minItems": 4, "maxItems": 4,
                                             "items": _shader_closed({"receipt_id": _AUDIO_HANDLE, **_AUDIO_OUTPUT})}}),
     _audio_command("remove_signal", {"signal_id": _AUDIO_SIGNAL_ID, "dependent_ids": _AUDIO_DEPENDENT_IDS}),
@@ -3522,7 +3542,9 @@ SHADER_EXTENSION_TOOLS = [
                                   "limit is 1 to 50 and follows next_cursor, and filters track_id/signal_id are exact IDs. "
                                   "The reply carries the owner witness the Audio preparation and edit tools need. A changed "
                                   "document or foreign cursor refuses 409 page_changed: read again without cursor. Signals "
-                                  "report committed readiness, offset_ms and mapped modulator IDs; no paths, media, curves or leases.",
+                                  "report committed readiness, offset_ms and mapped modulator IDs; no paths, media, curves or leases. "
+                                  "A Spectrum modulator carries interface: its GLSL names, peak, bands, History "
+                                  "(null until the code uses a History name) and units.",
               {**_NATIVE_SHADER_TARGET, "selector": {"enum": ["tracks", "signals", "set_suggestion"]},
                "cursor": {"type": "string", "minLength": 1, "maxLength": 160},
                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
@@ -3534,7 +3556,10 @@ SHADER_EXTENSION_TOOLS = [
                                    "receipts come from the audio_prepare_* tools. It saves itself; a saved reply carries "
                                    "save and the next base. While the person holds the code lease it refuses stale_lease. "
                                    "After a lost reply call shader_get_operation with scope \"asset\" and the same request_id; "
-                                   "never resend under a new id.",
+                                   "never resend under a new id. create_signal and edit_signal with modulator_id, label and "
+                                   "output_min/max (no receipt_id keeps the curve) take spectrum_history "
+                                   "{length_ms 1000|2000|4000|8000} or null, for a Spectrum signal only; a scalar "
+                                   "modulator cannot become a spectrum (measurement_shape, history_unsupported).",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER, "command": _AUDIO_COMMAND},
               ["request_id", "owner", "command"]),
     _tool_def("audio_prepare_resource", "Use to import one local audio, MIDI, CSV or Audacity label file, or re-admit a "
@@ -3557,7 +3582,10 @@ SHADER_EXTENSION_TOOLS = [
                                       "owner, demand_id and the complete signal_spec (id, track_id, measurement, gain, "
                                       "attack, release, normalization fixed_full_scale, optional offset_ms). The first "
                                       "demand starts analysis itself and the pending receipt carries progress; read it "
-                                      "with audio_get_preparation. No document mutation.",
+                                      "with audio_get_preparation. No document mutation. A measurement of kind spectrum "
+                                      "takes bands 8, 16, 31, 32 or 64, low_hz, high_hz, floor_db, ceiling_db and peak "
+                                      "(null or {hold_ms, fall_db_per_s}); a curve over the value budget refuses "
+                                      "spectrum_budget.",
               {"request_id": _NATIVE_SHADER_REQUEST_ID, "owner": _AUDIO_OWNER,
                "signal_spec": _AUDIO_SIGNAL_SPEC, "demand_id": _NATIVE_SHADER_REQUEST_ID},
               ["request_id", "owner", "signal_spec", "demand_id"]),
@@ -3585,7 +3613,9 @@ SHADER_EXTENSION_TOOLS = [
     _tool_def("audio_read_signal", "Use to read a ready Audio signal curve at one exact time or in a bounded window. "
                                    "Pass owner, the ready curve_handle from audio_get_preparation and "
                                    "selector {kind:\"time\", time} or {kind:\"window\", start, end, max_samples} with at "
-                                   "most 128 samples. Pending or missing is never a ready zero.",
+                                   "most 128 samples. Pending or missing is never a ready zero. A spectrum signal "
+                                   "returns bands and peaks per row; a window must satisfy max_samples x bands x planes "
+                                   "<= 1024 (planes is 2 with Peak hold), else it refuses budget: request fewer rows.",
               {"owner": _AUDIO_OWNER, "curve_handle": _AUDIO_HANDLE, "selector": _AUDIO_SIGNAL_SELECTOR},
               ["owner", "curve_handle", "selector"]),
 ]

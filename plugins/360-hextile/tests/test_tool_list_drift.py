@@ -1781,9 +1781,9 @@ def _expect_cookbook_error(message: str) -> None:
     "duplicate-split",
     "longer-heading-only",
     "invalid-utf8",
-    "raw-40000-ok",
-    "raw-40001-refuse",
-    "raw-40001-non-utf8-before-decode",
+    "raw-50000-ok",
+    "raw-50001-refuse",
+    "raw-50001-non-utf8-before-decode",
     "index-6000-ok",
     "index-6001-refuse",
     "trim-does-not-save-prefix",
@@ -1828,14 +1828,14 @@ def test_shader_cookbook_bounds_privacy_and_split(
     if case == "invalid-utf8":
         plant(b"abc\xff\n")
         _expect_cookbook_error("Guide file is not UTF-8")
-        assert reads == [40001]
+        assert reads == [50001]
         return
 
-    if case == "raw-40000-ok":
+    if case == "raw-50000-ok":
         prefix = b"a\n"
         marker = b"## Cards\n"
-        raw = prefix + marker + (b"x" * (40000 - len(prefix) - len(marker)))
-        assert len(raw) == 40000
+        raw = prefix + marker + (b"x" * (50000 - len(prefix) - len(marker)))
+        assert len(raw) == 50000
         plant(raw)
         short = load_guide("shader-cookbook")
         full = load_guide("shader-cookbook", detail=True)
@@ -1843,21 +1843,21 @@ def test_shader_cookbook_bounds_privacy_and_split(
         assert full["markdown"].encode("utf-8") == raw
         assert short["detail"] is False and full["detail"] is True
         assert all(len(_canonical_guide_json(item)) <= 65536 for item in (short, full))
-        assert reads == [40001, 40001]
+        assert reads == [50001, 50001]
         return
 
-    if case == "raw-40001-refuse":
+    if case == "raw-50001-refuse":
         head = b"a\n## Cards\n"
-        plant(head + (b"y" * (40001 - len(head))))
-        assert page.stat().st_size == 40001
+        plant(head + (b"y" * (50001 - len(head))))
+        assert page.stat().st_size == 50001
         _expect_cookbook_error("shader-cookbook exceeds its size bound")
-        assert reads == [40001]
+        assert reads == [50001]
         return
 
-    if case == "raw-40001-non-utf8-before-decode":
-        plant(b"\xff" * 40001)
+    if case == "raw-50001-non-utf8-before-decode":
+        plant(b"\xff" * 50001)
         _expect_cookbook_error("shader-cookbook exceeds its size bound")
-        assert reads == [40001]
+        assert reads == [50001]
         return
 
     if case == "index-6000-ok":
@@ -1888,7 +1888,7 @@ def test_shader_cookbook_bounds_privacy_and_split(
     if case == "json-overflow":
         prefix = b"idx\n"
         raw = prefix + b"## Cards\n" + (b"\x01" * 12000) + b"\n"
-        assert len(raw) <= 40000 and len(prefix) <= 6000
+        assert len(raw) <= 50000 and len(prefix) <= 6000
         plant(raw)
         alone = {
             "name": "shader-cookbook",
@@ -1951,7 +1951,7 @@ def test_shader_cookbook_bounds_privacy_and_split(
 
     short = load_guide("shader-cookbook")
     full = load_guide("shader-cookbook", detail=True)
-    assert reads == [40001, 40001]
+    assert reads == [50001, 50001]
     assert set(short) == {"name", "path", "markdown", "detail"}
     assert set(full) == {"name", "path", "markdown", "detail"}
     assert short["name"] == full["name"] == "shader-cookbook"
@@ -1960,7 +1960,7 @@ def test_shader_cookbook_bounds_privacy_and_split(
     assert short["path"] == full["path"]
     assert isinstance(short["markdown"], str) and isinstance(full["markdown"], str)
     disk = Path(full["path"]).read_bytes()
-    assert len(disk) <= 40000
+    assert len(disk) <= 50000
     assert b"\r" not in disk
     text = disk.decode("utf-8")
     assert full["markdown"] == text
@@ -1988,7 +1988,8 @@ def test_shader_cookbook_bounds_privacy_and_split(
         tags = [tag.strip() for tag in tag_line.split("Tags:", 1)[1].strip().rstrip(".").split(",") if tag.strip()]
         assert 1 <= len(tags) <= 4
         assert set(tags) <= _COOKBOOK_TAGS
-    assert "```" not in full["markdown"]
+    # Cards carry no code; the one fenced section is the spectrum guide (TS4.1), whose GLSL is its contract.
+    assert "```" not in full["markdown"].split("\n## Using the spectrum in a shader\n")[0]
     assert all(alias not in full["markdown"] for alias in _PERSONAL_ALIASES)
     listed = load_guide("index")
     assert listed["hint"] == "Call get_guide with name= one of these titles."
@@ -2190,3 +2191,17 @@ def test_py_files_compile() -> None:
         "tests/test_tool_list_drift.py",
     ):
         py_compile.compile(str(ROOT / rel), doraise=True)
+
+
+def test_cookbook_spectrum_section_matches_generated_names() -> None:
+    text = load_guide("shader-cookbook", detail=True)["markdown"]
+    section = text.split("## Using the spectrum in a shader\n", 1)[1].split("\n## ", 1)[0]
+    assert "SCount" in section and "SHistory(" in section and "SPeak(" in section and "SHistoryRows" in section
+    assert "hxSpectrum" not in text and "hxSpectrumHistory" not in text  # public names only
+    for example in ("Bars with peak caps", "Radial spectrum", "Scrolling waterfall", "Spectrum landscape"):
+        assert example in section
+    assert "SHistory(x, below)" in section and "height(uv)" in section
+    assert "Using the spectrum in a shader" in load_guide("shader-cookbook")["markdown"]  # the index points at the section
+    recipes = load_guide("recipes")["markdown"]
+    assert ("Audio visualizer: prepare a Spectrum signal, create_signal, read `<alias>Count`/`<alias>(i)` in GLSL; "
+            "call `<alias>History(x, age)` for waterfalls (History turns on when the shader uses it)") in recipes

@@ -1943,6 +1943,9 @@ _AUDIO_VALUES: dict[str, Callable[[Any], bool]] = {
     "alias": lambda v: type(v) is str and "__" not in v and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,31}", v) is not None,
     "label": lambda v: type(v) is str and 1 <= len(v) <= 128,
     "offset_ms": lambda v: type(v) is int and -1000 <= v <= 1000,
+    "spectrum_history": lambda v: v is None or (type(v) is dict and set(v) == {"length_ms"}
+                                                and type(v["length_ms"]) is int
+                                                and v["length_ms"] in (1000, 2000, 4000, 8000)),
     "kind": lambda v: type(v) is str,
     "origin": lambda v: v in {"builtin", "user", "project"},
     **{key: lambda v: type(v) is str and 1 <= len(v) <= 512 for key in ("shader_id", "project_context_witness")},
@@ -1957,9 +1960,13 @@ _AUDIO_COMMANDS = {
     "replace_track": ({"track_id", "receipt_id", "timeline_start"},
                       {"track_id", "receipt_id", "timeline_start", *_AUDIO_TRIM}),
     "remove_track": ({"track_id", "dependent_ids"},),
-    "create_signal": ({"receipt_id", "alias", *_AUDIO_SHAPING},),
+    "create_signal": ({"receipt_id", "alias", *_AUDIO_SHAPING}, {"receipt_id", "alias", *_AUDIO_SHAPING, "spectrum_history"}),
+    # Shaping alone (no receipt_id) keeps the curve; spectrum_history rides only with a complete shaping.
     "edit_signal": ({"signal_id", "offset_ms"}, {"signal_id", "receipt_id"},
-                    {"signal_id", "receipt_id", "modulator_id", *_AUDIO_SHAPING}),
+                    {"signal_id", "receipt_id", "modulator_id", *_AUDIO_SHAPING},
+                    {"signal_id", "receipt_id", "modulator_id", *_AUDIO_SHAPING, "spectrum_history"},
+                    {"signal_id", "modulator_id", *_AUDIO_SHAPING},
+                    {"signal_id", "modulator_id", *_AUDIO_SHAPING, "spectrum_history"}),
     "create_set": ({"specs"},),
     "remove_signal": ({"signal_id", "dependent_ids"},),
 }
@@ -2108,7 +2115,10 @@ _AUDIO_ROWS = {
 _AUDIO_TRACK_RESOURCE = frozenset({"kind", "display_name", "original_ext", "sample_rate", "sample_count", "channels",
                                    "pcm_profile", "parser_version", "duration", "note_count", "row_count",
                                    "label_count", "columns"})
-_AUDIO_MODULATOR = frozenset({"id", "alias", "label", "enabled", "output_min", "output_max", "mapped_targets"})
+_AUDIO_MODULATOR = frozenset({"id", "alias", "label", "enabled", "output_min", "output_max", "mapped_targets",
+                              "interface"})
+# A Spectrum modulator's generated GLSL surface (public names only, never the hx... internals).
+_AUDIO_INTERFACE = frozenset({"type", "names", "peak", "bands", "history", "units"})
 _AUDIO_PROPOSAL = frozenset({"alias", "label", "output_min", "output_max", "signal_spec"})
 
 
@@ -2139,7 +2149,10 @@ def _audio_page(value: Any, args: Mapping[str, Any], selector: str, limit: int) 
                    or selector == "tracks" and (type(row.get("resource")) is not dict
                                                 or set(row["resource"]) - _AUDIO_TRACK_RESOURCE)
                    or selector == "signals" and (type(row.get("modulators")) is not list or any(
-                       type(mod) is not dict or set(mod) - _AUDIO_MODULATOR for mod in row["modulators"]))
+                       type(mod) is not dict or set(mod) - _AUDIO_MODULATOR
+                       or "interface" in mod and (type(mod["interface"]) is not dict
+                                                  or set(mod["interface"]) - _AUDIO_INTERFACE)
+                       for mod in row["modulators"]))
                    for row in entries)
             or cursor is not None and (type(cursor) is not str or not 1 <= len(cursor) <= 160 or not entries
                                        or cursor == args.get("cursor"))):
@@ -8493,8 +8506,15 @@ class Client:
             result = self.request_json("POST", "/api/audio/signals/read", body)
         except HextileClientError as exc:
             raise self._audio_failure(exc) from exc
-        reply = _audio_reply(result, _AUDIO_SIGNAL_REPLIES[selector["kind"]], "signal read")
-        if set(reply) != _AUDIO_SIGNAL_REPLIES[selector["kind"]] or (
+        keys = _AUDIO_SIGNAL_REPLIES[selector["kind"]]
+        if selector["kind"] == "time" and type(result) is dict and "values" in result:
+            keys = keys | {"values", "peaks"}  # a Spectrum frame also carries every band level (and peaks or null)
+        reply = _audio_reply(result, keys, "signal read")
+        values = reply.get("values")
+        if set(reply) != keys or (selector["kind"] == "time" and "values" in keys and (
+                type(values) is not list or len(values) > 64 or not all(map(_audio_number, values))
+                or reply["peaks"] is not None and (type(reply["peaks"]) is not list or len(reply["peaks"]) > 64
+                                                   or not all(map(_audio_number, reply["peaks"]))))) or (
                 reply.get("state") != "ready" if selector["kind"] == "time" else
                 type(reply.get("rows")) is not list or type(reply.get("neighbors")) is not list
                 or len(reply["rows"]) + len(reply["neighbors"]) > selector["max_samples"]):
