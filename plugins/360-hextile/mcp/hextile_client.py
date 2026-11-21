@@ -1847,6 +1847,30 @@ _AUDIO_SELECTORS = {"time": ({"time"},), "window": ({"start", "end", "max_sample
 _AUDIO_PREVIEWS = {"waveform": ({"receipt", "start_sample", "end_sample", "max_points"},),
                    "spectrum": ({"receipt", "center_sample"},), "data": ({"receipt", "start", "end", "max_points"},)}
 _AUDIO_PREPARE_UNKNOWN = "Audio preparation outcome unknown; read audio_get_preparation with the original request_id."
+_AUDIO_UNKNOWN_STEP = ("Read the outcome with the original request_id, or resend the same payload under the same "
+                       "request_id; native replays it. Never use a new request_id.")
+
+
+def _audio_details(exc: HextileClientError) -> Optional[dict]:
+    """A native refusal's bounded details (for example alias_collision {track_id, aliases}); else None."""
+    try:
+        details = json.loads(exc.body or "")["detail"]["details"]
+        size = len(json.dumps(details, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        return None
+
+    def scalar(value: Any) -> bool:
+        return (type(value) is str and len(value) <= 128 and not _status_private_text(value)
+                or type(value) in (int, bool) or type(value) is float and math.isfinite(value))
+
+    if (type(details) is not dict or size > 4096 or len(details) > 16
+            or any(type(key) is not str or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key) is None
+                   or not (scalar(value) or type(value) is list and len(value) <= 64 and all(map(scalar, value)))
+                   for key, value in details.items())):
+        return None
+    return details
+
+
 _AUDIO_SPEC = frozenset({"id", "track_id", "measurement", "gain", "attack", "release", "normalization"})
 
 
@@ -8167,16 +8191,21 @@ class Client:
 
     @staticmethod
     def _audio_failure(exc: HextileClientError, request_id: Optional[str] = None, recovery: str = "") -> HextileClientError:
-        """A typed native refusal passes through; a lost write reply is Unknown under its original id."""
+        """A typed native refusal passes through with its bounded details; a lost write reply is Unknown."""
         if exc.kind == "http" and exc.status_code is not None and exc.status_code < 500:
             try:
                 _raise_plain_refusal(exc)
             except HextileClientError as typed:
+                details = _audio_details(exc)
+                if details is not None and typed.receipt is not None and "code" in typed.receipt:
+                    typed.receipt["details"] = details
                 return typed
         if request_id is None:
             return exc
+        # Native admits the request_id before work and replays it, so the same payload may be resent.
         return HextileClientError(recovery, status_code=exc.status_code, kind="audio_outcome_unknown",
-                                  receipt={"request_id": request_id})
+                                  receipt={"request_id": request_id}, code="audio_outcome_unknown",
+                                  next_step=_AUDIO_UNKNOWN_STEP)
 
     def _audio_write(self, path: str, body: dict, recovery: str, check: Callable[[Any], dict]) -> dict:
         try:
@@ -8384,7 +8413,7 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
             plain = exc.receipt
             fields = {"code", "message", "next_step"}
             if fields <= set(plain) <= fields | {"diagnostic", "route_discovery", "checks",
-                                                 "request_id", "project_context_witness"}:
+                                                 "request_id", "project_context_witness", "details"}:
                 payload["code"] = plain["code"]
                 payload["message"] = plain["message"]
                 payload["next_step"] = plain["next_step"]

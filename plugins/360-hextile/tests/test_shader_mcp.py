@@ -3848,6 +3848,33 @@ def test_shader_edit_audio_closed_commands_and_saved_or_mounted_replies(monkeypa
     assert payload["kind"] == "audio_outcome_unknown"
     assert payload["receipt"] == {"request_id": _AUDIO_REQUEST}
     assert "shader_get_operation" in payload["error"] and "new id" in payload["error"]
+    assert payload["code"] == "audio_outcome_unknown" and "same request_id" in payload["next_step"]
+    # A pre-write 503 (busy) is still Unknown, with the same-id resend step; no new-id replay.
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
+        _audio_detail("busy", 503, next_step="Retry in a moment with the same request_id.")))
+    payload = json.loads(server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 0}})["content"][0]["text"])
+    assert (payload["kind"], payload["code"], payload["status_code"]) == ("audio_outcome_unknown",
+                                                                          "audio_outcome_unknown", 503)
+    assert payload["receipt"] == {"request_id": _AUDIO_REQUEST} and "same request_id" in payload["next_step"]
+    # alias_collision keeps its bounded details so the agent can review the refreshed names.
+    collision = {"track_id": track_id, "aliases": ["A", "A1"]}
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(_audio_detail(
+        "alias_collision", 409, next_step="Review details.aliases and send create_set again.", details=collision)))
+    payload = json.loads(server.call_tool("shader_edit_audio", {
+        "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+        "command": {"command": "create_signal", "receipt_id": "r" * 24, "alias": "A", "label": "Amp",
+                    "output_min": 0, "output_max": 1}})["content"][0]["text"])
+    assert (payload["code"], payload["status_code"]) == ("alias_collision", 409)
+    assert payload["receipt"]["details"] == collision and payload["next_step"].startswith("Review details")
+    for bad in ({"path": "/home/person/song.wav"}, {"rows": list(range(65))}, {"x" * 70: 1}, ["A"]):
+        monkeypatch.setattr(client, "request_json", lambda *_a, _bad=bad, **_k: (_ for _ in ()).throw(
+            _audio_detail("alias_collision", 409, details=_bad)))
+        payload = json.loads(server.call_tool("shader_edit_audio", {
+            "request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+            "command": {"command": "edit_signal", "signal_id": signal_id, "offset_ms": 0}})["content"][0]["text"])
+        assert payload["code"] == "alias_collision" and "details" not in payload["receipt"], bad
     monkeypatch.setattr(client, "request_json", lambda *_a, **_k: (_ for _ in ()).throw(
         _audio_detail("stale_lease", 409, message="The human holds the code and can hand it back.",
                       next_step="Hand back, then retry with the same request_id.")))
@@ -4020,3 +4047,41 @@ def test_audio_preparation_status_and_reads_are_bounded(monkeypatch) -> None:
     monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {"schema": 1, "kind": "signal"})
     with pytest.raises(HextileClientError, match="^Malformed Audio preview reply$"):
         client.read_audio_preview({"receipt": "r" * 24, "kind": "spectrum", "center_sample": 0})
+
+
+@pytest.mark.parametrize("data", [
+    {"kind": "midi", "original_ext": "mid", "parser_version": 1, "duration": {"num": "4", "den": "1"},
+     "note_count": 12},
+    {"kind": "curve", "original_ext": "csv", "parser_version": 1, "duration": {"num": "4", "den": "1"},
+     "row_count": 40, "columns": [{"min": 0, "max": 1}]},
+    {"kind": "labels", "original_ext": "txt", "parser_version": 1, "duration": {"num": "4", "den": "1"},
+     "label_count": 3},
+])
+def test_audio_prepare_resource_admits_data_resource_receipts(monkeypatch, data) -> None:
+    record = {"id": "audio_" + "1" * 24, "display_name": "Notes", "original_sha256": _AUDIO_DIGEST,
+              "canonical_sha256": "b" * 64, **data}
+    reply = {"value": _audio_receipt("resource", _AUDIO_REQUEST, result=record, progress=1.0)}
+    server, _client = _audio_server(monkeypatch, lambda *_a, **_k: reply["value"])
+    args = {"request_id": _AUDIO_REQUEST, "owner": _audio_owner(),
+            "source": {"kind": "local_file", "path": "/music/notes." + data["original_ext"]}}
+    payload = json.loads(server.call_tool("audio_prepare_resource", args)["content"][0]["text"])
+    assert payload["state"] == "ready" and payload["result"] == record
+    reply["value"] = _audio_receipt("resource", _AUDIO_REQUEST, result={**record, "path": "/private"})
+    payload = json.loads(server.call_tool("audio_prepare_resource", args)["content"][0]["text"])
+    assert payload["kind"] == "audio_outcome_unknown" and "Malformed Audio" in payload["error"]
+
+
+def test_existing_shader_edit_takes_sampled_modulator_ids(monkeypatch) -> None:
+    """shader_get_audio's sampled mod_ IDs flow through the existing shader_edit addresses unchanged."""
+    sampled = "mod_" + "4" * 24
+    edits = [{"op": "set", "address": ["modulators", sampled, "alias"], "value": "Bass"},
+             {"op": "set", "address": ["modulators", sampled, "label"], "value": "Bass hit"},
+             {"op": "set", "address": ["modulators", sampled, "enabled"], "value": False},
+             {"op": "set", "address": ["drivers", "glow"],
+              "value": [{"source_id": sampled, "mode": "range", "range_min": 0, "range_max": 1}]}]
+    client, sent = _capture(monkeypatch, {"save": "saved", "results": [
+        _merge_row(op="set", address=edit["address"], value=edit["value"]) for edit in edits],
+        "commit": 5, "revision": 6})
+    result = client.shader_edit(_package_args(edits=edits))
+    assert sent[0][1] == "/api/shaders/aurora/agent/edits" and sent[0][2]["edits"] == edits
+    assert [row["address"] for row in result["results"]] == [edit["address"] for edit in edits]
