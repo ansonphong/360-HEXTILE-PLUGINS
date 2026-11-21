@@ -8538,7 +8538,6 @@ class Client:
         if selector["kind"] == "time" and type(result) is dict and "values" in result:
             keys = keys | {"values", "peaks"}  # a Spectrum frame also carries every band level (and peaks or null)
         reply = _audio_reply(result, keys, "signal read")
-        values = reply.get("values")
         if set(reply) != keys or (selector["kind"] == "time" and "values" in keys and not _audio_frame_ok(reply)) or (
                 reply.get("state") != "ready" if selector["kind"] == "time" else
                 type(reply.get("rows")) is not list or type(reply.get("neighbors")) is not list
