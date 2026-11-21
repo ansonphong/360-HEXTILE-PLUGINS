@@ -611,18 +611,22 @@ def _valid_render_timing(value: Any) -> bool:
 
 
 def _valid_render_estimate(value: Any) -> bool:
-    """Validate bounded native evidence; the proxy never estimates GPU cost."""
+    """Validate bounded native evidence; the proxy never estimates GPU cost.
+
+    Counts need a safe representation only: Shader has no agent-level total-frame
+    policy, so a 10,000-frame or larger sequence keeps its native estimate.
+    """
     return (type(value) is dict and set(value) == {
         "profile", "basis", "approximate", "frame_count", "remaining_frames",
         "total_ms", "remaining_ms", "sample_count", "includes_output"}
         and value["profile"] == "shader-render-estimate/1"
         and value["basis"] in ("preview", "saved_frames") and value["approximate"] is True
-        and type(value["frame_count"]) is int and 1 <= value["frame_count"] <= 10_000
+        and type(value["frame_count"]) is int and 1 <= value["frame_count"] <= 2**53 - 1
         and type(value["remaining_frames"]) is int and 0 <= value["remaining_frames"] <= value["frame_count"]
         and all(type(value[key]) is int and 0 <= value[key] <= 36_003_600_000
                 for key in ("total_ms", "remaining_ms"))
         and value["remaining_ms"] <= value["total_ms"]
-        and type(value["sample_count"]) is int and 0 <= value["sample_count"] <= 10_000
+        and type(value["sample_count"]) is int and 0 <= value["sample_count"] <= 2**53 - 1
         and type(value["includes_output"]) is bool)
 
 
@@ -2497,11 +2501,13 @@ def validate_shader_sequence_request(body: Mapping[str, Any]) -> None:
     start, end = rational(body["start_time"]), rational(body["end_time"])
     count = (end - start) * fps
     expected_count = -(-count.numerator // count.denominator)
+    # Exact count-versus-interval only; counts and extents need a safe representation,
+    # never an agent-level total-frame cap.
     if (not 0 <= start < end <= 86400
-            or type(body["frame_count"]) is not int or body["frame_count"] < 1
+            or not integer(body["frame_count"], 1, 2**53 - 1)
             or body["frame_count"] != expected_count or not integer(body["seed"], 0, 2**32 - 1)
-            or type(body["width"]) is not int or body["width"] < 4
-            or type(body["height"]) is not int or body["height"] < 2):
+            or not integer(body["width"], 4, 2**53 - 1)
+            or not integer(body["height"], 2, 2**53 - 1)):
         refuse()
     output = body["output"]
     if type(output) is not dict or "projection" not in output:
