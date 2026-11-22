@@ -60,6 +60,10 @@ When supported, `preview` identifies the same mounted surface and saved hashes. 
 confirms a visible Workshop frame. `pending` and `compiled` can precede presentation.
 `failed` carries any source-mapped diagnostics and `unknown` means the observation
 is unavailable. `showing_previous:true` means an earlier frame is still on screen.
+A `failed` diagnostic saying the Shader crashed the GPU driver means that exact
+source killed the viewer's GPU context (for example a construct the Windows D3D
+compiler rejects). It is not previewed again until the code changes or the user
+presses COMPILE: fix the source with `shader_edit` and do not ask for repeated retries.
 A save reply reports storage. Read `edit_counts` and any `results[].reason`, then
 read live context when the user asks whether the edited Shader is visible.
 
