@@ -260,6 +260,7 @@ def test_preference_roundtrip_preserves_false_bools_and_strips_private_fields() 
     {"audio_monitor_latency_ms": 0},
     {"audio_monitor_latency_ms": 500},
     {"telemetry_enabled": True},
+    {"shader_revision_thumbnails": True},
     {"error_reporting_enabled": False},
 ])
 def test_preference_update_sends_only_the_partial_object(changes: dict[str, Any]) -> None:
@@ -721,3 +722,9 @@ def test_legacy_clear_text_hides_full_locator_components() -> None:
     assert public not in rendered
     assert "Permission denied:" not in rendered
     assert "[path]" not in rendered
+
+
+def test_preferences_round_trip_shader_revision_thumbnails() -> None:
+    server, _client, _calls = _server({("GET", "/api/settings"): (
+        200, json.dumps(_preferences(shader_revision_thumbnails=True)).encode())})
+    assert _payload(server.call_tool("get_app_preferences", {}))["shader_revision_thumbnails"] is True

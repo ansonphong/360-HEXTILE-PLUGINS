@@ -1846,7 +1846,7 @@ def _native_read_result(data: Any, *, kind: str, entries: int | None = None, lim
         "history": {"document_ref", "document_hash", "ordinal", "integrity", "publication",
                     "schema", "timestamp", "hash_suffix", "restore_eligible", "copy_eligible",
                     "eligibility_reason", "id", "name", "actor", "error", "target_family", "seal",
-                    "package_missing"},
+                    "package_missing", "changed", "changed_count", "restored_from", "thumbnail"},
         "looks": {"id", "title", "revision", "content_hash", "envelope_hash", "manifest_hash",
                   "frozen_document_revision", "frozen_document_hash"},
     }.get(kind)
@@ -3251,6 +3251,7 @@ _PREFERENCE_BOOLS = (
     "error_reporting_enabled",
     "telemetry_enabled",
     "hdr_import_rolloff",
+    "shader_revision_thumbnails",
 )
 _PREFERENCE_ENUMS = {
     "vision_mode": frozenset({"auto", "resident", "on_demand"}),
@@ -5519,6 +5520,34 @@ class Client:
             _raise_plain_refusal(exc)
             raise
         return _native_read_result(data, kind="history", entries=20)
+
+    def get_shader_revision_thumbnail(self, args: Mapping[str, Any], revision: int) -> bytes:
+        """One bounded JPEG read of a revision thumbnail (192px wide); 404 becomes thumbnail_missing."""
+        _native_read_args(args, {"shader", "project_context_witness"}, set())
+        shader = args["shader"]
+        url = self._url(f"/api/shaders/covers/{urllib.parse.quote(str(shader['origin']), safe='')}/"
+                        f"{urllib.parse.quote(str(shader['shaderId']), safe='')}") + "?" + urllib.parse.urlencode(
+            {"revision": revision, "w": 192})
+        req = urllib.request.Request(url, headers={**_REQUEST_HEADERS.get(), "X-Hextile-Agent": "mcp",
+                                                   "Accept": "image/jpeg"}, method="GET")
+        try:
+            cm = self._opener(req, timeout=self.timeout) if self._opener is not None else urllib.request.urlopen(req, timeout=self.timeout)
+            with cm as response:
+                data = response.read(256 * 1024 + 1)
+                if len(data) > 256 * 1024 or data[:2] != b"\xff\xd8" or \
+                        response.headers.get("Content-Type", "").split(";", 1)[0].lower() != "image/jpeg":
+                    raise HextileClientError("Invalid revision thumbnail", status_code=502, kind="other")
+                return data
+        except HextileClientError:
+            raise
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise HextileClientError("No thumbnail was saved for this revision.", status_code=404,
+                                         kind="thumbnail_missing") from exc
+            raise HextileClientError("Revision thumbnail unavailable", status_code=exc.code,
+                                     body=(exc.read(800) or b"").decode("utf-8", "replace"), kind="http") from exc
+        except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, OSError) as exc:
+            raise HextileClientError(APP_DOWN_MSG, status_code=None, body=str(exc), kind="app_down") from exc
 
     def get_shader_looks(self, args: Mapping[str, Any]) -> dict:
         _native_read_args(args, {"shader", "project_context_witness"})

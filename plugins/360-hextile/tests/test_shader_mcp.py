@@ -4360,3 +4360,63 @@ def test_spectrum_refusals_relay_code_and_next_step(monkeypatch) -> None:
         with pytest.raises(HextileClientError) as caught:
             call()
         assert caught.value.receipt["code"] == code and caught.value.receipt["next_step"] == "Do the typed next step."
+
+
+_HIST_SHADER = {"origin": "user", "shaderId": "aurora"}
+
+
+def test_history_rows_project_new_fields(monkeypatch) -> None:
+    client = Client("http://127.0.0.1:9")
+    row = {"document_ref": "rev:3", "changed": ["code"], "changed_count": 2, "restored_from": "rev:1",
+           "thumbnail": True}
+    monkeypatch.setattr(client, "request_json", lambda *_a, **_k: {
+        "schema": 1, "shader": _HIST_SHADER, "project_context_witness": "wit", "kind": "revisions",
+        "entries": [row], "next_cursor": None})
+    out = client.get_shader_history({"shader": _HIST_SHADER, "project_context_witness": "wit"})
+    assert out["entries"] == [row]
+
+
+def _thumb_server(monkeypatch, status: int, body: bytes = b"\xff\xd8\xff\xd9"):
+    import urllib.error
+    import urllib.request
+    seen = []
+
+    class _R:
+        headers = {"Content-Type": "image/jpeg"}
+
+        def read(self, _n=-1):
+            return body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_e):
+            return None
+
+    def opener(req, timeout=None):
+        seen.append(req.full_url)
+        if status == 404:
+            raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, io.BytesIO(b'{"code":"cover_not_found"}'))
+        return _R()
+
+    client = Client("http://127.0.0.1:9")
+    client._opener = opener
+    server = HextileMcpServer(client=client)
+    return server, seen
+
+
+def test_history_thumbnail_of_returns_image_content(monkeypatch) -> None:
+    server, seen = _thumb_server(monkeypatch, 200)
+    result = server.call_tool("shader_get_history", {"shader": _HIST_SHADER, "project_context_witness": "wit",
+                                                     "thumbnail_of": "rev:7"})
+    assert result["isError"] is False
+    assert result["content"][0]["type"] == "image" and result["content"][0]["mimeType"] == "image/jpeg"
+    assert len(seen) == 1 and "revision=7" in seen[0] and "w=192" in seen[0]
+
+
+def test_history_thumbnail_of_missing_is_thumbnail_missing(monkeypatch) -> None:
+    server, _seen = _thumb_server(monkeypatch, 404)
+    result = server.call_tool("shader_get_history", {"shader": _HIST_SHADER, "project_context_witness": "wit",
+                                                     "thumbnail_of": "rev:7"})
+    assert result["isError"] is True
+    assert "thumbnail_missing" in result["content"][0]["text"]

@@ -1266,6 +1266,7 @@ _PREFERENCE_CHANGES = {
         "edit_sd15_enabled": _PREFERENCE_BOOL,
         "vision_mode": _null_ok({"enum": ["auto", "resident", "on_demand"]}),
         "hdr_import_rolloff": _PREFERENCE_BOOL,
+        "shader_revision_thumbnails": _PREFERENCE_BOOL,
         "default_pipeline": _null_ok({"type": "string", "minLength": 1}),
         "show_chat_icon": _PREFERENCE_BOOL,
         "open_folder_on_complete": _PREFERENCE_BOOL,
@@ -3187,8 +3188,10 @@ SHADER_EXTENSION_TOOLS = [
                                     "(freshness token, from get_live_context(view=\"shader\")); optional kind, limit, cursor, "
                                     "newest:true (newest first, with total). Each row has seal ({reason, actor, at} or null; "
                                     "reason create, checkpoint, output, agent_handoff, restore or legacy). Restart without "
-                                    "cursor if it goes stale.",
+                                    "cursor if it goes stale. Rows also carry changed, changed_count, restored_from and thumbnail. "
+                                    "thumbnail_of \"rev:N\" returns that revision's thumbnail as an image instead.",
               {**_NATIVE_SHADER_TARGET, "kind": {"enum": ["revisions", "checkpoints"]},
+               "thumbnail_of": {"type": "string", "pattern": "^rev:[1-9][0-9]{0,8}$"},
                "cursor": {"type": "string", "maxLength": 8192},
                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                "newest": {"type": "boolean"}},
@@ -4103,14 +4106,16 @@ SHADER_PREVIEW_ATTACHMENT_LABEL = (
 
 
 class _McpImage:
-    def __init__(self, png: bytes) -> None:
+    def __init__(self, png: bytes, mime: str = "image/png", label: str | None = None) -> None:
         self.png = png
+        self.mime = mime
+        self.label = label
 
 
 def _ok_result(data: Any) -> dict[str, Any]:
     if isinstance(data, _McpImage):
         return {"content": [{"type": "image", "data": base64.b64encode(data.png).decode("ascii"),
-                              "mimeType": "image/png"}, {"type": "text", "text": SHADER_PREVIEW_ATTACHMENT_LABEL}], "isError": False}
+                              "mimeType": data.mime}, {"type": "text", "text": data.label or SHADER_PREVIEW_ATTACHMENT_LABEL}], "isError": False}
     text = data if isinstance(data, str) else json.dumps(data, indent=2, default=str)
     return {"content": [{"type": "text", "text": text}], "isError": False}
 
@@ -5306,6 +5311,13 @@ class HextileMcpServer:
         return self.client.list_shader_assets(args)
 
     def _shader_get_history(self, args: dict[str, Any]) -> Any:
+        if "thumbnail_of" in args:
+            args = dict(args)
+            ref = args.pop("thumbnail_of")
+            if not isinstance(ref, str) or re.fullmatch(r"rev:[1-9][0-9]{0,8}", ref) is None:
+                raise HextileClientError("thumbnail_of must look like rev:12", status_code=422, kind="other")
+            return _McpImage(self.client.get_shader_revision_thumbnail(args, int(ref[4:])), "image/jpeg",
+                             f"Thumbnail of {ref}")
         return self.client.get_shader_history(args)
 
     def _shader_get_looks(self, args: dict[str, Any]) -> Any:
