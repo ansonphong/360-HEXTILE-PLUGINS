@@ -48,7 +48,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.22"
+SERVER_VERSION = "0.6.23"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 MCP_STATUS_TTL_S = 5.0
@@ -626,8 +626,47 @@ _PACKAGE_EDIT["allOf"] = [{
 }]
 _CREDIT_HASH = {"anyOf": [_WORKSPACE_DIGEST, {"type": "null"}]}
 _CREDIT_KEYS = ("licenses_append", "contributor", "contribution", "record", "retained", "lineage", "text")
-_CREDIT_CHANGES = _layer_object({key: {} for key in _CREDIT_KEYS})
-_CREDIT_CHANGES["minProperties"] = 1
+_CREDIT_STR = {"type": "string", "maxLength": 4096}
+_CREDIT_LINEAGE_ROW = {**_layer_object({
+    "author": _CREDIT_STR, "title": _CREDIT_STR,
+    "url": {"type": "string", "maxLength": 2048, "description": "http(s) page of the source."},
+    "contribution": {**_CREDIT_STR, "description": "What this source gave, in plain words."},
+    "relationship": {"enum": ["original", "adaptation", "inspiration"]},
+    "license": {**_CREDIT_STR, "description": "Exact licence text or name, only if seen."},
+    "license_status": {"enum": ["unknown", "recorded", "user_declared", "conflicting"],
+                       "description": "unknown unless a licence was seen (recorded) or the user stated it (user_declared)."},
+    "ai_assistance": _CREDIT_STR,
+    "contributors": {"type": "array", "items": {"type": "string"}},
+    "source_revision": _CREDIT_STR,
+    "source_digest": _layer_object({"kind": _CREDIT_STR, "digest": _CREDIT_STR}, ("kind", "digest")),
+    "evidence": _layer_object({
+        "basis": {"enum": ["observed", "user_declared", "inferred"]},
+        "note": {"type": "string", "minLength": 1, "maxLength": 512},
+        "url": {"type": "string", "maxLength": 2048}}, ("basis", "note")),
+}, ("license_status", "evidence")), "anyOf": [{"required": ["author"]}, {"required": ["title"]}]}
+_CREDIT_CHANGES = {**_layer_object({
+    "text": {**_layer_object({
+        "author": {**_CREDIT_STR, "description": "Credited author shown on the card, e.g. \"Shane\"."},
+        "attribution": {**_CREDIT_STR, "description": "One plain sentence, e.g. \"Desert Sand by Shane, <url>\"."},
+        "license": {**_CREDIT_STR, "description": "Licence text; leave out when unknown."}}),
+        "minProperties": 1,
+        "description": "Plain strings, not JSON. The old values are kept in retained credits automatically."},
+    "lineage": {**_layer_object({"row": _CREDIT_LINEAGE_ROW,
+        "index": {"type": "integer", "minimum": 0, "description": "Change the existing row at this index; omit to append."}},
+        ("row",)), "description": "One source row per proposal: who made what this Shader comes from."},
+    "retained": {**_layer_object({"field": {"enum": ["author", "attribution", "license", "lineage", "contribution"]},
+        "value": {"type": "string", "minLength": 1}}, ("field", "value")),
+        "description": "Rarely needed: text changes keep prior values on their own."},
+    "contributor": {"type": "object", "description": "Advanced: Credits card profile {id, profile}. Prefer text."},
+    "contribution": {"type": "object", "description": "Advanced: {role: shader-author|shader-editor, contributor}. Prefer text."},
+    "record": {"type": "object", "description": "Not for credit text: it fingerprints the current code. Leave out."},
+    "licenses_append": {"type": "object", "description": "Advanced distribution licence row. Leave out unless asked."},
+}), "minProperties": 1,
+    "description": "ONE operation, each key at most once. Usually text and/or lineage. Example: "
+                   "{\"text\":{\"author\":\"Shane\",\"attribution\":\"Desert Sand by Shane, https://www.shadertoy.com/view/ld3BzM\"},"
+                   "\"lineage\":{\"row\":{\"author\":\"Shane\",\"title\":\"Desert Sand\",\"url\":\"https://www.shadertoy.com/view/ld3BzM\","
+                   "\"relationship\":\"original\",\"license_status\":\"unknown\",\"evidence\":{\"basis\":\"user_declared\","
+                   "\"note\":\"User supplied the URL\"}}}}. For more sources, send one proposal per extra row."}
 _WORKSPACE_CHANGE = {"type": "string", "maxLength": 81,
                      "pattern": r"^[A-Za-z0-9_-]{1,64}:[1-9][0-9]{0,15}$",
                      "description": "<handle>:<expected_generation+1>; suffix <= 9007199254740991, no leading zeros. Replay the original ID, generation and digest only."}
@@ -3424,10 +3463,13 @@ SHADER_EXTENSION_TOOLS = [
                "cursor": {"type": "integer", "minimum": 0},
                "limit": {"type": "integer", "minimum": 1, "maximum": 32}},
               ["shader", "project_context_witness"]),
-    _tool_def("shader_propose_credits", "Use to suggest Credits and Sources changes for a person to review; it only proposes, a person "
-                                        "applies them. Pass shader, project_context_witness (freshness token, from "
+    _tool_def("shader_propose_credits", "Use to change a Shader's Credits and Sources. When the user asked for the change, pass "
+                                        "apply:true and it is saved at once (state applied) unless the user turned off agent-applied "
+                                        "credits (then applied:false and it waits on the Credits card). Without apply it is only "
+                                        "proposed for a person to apply. Pass shader, project_context_witness (freshness token, from "
                                         "get_live_context(view=\"shader\")), request_id, base, working_digest and expected_provenance_hash "
-                                        "(from shader_get_credits) and changes. Before third-party adaptation read the source headers, "
+                                        "(from shader_get_credits) and changes (see its schema and example: text holds plain strings, "
+                                        "lineage holds one row). Before third-party adaptation read the source headers, "
                                         "licence text and links; keep original, intermediate and utility authors, human contributors and "
                                         "AI assistance separate; mark each item observed, user_declared or inferred; keep prior credits. "
                                         "Missing or conflicting licences stay unknown, never permission. After a lost reply resend the "
@@ -3435,7 +3477,9 @@ SHADER_EXTENSION_TOOLS = [
               {**_NATIVE_SHADER_TARGET,
                "request_id": _NATIVE_SHADER_REQUEST_ID, "base": _NATIVE_SHADER_BASE,
                "working_digest": _CREDIT_HASH, "expected_provenance_hash": _CREDIT_HASH,
-               "changes": _CREDIT_CHANGES},
+               "changes": _CREDIT_CHANGES,
+               "apply": {"type": "boolean", "default": False,
+                         "description": "true only when the user asked for this credit change."}},
               ["shader", "project_context_witness", "request_id", "base",
                "working_digest", "expected_provenance_hash", "changes"]),
     _tool_def("shader_research_sources", "Use to fetch one public web page about a Shader's source or licence, plus up to four extra "

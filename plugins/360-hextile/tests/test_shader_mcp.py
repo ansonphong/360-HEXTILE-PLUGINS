@@ -1200,6 +1200,20 @@ def test_credit_changes_match_package_keys() -> None:
             jsonschema.validate({**proposal, "changes": rejected}, schema)
         with pytest.raises(HextileClientError):
             client.propose_shader_credits({**proposal, "changes": rejected})
+    # Shapes agents guessed before the typed schema: JSON in text, a lineage "kind", a row without author/title.
+    for guessed in ({"text": {"author": {"name": "A"}}},
+                    {"lineage": {"kind": "append", "row": {"author": "A", "license_status": "unknown",
+                                                           "evidence": {"basis": "observed", "note": "n"}}}},
+                    {"lineage": {"row": {"url": "https://x.test", "license_status": "unknown",
+                                         "evidence": {"basis": "observed", "note": "n"}}}}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**proposal, "changes": guessed}, schema)
+    jsonschema.validate({**proposal, "apply": True, "changes": {
+        "text": {"author": "Shane", "attribution": "Desert Sand by Shane"},
+        "lineage": {"row": {"author": "Shane", "title": "Desert Sand", "relationship": "original",
+                            "license_status": "unknown", "evidence": {"basis": "user_declared", "note": "URL"}}}}}, schema)
+    with pytest.raises(HextileClientError):
+        client.propose_shader_credits({**proposal, "apply": "yes"})
 
 
 def test_credits_text_chunk_transport_is_closed_and_forwards_utf8_offset(monkeypatch) -> None:

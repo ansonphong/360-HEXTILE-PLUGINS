@@ -6409,7 +6409,8 @@ class Client:
     def propose_shader_credits(self, args: Mapping[str, Any]) -> dict:
         required = {"shader", "project_context_witness", "request_id", "base",
                     "working_digest", "expected_provenance_hash", "changes"}
-        if not isinstance(args, Mapping) or set(args) != required:
+        if not isinstance(args, Mapping) or not required <= set(args) <= required | {"apply"} \
+                or type(args.get("apply", False)) is not bool:
             raise HextileClientError("Expected closed Shader credits proposal", status_code=422, kind="other")
         _native_shader_args("status", {key: args[key] for key in ("shader", "project_context_witness", "request_id")})
         base = args["base"]
