@@ -6435,7 +6435,9 @@ class Client:
             raise
         if (type(result) is not dict or set(result) - {"schema", "proposal_id", "request_id", "state",
                 "shader", "project_context_witness", "expected_provenance_hash", "mutation_hash",
-                "message"}
+                "message", "applied", "commit", "revision"}
+                or ("applied" in result and type(result["applied"]) is not bool)
+                or ("revision" in result and type(result["revision"]) is not int)
                 or ("message" in result and (type(result["message"]) is not str
                                              or not 1 <= len(result["message"]) <= 256))
                 or result.get("request_id") != request_id

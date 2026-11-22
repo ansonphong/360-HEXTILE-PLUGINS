@@ -1179,7 +1179,7 @@ def test_credits_metadata_and_research_transport_are_closed(monkeypatch) -> None
         client.propose_shader_credits({**proposal, "changes": {"distribution": {}}})
 
 
-def test_credit_changes_match_package_keys() -> None:
+def test_credit_changes_match_package_keys(monkeypatch) -> None:
     from hextile_mcp import SHADER_EXTENSION_TOOLS
     schema = next(tool for tool in SHADER_EXTENSION_TOOLS if tool["name"] == "shader_propose_credits")["inputSchema"]
     changes = schema["properties"]["changes"]
@@ -1214,6 +1214,13 @@ def test_credit_changes_match_package_keys() -> None:
                             "license_status": "unknown", "evidence": {"basis": "user_declared", "note": "URL"}}}}}, schema)
     with pytest.raises(HextileClientError):
         client.propose_shader_credits({**proposal, "apply": "yes"})
+    applied = {"schema": 1, "proposal_id": "scp_1", "request_id": proposal["request_id"], "state": "applied",
+               "shader": ref, "applied": True, "commit": "c1", "revision": 3, "message": "Credits saved."}
+    monkeypatch.setattr(client, "_shader_request", lambda *_a, **_k: applied)
+    assert client.propose_shader_credits({**proposal, "apply": True}) == applied
+    monkeypatch.setattr(client, "_shader_request", lambda *_a, **_k: {**applied, "applied": "yes"})
+    with pytest.raises(HextileClientError):
+        client.propose_shader_credits({**proposal, "apply": True})
 
 
 def test_credits_text_chunk_transport_is_closed_and_forwards_utf8_offset(monkeypatch) -> None:

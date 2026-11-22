@@ -3464,8 +3464,8 @@ SHADER_EXTENSION_TOOLS = [
                "limit": {"type": "integer", "minimum": 1, "maximum": 32}},
               ["shader", "project_context_witness"]),
     _tool_def("shader_propose_credits", "Use to change a Shader's Credits and Sources. When the user asked for the change, pass "
-                                        "apply:true and it is saved at once (state applied) unless the user turned off agent-applied "
-                                        "credits (then applied:false and it waits on the Credits card). Without apply it is only "
+                                        "apply:true and it is saved at once (state applied). applied:false means it waits on the Credits "
+                                        "card: the user turned agent-applied credits off, or credits changed since shader_get_credits. Without apply it is only "
                                         "proposed for a person to apply. Pass shader, project_context_witness (freshness token, from "
                                         "get_live_context(view=\"shader\")), request_id, base, working_digest and expected_provenance_hash "
                                         "(from shader_get_credits) and changes (see its schema and example: text holds plain strings, "
