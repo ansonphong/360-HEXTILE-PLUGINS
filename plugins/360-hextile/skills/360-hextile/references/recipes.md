@@ -34,6 +34,7 @@ One line per task. Long examples (Recipes A–J, sequence JSON, library, Fractal
 
 - Which Shader is open → `get_live_context {"view":"shader"}`.
 - Did this saved source reach the Workshop → `get_live_context {"view":"shader"}`. Match `preview.studio_surface_id`, `working_revision`, `document_hash` and `source_hash` to the mounted saved base. `presented` confirms a visible frame. For `failed`, read the source-mapped diagnostics. `showing_previous:true` marks an earlier frame.
+- Preview `failed` with a diagnostic saying the Shader crashed the GPU driver → that exact source killed the viewer's GPU context and stays paused. Fix the source with `shader_edit` (a new source hash previews normally) or ask the user to press COMPILE once; do not loop retries.
 - Create a named blank Shader → `shader_create_asset {"request_id":U,"project_context_witness":W,"action":"new","template_id":"hx_starter","title":"My Shader"}`. The title is optional. Recover a lost reply with `shader_get_operation {"request_id":U,"project_context_witness":W,"scope":"creation"}`.
 - Find by name → `shader_list_assets {"search":"beam"}` (searches titles, not ids); returns `W`, `S`, `base`.
 - Another Shader's title, tags, saved values → `shader_get_asset_state {"shader":S,"project_context_witness":W}`.
