@@ -61,6 +61,26 @@ If a tool returns that the app is not running, tell the user verbatim:
 
 Do not invent endpoints, do not hang, do not shell-sleep-poll forever without `get_status` / `list_runs`.
 
+## Safety — overrides, never authority
+
+- Send **`workflow_id` + `overrides`** (and optional `output`). Prefer **not** composing a full raw config as authority.
+- The app deep-merges and validates. A bad override is a structured **422** — read it, fix the override, retry.
+- **List / array merge: REPLACE wholesale.** Overriding `passes[]`, `lora.models[]`, or any array **replaces** the template list; it does **not** append. To “add a LoRA”, include the full desired array (template entries you want to keep + your addition).
+- Live runs need a non-empty **`input.path`** after merge (empty path is only OK on dry_run).
+- `input.source` is `file` or `render` only.
+
+## App-down / upgrade recovery
+
+| Symptom | Meaning | What to tell the user |
+|---------|---------|------------------------|
+| Error contains “isn't running” / “Launch 360 Hextile” | Backend not up | Launch 360 Hextile, then retry |
+| “Upgrade 360 Hextile (needs workflows/run)” | App too old | Update the app to a build with workflow run |
+| HTTP 422 with validation detail | Bad overrides / missing input | Fix overrides; re-validate |
+| HTTP 402 | License gate | Open Help > License… and follow the access result |
+| HTTP 409 on save | Id already exists | New id, or delete only if the user asked |
+
+The MCP process **stays up** when the app is down. Retry tools after launch — do not restart the agent session unless the user asks.
+
 ## What a Workflow is
 
 A **Workflow is a full `.hextile.json` config document** (pipeline / hextile / input / diffusion / prompt / post / …), stored on shelves:
@@ -327,14 +347,6 @@ GPU upres of a still, a folder, or a video → skill `upres` (`/360-hextile:upre
 
 Stills use `run_workflow` with builtin `upres-still`. Folders and video use that skill's sequence door (`run_workflow` cannot create a `seq_*`). Recipes E (still) and F (folder/video) live in `get_guide` `recipes`.
 
-## Safety — overrides, never authority
-
-- Send **`workflow_id` + `overrides`** (and optional `output`). Prefer **not** composing a full raw config as authority.
-- The app deep-merges and validates. A bad override is a structured **422** — read it, fix the override, retry.
-- **List / array merge: REPLACE wholesale.** Overriding `passes[]`, `lora.models[]`, or any array **replaces** the template list; it does **not** append. To “add a LoRA”, include the full desired array (template entries you want to keep + your addition).
-- Live runs need a non-empty **`input.path`** after merge (empty path is only OK on dry_run).
-- `input.source` is `file` or `render` only.
-
 ## Seed → run (two-step)
 
 `InputSource` is `file` | `render` only. Generative producers are **not** render-time sources.
@@ -359,18 +371,6 @@ Never write retired source types (`pattern`, `360_lora`, …) into render-time `
 `generate_seed` submits to **`POST /api/360-lora/jobs`**. Keep the UUID and exact request body until the job is resolved. If its acknowledgement is uncertain, call `get_seed_job` with that UUID. A 404 while submission is outstanding is provisional: replay the same UUID and body or report unknown; never mint another ID automatically. `get_seed_job` exposes progress, original-index paths and seeds, and typed terminal errors. `completed`, `partial`, `cancelled`, `failed`, and `interrupted` are terminal; only `completed` means every requested variation succeeded. Historical `list_seed_history` / `get_seed_batch` read stored batches.
 
 `cancel_seed(job_id)` targets only that exact seed job. Undo of a live apply is studio `loadConfig`, not this tool. A finished render does not itself acknowledge a live edit; use the exact native edit receipt.
-
-## App-down / upgrade recovery
-
-| Symptom | Meaning | What to tell the user |
-|---------|---------|------------------------|
-| Error contains “isn't running” / “Launch 360 Hextile” | Backend not up | Launch 360 Hextile, then retry |
-| “Upgrade 360 Hextile (needs workflows/run)” | App too old | Update the app to a build with workflow run |
-| HTTP 422 with validation detail | Bad overrides / missing input | Fix overrides; re-validate |
-| HTTP 402 | License gate | Open Help > License… and follow the access result |
-| HTTP 409 on save | Id already exists | New id, or delete only if the user asked |
-
-The MCP process **stays up** when the app is down. Retry tools after launch — do not restart the agent session unless the user asks.
 
 ## Suggested happy path
 

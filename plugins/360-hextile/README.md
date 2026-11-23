@@ -1,8 +1,8 @@
 # 360-hextile plugin
 
-**v0.6.24**
+**v0.6.25**
 
-One Claude Code / Codex / Grok plugin that drives **360 Hextile** over localhost HTTP and carries the Hextile Pipe studio matte tools.
+One Claude Code / Codex / Grok / Antigravity plugin that drives **360 Hextile** over localhost HTTP and carries the Hextile Pipe studio matte tools.
 
 Source and the only marketplace: **[`ansonphong/360-HEXTILE-PLUGINS`](https://github.com/ansonphong/360-HEXTILE-PLUGINS)** (marketplace `360-hextile`). Install id **`360-hextile@360-hextile`**. Workflow, Shader, Fractal and upres skills, the `hextile` MCP proxy, and the Pipe matte CLIs (`pipe/`, skills `hextile-*`) all ship in this one plugin. The former standalone repositories `360-hextile-agent` and `hextile-pipe` and their marketplaces are retired; their histories are preserved as `provenance/*` tags in this repository.
 
@@ -81,6 +81,14 @@ Enable `360-hextile` in `~/.grok/config.toml` `[plugins].enabled` (or Space in `
 
 Upgrading: remove the old `hextile-pipe` and standalone `360-hextile` installs and any `hextile-agent` marketplace source, point the `360-hextile` source at `https://github.com/ansonphong/360-HEXTILE-PLUGINS.git`, then `grok plugin marketplace update` and install or update `360-hextile`.
 
+## Install — Antigravity
+
+```bash
+agy plugin install https://github.com/ansonphong/360-HEXTILE-PLUGINS/tree/master/plugins/360-hextile
+```
+
+Antigravity (`agy` CLI) converts the Claude manifest on install: it copies the plugin to `~/.gemini/config/plugins/360-hextile`, loads all skills and registers the `hextile` stdio MCP server with an absolute path. Start a new `agy` session afterwards. Re-run the same command to update; it replaces the installed copy. Antigravity loads only the first 24,000 bytes of a skill body, so keep the critical `360-hextile` sections near the top.
+
 ## Install — Codex
 
 Use a current Codex CLI with `codex plugin` support:
@@ -146,6 +154,7 @@ Install id stays **`360-hextile@360-hextile`**. Hosts do **not** auto-update.
 |------|---------------------------|
 | **Claude Code** | Plugin skills auto-discover from `plugin.json` `"skills": "./skills/"` after `/plugin install 360-hextile@360-hextile` (or marketplace update + `/plugin update 360-hextile`). |
 | **Grok** | Same-repository local source in `ansonphong/360-HEXTILE-PLUGINS`: `grok plugin marketplace update` then `grok plugin update 360-hextile`. |
+| **Antigravity** | Re-run `agy plugin install https://github.com/ansonphong/360-HEXTILE-PLUGINS/tree/master/plugins/360-hextile` (replaces the installed copy). |
 | **Codex** | `codex plugin add 360-hextile@360-hextile` (or `python3 codex/install.py`, which writes `~/.agents/skills/upres/SKILL.md`). |
 
 ## Selected tools

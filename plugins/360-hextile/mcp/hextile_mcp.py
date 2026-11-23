@@ -48,7 +48,7 @@ from hextile_client import (  # noqa: E402
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "hextile"
-SERVER_VERSION = "0.6.24"
+SERVER_VERSION = "0.6.25"
 ACTIVITY_SCHEMA = "hextile.agent.activity.v1"
 CHILD_TOKEN_ENV = "HEXTILE_MCP_CHILD_TOKEN"
 MCP_STATUS_TTL_S = 5.0
@@ -4760,7 +4760,7 @@ class HextileMcpServer:
             "tool": tool,
             "phase": phase,
             "client_name": next((label for prefix, label in (
-                ("claude", "Claude Code"), ("codex", "Codex"), ("grok", "Grok"),
+                ("claude", "Claude Code"), ("codex", "Codex"), ("grok", "Grok"), ("antigravity", "Antigravity"),
                 ("cursor", "Cursor"), ("gemini", "Gemini"),
             ) if (self.client_name or "").casefold().startswith(prefix)), "MCP client"),
         }

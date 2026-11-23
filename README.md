@@ -72,6 +72,17 @@ grok plugin marketplace add D:\Projects\360-HEXTILE\360-HEXTILE-PLUGINS
 </details>
 
 <details open>
+<summary><strong>Antigravity</strong></summary>
+
+```text
+agy plugin install https://github.com/ansonphong/360-HEXTILE-PLUGINS/tree/master/plugins/360-hextile
+```
+
+Start a new `agy` session afterwards; the `hextile` MCP server and all skills are loaded. `agy` converts the Claude manifest on install, so there is no separate marketplace step. Re-run the same command to update.
+
+</details>
+
+<details open>
 <summary><strong>Codex</strong></summary>
 
 ```text
@@ -463,6 +474,7 @@ Commit plugin changes here, bump `version` in `plugins/360-hextile/.claude-plugi
 | Claude | `/plugin marketplace update 360-hextile`, then `/plugin update 360-hextile@360-hextile` |
 | Grok | `grok plugin marketplace update` then `grok plugin update 360-hextile` |
 | Codex | `codex plugin marketplace upgrade 360-hextile` |
+| Antigravity | `agy plugin install https://github.com/ansonphong/360-HEXTILE-PLUGINS/tree/master/plugins/360-hextile` |
 
 ---
 

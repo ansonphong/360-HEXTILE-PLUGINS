@@ -25,7 +25,7 @@ import shutil
 import sys
 from pathlib import Path
 
-PACKAGE_VERSION = "0.6.24"
+PACKAGE_VERSION = "0.6.25"
 MIN_CODEX = "0.34.0"
 MARKER_NAME = ".hextile-agent-marker"
 SKILL_NAMES = ("360-hextile", "shader", "fractal", "upres")
