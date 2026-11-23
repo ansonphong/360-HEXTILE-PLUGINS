@@ -307,7 +307,7 @@ def test_fragment_tracks_legacy_hub_and_source_versions_agree(isolated_generated
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == "SERVER_VERSION" for target in node.targets)
     )
-    assert INSTALL.PACKAGE_VERSION == manifest["version"] == server_version == "0.6.25"
+    assert INSTALL.PACKAGE_VERSION == manifest["version"] == server_version == "0.6.26"
     assert f"**v{INSTALL.PACKAGE_VERSION}**" in (ROOT / "README.md").read_text(encoding="utf-8")
 
 
@@ -348,3 +348,11 @@ def test_fractal_workshop_skill_lands_only_in_the_temp_home(tmp_path: Path) -> N
     assert "does not prove an installed host" in readme
     assert "get_local_access_status" in readme
     assert "local_file_write_status" in readme
+
+
+def test_hub_rules_fit_in_antigravity_skill_window() -> None:
+    # Antigravity loads only the first 24,000 bytes of a SKILL.md body.
+    body = INSTALL.strip_frontmatter(
+        (ROOT / "skills" / "360-hextile" / "SKILL.md").read_text(encoding="utf-8")).encode("utf-8")
+    end = body.index("## What a Workflow is".encode("utf-8"))
+    assert body.index("## Safety".encode("utf-8")) < body.index("## App-down".encode("utf-8")) < end <= 24_000

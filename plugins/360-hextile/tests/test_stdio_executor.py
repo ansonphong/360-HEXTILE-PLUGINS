@@ -497,6 +497,42 @@ def test_mcp_activity_minilog_projects_only_confirmed_safe_facts() -> None:
     assert all("secret" not in json.dumps(row) and "private" not in json.dumps(row) for row in client.events)
 
 
+def test_antigravity_label_falls_back_to_generic_on_an_older_app() -> None:
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import hextile_client
+    from hextile_mcp import HextileMcpServer
+
+    class FakeClient:
+        events: list = []
+
+        def request_json(self, method, path):  # noqa: ANN001
+            return {"enabled": True}
+
+        def post_activity(self, envelope):  # noqa: ANN001
+            self.events.append(envelope)
+
+    client = FakeClient()
+    server = HextileMcpServer(client=client, child_token="")
+    server.client_name = "antigravity-client"
+    server._handlers["get_status"] = lambda _args: {"run_id": "run_1", "status": "running"}
+    assert server.call_tool("get_status", {"run_id": "run_1"})["isError"] is False
+    assert {row["client_name"] for row in client.events} == {"Antigravity"}
+
+    sent = []
+
+    def older_app(method, path, body, timeout):  # noqa: ANN001
+        sent.append(body["client_name"])
+        if body["client_name"] not in ("Codex", "MCP client"):
+            raise hextile_client.HextileClientError("HTTP 422", kind="other", status_code=422)
+        return {"ok": True}
+
+    real = hextile_client.Client.__new__(hextile_client.Client)
+    real.request_json = older_app
+    assert real.post_activity({"client_name": "Antigravity", "tool": "get_status"}) == {"ok": True}
+    assert real.post_activity({"client_name": "Codex", "tool": "get_status"}) == {"ok": True}
+    assert sent == ["Antigravity", "MCP client", "Codex"]
+
+
 def test_activity_refusal_carries_only_a_closed_reason_token() -> None:
     sys.path.insert(0, str(ROOT / "mcp"))
     from hextile_client import HextileClientError

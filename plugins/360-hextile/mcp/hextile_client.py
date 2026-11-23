@@ -4304,10 +4304,21 @@ class Client:
         return self.request_json("DELETE", path, timeout=timeout)
 
     def post_activity(self, envelope: Mapping[str, Any]) -> Any:
-        """POST /api/agent/events — 1s timeout. Caller swallows errors."""
-        return self.request_json(
-            "POST", "/api/agent/events", envelope, timeout=1
-        )
+        """POST /api/agent/events — 1s timeout. Caller swallows errors.
+
+        An older APP rejects a client label it does not know (422); resend once
+        as the generic "MCP client" so its activity still shows.
+        """
+        try:
+            return self.request_json(
+                "POST", "/api/agent/events", envelope, timeout=1
+            )
+        except HextileClientError as exc:
+            if exc.status_code != 422 or envelope.get("client_name") in (None, "MCP client"):
+                raise
+            return self.request_json(
+                "POST", "/api/agent/events", {**envelope, "client_name": "MCP client"}, timeout=1
+            )
 
     @staticmethod
     def _canonical_uuid4(value: Any, *, field: str = "request_id") -> str:

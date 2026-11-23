@@ -71,6 +71,9 @@ Do not invent endpoints, do not hang, do not shell-sleep-poll forever without `g
 - **List / array merge: REPLACE wholesale.** Overriding `passes[]`, `lora.models[]`, or any array **replaces** the template list; it does **not** append. To “add a LoRA”, include the full desired array (template entries you want to keep + your addition).
 - Live runs need a non-empty **`input.path`** after merge (empty path is only OK on dry_run).
 - `input.source` is `file` or `render` only.
+- Get the user's approval for the exact options before `generate_seed`.
+- A lost local file write is recovered with `local_file_write_status` and the original `request_id`. Never mint a new ID or auto-retry `outcome_unknown`.
+- Use only the tools you have. Do not invent `start_wizard`, `compile_config`, `upscale_image` or other unlisted tools.
 
 ## App-down / upgrade recovery
 
