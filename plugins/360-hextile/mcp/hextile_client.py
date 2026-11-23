@@ -3056,10 +3056,12 @@ def _valid_shader_connection(result: Any) -> bool:
     if "agent_open" in result and result["agent_open"] is not None:
         policy = result["agent_open"]
         if (type(policy) is not dict
-                or set(policy) != {"policy", "allow_force_open", "blocked_for_session"}
+                or not {"policy", "allow_force_open", "blocked_for_session"} <= set(policy)
+                <= {"policy", "allow_force_open", "blocked_for_session", "allow_apply_credits"}
                 or policy["policy"] not in {"ask", "always_allow", "never"}
                 or type(policy["allow_force_open"]) is not bool
-                or type(policy["blocked_for_session"]) is not bool):
+                or type(policy["blocked_for_session"]) is not bool
+                or type(policy.get("allow_apply_credits", False)) is not bool):
             return False
     if "saved_base" in result and result["saved_base"] is not None:
         saved = result["saved_base"]

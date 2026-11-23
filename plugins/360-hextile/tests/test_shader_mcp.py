@@ -2244,6 +2244,13 @@ def test_live_shader_context_accepts_v2_and_refuses_the_old_compact_shape(monkey
                                             "blocked_for_session": False}}
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: with_policy)
     assert client.get_live_context(view="shader") == with_policy
+    with_credits = {**compact, "agent_open": {**with_policy["agent_open"], "allow_apply_credits": True}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: with_credits)
+    assert client.get_live_context(view="shader") == with_credits
+    bad_credits = {**compact, "agent_open": {**with_policy["agent_open"], "allow_apply_credits": "yes"}}
+    monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: bad_credits)
+    with pytest.raises(HextileClientError):
+        client.get_live_context(view="shader")
     bad_policy = {**compact, "agent_open": {"policy": "sometimes", "allow_force_open": True,
                                            "blocked_for_session": False}}
     monkeypatch.setattr(client, "get_json", lambda *args, **kwargs: bad_policy)
